@@ -1,0 +1,4 @@
+# The official TMF8829 driver does a firmware download and processes fairly
+# large frames. Give the main task extra stack headroom.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y

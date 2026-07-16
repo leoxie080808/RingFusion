@@ -1,0 +1,2 @@
+"-specs=C:/Users/xiele/Documents/RingFusion/firmware-esp/build/bootloader/specs/picolibc.specs"
+-march=rv32imac_zicsr_zifencei_zaamo_zalrsc
