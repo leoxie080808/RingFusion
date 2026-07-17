@@ -1,0 +1,30 @@
+# ---- ROS 2 / colcon ----
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+
+# ---- ESP-IDF firmware ----
+firmware-esp/**/build/
+firmware-esp/**/sdkconfig.old
+firmware-esp/**/managed_components/
+firmware-esp/**/dependencies.lock
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ---- editor / OS ----
+.vscode/
+.DS_Store
+*.swp
+
+# ---- data / models (usually too big for git) ----
+*.engine
+*.onnx
+*.pth
+*.ply
+*.bag
+*.db3

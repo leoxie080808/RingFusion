@@ -1,0 +1,36 @@
+# RingFusion single-module calibration (bench: 1 camera + 1 LightRanger 14).
+# Camera: Arducam B0179 (IMX219 1/4", 2.5 mm M12 fisheye, 170D x 155H x 115V).
+#
+# INTRINSICS BELOW ARE NOMINAL PLACEHOLDERS, computed from the datasheet for a
+# 1280x720 capture. They let the pipeline run and let you eyeball zone landing,
+# but a 155-degree fisheye MUST be calibrated (tools/calibrate_camera.py) before
+# any depth value is trustworthy. Replace this whole block with the output.
+camera:
+  width: 1280
+  height: 720
+  model: fisheye              # fisheye (Kannala-Brandt) | pinhole
+  # Nominal derivation (see geometry.py header):
+  #   fx = f_mm / pixel_mm * (capture_w / sensor_active_w)
+  fx: 460.0
+  fy: 460.0
+  cx: 640.0
+  cy: 360.0
+  dist: [0.0, 0.0, 0.0, 0.0]  # k1..k4 fisheye; zeros until calibrated
+
+tof:
+  fov_h_deg: 61.0             # TMF8829 ~80 deg diagonal -> ~61 h at 4:3
+  fov_v_deg: 45.0
+  # cols/rows come from the live packet; these are defaults for offline tests
+  cols: 48
+  rows: 32
+
+# Rigid transform: point in ToF frame -> point in camera frame.
+# Camera optical convention: x right, y DOWN, z forward.
+# Measured: lens center is 20.195 mm ABOVE the ToF center (so along -y from
+# camera; equivalently the ToF sits +y below the camera), and the lens aperture
+# is 1.13 mm FORWARD of the ToF (+z). Side offset assumed 0, rotation identity.
+extrinsics_cam_tof:
+  translation_mm: [0.0, 20.19497873, 1.13]   # [tx, ty, tz]
+  rotation_rpy_deg: [0.0, 0.0, 0.0]
+  # TODO after calibration: refine ty sign if zones land high/low, add tx if the
+  # lens and ToF are not perfectly vertically aligned, add small tilt if needed.
