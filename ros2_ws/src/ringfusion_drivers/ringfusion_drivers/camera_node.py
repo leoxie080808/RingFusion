@@ -5,10 +5,13 @@ RGB8 without cv_bridge (hand-packed) to avoid an extra dependency.
 Parameters:
   sensor_id (int)  CSI sensor id on the B0472
   width,height,fps
+  flip      (int)  nvvidconv flip-method; 2 = rotate 180 (default, matches
+                    the ring mount), 0 = no rotation
   image     (str)  if set, serve this still image instead of the camera
   frame_id  (str)  tf frame, e.g. cam_0
   rate      (float) publish rate when using a still image
 """
+import array
 import numpy as np
 import rclpy
 from rclpy.node import Node
@@ -25,6 +28,7 @@ class CameraNode(Node):
         self.declare_parameter('width', 1280)
         self.declare_parameter('height', 720)
         self.declare_parameter('fps', 15)
+        self.declare_parameter('flip', camlib.FLIP_180)
         self.declare_parameter('image', '')
         self.declare_parameter('frame_id', 'cam_0')
         self.declare_parameter('rate', 15.0)
@@ -41,7 +45,8 @@ class CameraNode(Node):
         else:
             self.src = camlib.ArducamCSI(
                 sensor_id=int(self.get_parameter('sensor_id').value),
-                width=w, height=h, fps=int(self.get_parameter('fps').value))
+                width=w, height=h, fps=int(self.get_parameter('fps').value),
+                flip=int(self.get_parameter('flip').value))
             self.get_logger().info("Arducam CSI -> /image")
         period = 1.0 / float(self.get_parameter('rate').value)
         self.timer = self.create_timer(period, self.tick)
@@ -61,7 +66,9 @@ class CameraNode(Node):
         msg.encoding = 'rgb8'
         msg.is_bigendian = 0
         msg.step = w * 3
-        msg.data = rgb.tobytes()
+        # array.array hits the generated setter's fast path; assigning bytes/list
+        # instead makes it validate every element in a Python loop (~450ms/frame here).
+        msg.data = array.array('B', rgb.tobytes())
         self.pub.publish(msg)
 
     def destroy_node(self):

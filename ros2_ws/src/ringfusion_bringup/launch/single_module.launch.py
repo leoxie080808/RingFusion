@@ -9,7 +9,7 @@ View in rviz2: add PointCloud2 on /cloud (fixed frame: cam_0).
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
@@ -23,6 +23,12 @@ def generate_launch_description():
     image = LaunchConfiguration('image')
 
     return LaunchDescription([
+        # A pip-installed opencv-python in ~/.local shadows JetPack's system
+        # python3-opencv, which is the one built with GStreamer support.
+        # Without this, cv2.VideoCapture(..., cv2.CAP_GSTREAMER) can't open
+        # nvarguscamerasrc and ArducamCSI fails to start.
+        SetEnvironmentVariable('PYTHONNOUSERSITE', '1'),
+
         DeclareLaunchArgument('port', default_value='/dev/ttyACM0'),
         DeclareLaunchArgument('image', default_value='',
                               description='still image path; empty = CSI camera'),
