@@ -13,6 +13,7 @@ Parameters:
   calib (str)   path to calibration.yaml
   frame_id (str) frame the cloud is expressed in (the camera optical frame)
 """
+import array
 import numpy as np
 import rclpy
 from rclpy.node import Node
@@ -87,7 +88,9 @@ class PerceptionNode(Node):
         dm.encoding = '32FC1'
         dm.is_bigendian = 0
         dm.step = d.shape[1] * 4
-        dm.data = d.tobytes()
+        # array.array for the fast setter path; raw bytes would be validated
+        # element-by-element (~600ms for this 3.7MB map). See cloud_util.
+        dm.data = array.array('B', d.tobytes())
         self.depth_pub.publish(dm)
 
     def run_pipeline(self, rgb, dist_m, valid):

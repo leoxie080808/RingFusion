@@ -2,7 +2,13 @@
 
 Wraps the tested tof_source.SerialToFSource (real firmware CSV/subframe format).
 Parameters:
-  port      (str)  serial device, e.g. /dev/ttyACM0
+  port      (str)  serial device. The ESP32-C6 enumerates as TWO ports: a
+                    UART-bridge port (ROM bootloader text only, goes quiet
+                    after boot) and its native-USB port (the app's actual
+                    console, where TMF8829 frames stream out). Use the
+                    native-USB one - /dev/ttyACM1 on this rig, but confirm
+                    with `udevadm info -a -n /dev/ttyACMx | grep idVendor`:
+                    idVendor 303a (Espressif) is the right one.
   baud      (int)  115200 (native USB CDC; value is nominal)
   module_id (int)  0..3, tags which ring module this hub serves
   frame_id  (str)  tf frame for this module's ToF, e.g. tof_0
@@ -19,7 +25,7 @@ from .tof_source import SerialToFSource
 class ToFDriverNode(Node):
     def __init__(self):
         super().__init__('tof_driver')
-        self.declare_parameter('port', '/dev/ttyACM0')
+        self.declare_parameter('port', '/dev/ttyACM1')
         self.declare_parameter('baud', 115200)
         self.declare_parameter('module_id', 0)
         self.declare_parameter('frame_id', 'tof_0')

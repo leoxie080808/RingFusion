@@ -21,6 +21,8 @@ setup(
         'console_scripts': [
             'tof_driver = ringfusion_drivers.tof_driver_node:main',
             'camera = ringfusion_drivers.camera_node:main',
+            'tof_heatmap = ringfusion_drivers.tof_heatmap_node:main',
+            'dual_view = ringfusion_drivers.dual_view_node:main',
         ],
     },
 )

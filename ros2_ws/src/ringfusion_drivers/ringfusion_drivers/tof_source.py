@@ -153,6 +153,14 @@ class SerialToFSource:
     def __init__(self, port, baud=115200, timeout=0.02):
         import serial
         self.ser = serial.Serial(port, baud, timeout=timeout)
+        # This is the ESP32-C6's native-USB port; opening it alone does not
+        # reset the chip or start streaming (confirmed: idle for 5s+ without
+        # this). Toggling DTR/RTS pulses EN via the board's auto-reset
+        # circuit, same as esptool/Arduino IDE do before a fresh boot.
+        self.ser.dtr = False
+        self.ser.rts = True
+        time.sleep(0.1)
+        self.ser.rts = False
         self.buf = bytearray()
         self.asm = _Assembler()
         time.sleep(1.0)          # let the port settle; do NOT flush (loses a subframe)

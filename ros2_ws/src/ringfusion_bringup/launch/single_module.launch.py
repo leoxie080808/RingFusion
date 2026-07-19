@@ -1,7 +1,11 @@
 """Bring up one RingFusion module: camera + ToF hub + perception.
 
   ros2 launch ringfusion_bringup single_module.launch.py \
-       port:=/dev/ttyACM0
+       port:=/dev/ttyACM1
+
+The ESP32-C6 hub enumerates as two ports; port must be its native-USB one
+(idVendor 303a) where the app's TMF8829 frames actually stream, not the
+UART-bridge one which only ever prints ROM bootloader text.
 
 Use image:=/path/shot.jpg to test with a still image instead of the CSI camera.
 View in rviz2: add PointCloud2 on /cloud (fixed frame: cam_0).
@@ -29,7 +33,7 @@ def generate_launch_description():
         # nvarguscamerasrc and ArducamCSI fails to start.
         SetEnvironmentVariable('PYTHONNOUSERSITE', '1'),
 
-        DeclareLaunchArgument('port', default_value='/dev/ttyACM0'),
+        DeclareLaunchArgument('port', default_value='/dev/ttyACM1'),
         DeclareLaunchArgument('image', default_value='',
                               description='still image path; empty = CSI camera'),
 

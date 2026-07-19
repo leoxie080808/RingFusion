@@ -7,7 +7,7 @@ ROS 2 Humble workspace for the RingFusion project (ToF hub + camera driver, perc
 | Package | Type | Purpose |
 |---|---|---|
 | `ringfusion_msgs` | ament_cmake | Custom message definitions (`ToFFrame.msg`) |
-| `ringfusion_drivers` | ament_python | ToF hub (`tof_driver`) and Arducam camera (`camera`) driver nodes |
+| `ringfusion_drivers` | ament_python | ToF hub (`tof_driver`), Arducam camera (`camera`), ToF heatmap colorizer (`tof_heatmap`), local combined viewer (`dual_view`) |
 | `ringfusion_perception` | ament_python | Mono depth + ToF anchoring perception node |
 | `ringfusion_bringup` | ament_cmake | Launch files and extrinsic calibration config |
 
@@ -47,8 +47,11 @@ source install/setup.bash
 ## Running
 
 ```bash
-# Launch a full module: ToF hub + camera + perception
-ros2 launch ringfusion_bringup single_module.launch.py port:=/dev/ttyACM0
+# Just view both feeds (camera + ToF heatmap) — see "Viewing both feeds" below
+ros2 launch ringfusion_bringup feeds.launch.py
+
+# Full fusion module: ToF hub + camera + perception (-> /cloud, /depth)
+ros2 launch ringfusion_bringup single_module.launch.py port:=/dev/ttyACM1
 
 # Same, but feed a still image instead of the live CSI camera
 ros2 launch ringfusion_bringup single_module.launch.py image:=/path/to/shot.jpg
@@ -56,6 +59,7 @@ ros2 launch ringfusion_bringup single_module.launch.py image:=/path/to/shot.jpg
 # Run a single node directly
 ros2 run ringfusion_drivers tof_driver
 ros2 run ringfusion_drivers camera
+ros2 run ringfusion_drivers tof_heatmap
 ros2 run ringfusion_perception perception
 ```
 
@@ -103,28 +107,53 @@ The IMX219 has no ISP color-tuning profile installed, so raw frames come out wit
 color cast and crushed contrast — `camera.py`'s `ArducamCSI.read()` applies a gray-world
 white-balance + contrast-stretch correction (via a LUT, ~8ms/frame) before publishing.
 
-## Viewing the raw video feed
+## Viewing both feeds (camera + ToF heatmap)
+
+One command brings up the whole viewing stack — camera, ToF driver, heatmap colorizer,
+the local on-monitor window, and the browser server:
 
 ```bash
 sudo apt-get install -y ros-humble-web-video-server   # one-time
 
-ros2 launch ringfusion_bringup single_module.launch.py   # or: ros2 run ringfusion_drivers camera
-ros2 run web_video_server web_video_server --ros-args -p port:=8080
+ros2 launch ringfusion_bringup feeds.launch.py
 ```
 
-Then open `http://<jetson-ip>:8080/stream?topic=/image&quality=60` in a browser on the same
-network (find `<jetson-ip>` with `hostname -I`). Useful when there's no display attached to
-the Jetson.
+Arguments: `port` (ToF serial, default `/dev/ttyACM1`), `fps` (camera capture, default 30),
+`view` (local window, default true), `web` (browser server, default true).
 
-**On the `quality` param:** at the default quality (95), a 1280x720@~15Hz JPEG stream needs
-~20Mbps sustained — measured steady at 2.5MB/s over loopback, no drops. If the viewing
-device's WiFi link can't sustain that continuously, the server's write queue backs up and
-never catches up, showing up as a growing, then roughly constant, multi-second lag even
-though capture (~8ms) and ROS transport (~11ms) stay fast. `quality=60` cuts that to
-~4Mbps (measured) with no visible quality loss and comfortably fits typical WiFi. Drop it
-further (`quality=30`-`40`) if the lag is still there.
+**Local viewing — lowest latency, recommended.** Run the launch from a terminal *inside the
+Jetson's desktop session* (monitor plugged in) and the `dual_view` window opens automatically,
+showing camera + ToF side by side with live Hz. It subscribes to the ROS topics directly —
+no network hop, no JPEG re-encode, which are the two things that add lag. Over SSH with no
+display, pass `view:=false`.
 
-For a local display instead: `ros2 run rqt_image_view rqt_image_view` (subscribe to `/image`).
+**Browser viewing — from another machine on the network:**
+
+```
+http://<jetson-ip>:8080/stream?topic=/image&quality=60
+http://<jetson-ip>:8080/stream?topic=/tof_heatmap
+```
+
+(find `<jetson-ip>` with `hostname -I`). **On the `quality` param:** at the default quality
+(95), a 1280x720 JPEG stream needs ~20Mbps sustained. If the viewing device's WiFi can't hold
+that, the server's write queue backs up into a growing multi-second lag even though capture
+(~8ms) and ROS transport (~11ms) stay fast. `quality=60` cuts it to ~4Mbps with no visible
+quality loss; drop to `30`-`40` if lag persists. Local viewing avoids this entirely.
+
+### Performance notes (Jetson AGX Orin)
+
+- **Power mode.** Check with `nvpmodel -q`. If it's not MAXN, everything is throttled (fewer
+  cores, lower clocks) — set it with `sudo nvpmodel -m 0` (applies immediately, no reboot;
+  persists across reboots) then `sudo jetson_clocks` (re-run after each boot). The higher-res
+  camera modes (1080p30) also appear to need MAXN's CSI/ISP bandwidth.
+- **Camera rate.** The Arducam IMX219 tuning here only accepts **1280x720** via
+  `nvarguscamerasrc`; higher-res modes report `INVALID_SETTINGS`. 720p runs up to ~30fps.
+- **ToF rate.** Capped at 5Hz by the firmware (`MEASUREMENT_PERIOD_MS = 200` in
+  `firmware-esp/main/main.c`). Lower it (e.g. `33` → 30Hz target; will self-limit to the
+  sensor's real 48x32 max) and reflash the ESP32. The ROS side forwards whatever it emits.
+- **`nvargus-daemon`.** If the camera starts failing with `INVALID_SETTINGS` intermittently,
+  the Argus daemon is wedged (often from `kill -9`-ing a camera process). Fix:
+  `sudo systemctl restart nvargus-daemon`. Stop camera nodes with SIGTERM, not `kill -9`.
 
 ## Sanity checks / useful `ros2` commands
 
