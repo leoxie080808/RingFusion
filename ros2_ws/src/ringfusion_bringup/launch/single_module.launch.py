@@ -44,7 +44,7 @@ def generate_launch_description():
         Node(package='ringfusion_drivers', executable='camera',
              name='camera', output='screen',
              parameters=[{'image': image, 'frame_id': 'cam_0',
-                          'width': 1280, 'height': 720}]),
+                          'width': 1640, 'height': 1232}]),   # full-FOV binned mode
 
         Node(package='ringfusion_perception', executable='perception',
              name='perception', output='screen',

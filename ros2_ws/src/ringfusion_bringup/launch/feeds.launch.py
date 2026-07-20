@@ -8,8 +8,8 @@ ToF-heatmap colorizer, and two ways to watch them.
 Arguments (all optional):
   port    ToF serial device            (default /dev/ttyACM1  — the ESP32-C6
                                          native-USB port, idVendor 303a)
-  fps     camera capture rate          (default 30; 1280x720 is the only
-                                         resolution this Arducam tuning allows)
+  fps     camera capture rate          (default 30; capture is 1640x1232, the
+                                         full-FOV binned mode)
   view    open the local dual_view window on the Jetson's monitor (default true)
   web     start web_video_server for browser viewing              (default true)
 
@@ -49,9 +49,10 @@ def generate_launch_description():
         DeclareLaunchArgument('web', default_value='true'),
 
         # --- sensors ---
+        # 1640x1232 = IMX219 full-sensor 2x2-binned mode (full fisheye FOV).
         Node(package='ringfusion_drivers', executable='camera',
              name='camera', output='screen',
-             parameters=[{'sensor_id': 0, 'width': 1280, 'height': 720,
+             parameters=[{'sensor_id': 0, 'width': 1640, 'height': 1232,
                           'fps': fps, 'rate': 30.0, 'frame_id': 'cam_0'}]),
 
         Node(package='ringfusion_drivers', executable='tof_driver',

@@ -25,9 +25,9 @@ class CameraNode(Node):
     def __init__(self):
         super().__init__('camera')
         self.declare_parameter('sensor_id', 0)
-        self.declare_parameter('width', 1280)
-        self.declare_parameter('height', 720)
-        self.declare_parameter('fps', 15)
+        self.declare_parameter('width', 1640)     # IMX219 full-sensor 2x2-binned (full FOV)
+        self.declare_parameter('height', 1232)
+        self.declare_parameter('fps', 30)
         self.declare_parameter('flip', camlib.FLIP_180)
         self.declare_parameter('image', '')
         self.declare_parameter('frame_id', 'cam_0')

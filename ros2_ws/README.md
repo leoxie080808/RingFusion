@@ -39,8 +39,9 @@ the training/export workflow is in [../training/README.md](../training/README.md
 - **No TensorRT engines** — must be built on the Orin (hardware-/version-specific). Never
   built or run on the Jetson yet.
 - **Residual ground truth** — synthetic/LiDAR/OAK-D depth not collected (the schedule risk).
-- **All paper numbers are placeholders** — FPS, accuracy, and param counts (student TBD;
-  residual measured 0.46M). Nothing is submittable until measured on real hardware.
+- **All paper numbers are placeholders** — FPS, accuracy, and param counts (student measured
+  **3.66M**, residual measured 0.46M; the doc's "6.1M" student was a placeholder). Nothing is
+  submittable until measured on real hardware.
 - The dev PC (Windows) **cannot build the ROS workspace** (`rclpy` is Linux/ROS) — build and
   train on the Jetson or a Linux GPU box. The pure-numpy pipeline + training code do run on the PC.
 
@@ -148,6 +149,35 @@ with mocks and swaps to real engines on the Jetson with no other changes:
 
 The math between them (zone projection, closed-form anchoring, analytic covariance,
 unprojection) has no learned parameters. See `RingFusion_technical_reference_updateP2.md`.
+
+**Stage 1 rectification.** The lens is a ~155° fisheye, so `perception_node` remaps each
+frame to a rectilinear (pinhole) image before the pipeline runs (`rectify.FisheyeRectifier`),
+and everything downstream — zone projection *and* cloud unprojection — then uses one
+consistent pinhole `K`. A zero-distortion fisheye is still an *equidistant* fisheye, and the
+nominal focal length is close to its true value, so rectification is **active even with the
+nominal calibration** (a rough but real de-warp); real calibration just refines the
+lens-specific coefficients. It falls back to an identity passthrough only for a `pinhole`
+model or if cv2 is missing.
+
+**See it live:** `ros2 run ringfusion_perception rectify_view` publishes `/rectify_compare`
+(raw | rectified, side by side). View it at
+`http://<jetson-ip>:8080/stream?topic=/rectify_compare` (with `web_video_server` running).
+Point at straight edges — door frames, floor tiles — to confirm the de-warp; tune
+`rectify:` `fov_scale`/`balance` in `calibration.yaml` and relaunch to adjust the crop.
+
+**Calibrating the lens** (fills in the real intrinsics that activate rectification):
+
+```bash
+# 1. Collect ~20 checkerboard views (headless auto-capture; move the board around,
+#    especially into the corners where fisheye distortion is strongest)
+PYTHONNOUSERSITE=1 python tools/calibrate_camera.py --capture calib_imgs --cols 9 --rows 6
+# 2. Calibrate and print the yaml block to paste into calibration.yaml
+python tools/calibrate_camera.py --images calib_imgs --cols 9 --rows 6 --square-mm 25
+```
+
+Paste the printed `camera:` + `rectify:` block into
+[src/ringfusion_bringup/config/calibration.yaml](src/ringfusion_bringup/config/calibration.yaml).
+Intrinsics are resolution-specific — calibrate at the resolution you deploy.
 
 Parameters (`perception_node`): `calib`, `frame_id`, `backbone_engine`, `residual_engine`,
 `min_confidence` (default `-1` = ignore ToF confidence and weight all zones equally; set
@@ -289,3 +319,42 @@ rqt_graph                              # visualize the node/topic graph
   ```
 - **Nodes can't find messages/executables after building**: make sure you `source install/setup.bash` in the terminal you're running from (each new terminal needs it).
 - **`camera` node crashes with "Could not open CSI camera"**: check `dpkg -l | grep arducam` and `/dev/video0` exist first (see Camera hardware section above — the Arducam driver may not be installed). If those are fine, check `python3 -c "import cv2; print(cv2.getBuildInformation())" | grep GStreamer` — if it says `NO`, a pip-installed `opencv-python` in `~/.local` is shadowing JetPack's GStreamer-enabled system `python3-opencv`. `single_module.launch.py` already sets `PYTHONNOUSERSITE=1` to work around this; if you run `ros2 run ringfusion_drivers camera` directly outside the launch file, prefix it with `PYTHONNOUSERSITE=1` too.
+
+## Task tracker
+
+Living checklist of remaining work, in dependency order. Scratch items off (`[x]`)
+as they land. Detail on each in the technical reference and the sections above.
+
+### ▶ Do next (immediate action items)
+
+1. **Calibrate the lens (A2) — physical, you.** Print `checkerboard_9x6_25mm.pdf` at
+   **100% scale**, tape it flat to something rigid, measure one square with a ruler.
+   Then ping me to drive the capture + calibrate; I paste the result into
+   `calibration.yaml`. This turns the nominal de-warp into the accurate one.
+2. **Fix GPU torch — unblocks all of Section B.** The `~/.local` PyPI `torch 2.11.0`
+   has broken cuBLAS (`CUBLAS_STATUS_ALLOC_FAILED`). Replace with NVIDIA's JetPack
+   wheel (L4T 36.5 / CUDA 12.6 / py3.10). Required before B2; makes B1 instant. Say go
+   and I'll look up the exact wheel and do the swap.
+3. **B1 Step-0 sanity — eyeball the teacher.** `python training/step0_sanity.py
+   --image step0_raw_frame.png --raw` (add `--long-side 640` on CPU; runs in seconds
+   once the GPU is fixed). Looking for: near surfaces warm, far cool, crisp edges, no
+   big smeared/flat blobs. A bad result changes the plan *before* B2.
+4. **B2 distillation — after 1–3.** Collect ~20k rectified images (the camera +
+   `rectify_view` can produce them), then `cache_teacher` → `distill_backbone` →
+   `export_onnx` → `build_engine`, and measure Orin FPS.
+
+**A — Camera / Arducam pipeline**
+- [x] A1. `tools/calibrate_camera.py` — fisheye (Kannala-Brandt) checkerboard calibration tool
+- [ ] A2. Run calibration on the real lens → replace nominal intrinsics in `calibration.yaml` *(needs a printed checkerboard; physical step)*
+- [x] A3. Stage 1 rectification (fisheye → rectilinear) wired into perception (`rectify.py`); **active now** with the nominal equidistant model (a real de-warp), refined once A2 lands. Confirm live: `rectify_view` → `/rectify_compare`
+- [x] A4. Capture resolution = **1640×1232** (IMX219 full-sensor 2×2-binned — full fisheye FOV; the 16:9 modes crop it). Wired into `calibration.yaml`, both launch files, `camera_node`, and the calib tool. Runs ~15 Hz capping a full core (color-correct at 2 MP; fine for the ~5 Hz fusion, see C3)
+
+**B — Networks (need no ground truth for B1–B2)**
+- [ ] B1. Step 0 sanity: run Depth Anything V2 on real **rectified** frames (cheap; could change the plan). *Script ready + validated: `training/step0_sanity.py` (rectifies inline, reuses `cache_teacher`'s teacher). `transformers` + `pillow>=10` installed; test frame `step0_raw_frame.png`. Runs but is slow on CPU (minutes even at `--long-side 640`) — GPU fix (above) makes it instant. Output: `[ RGB | inverse-depth ]` side-by-side.*
+- [ ] B2. Distill backbone → ONNX → INT8 engine **on the Orin** → measure FPS (headline number). Backbone input size (default **384×288**, must be a **multiple of 32**) is the depth-detail lever, tunable here with a latency measurement — *not* the camera resolution. Built student is **3.66M params** (design doc's "6.1M" was a placeholder). **PREREQUISITE: fix GPU torch** — the `~/.local` PyPI `torch 2.11.0` has a broken cuBLAS (`CUBLAS_STATUS_ALLOC_FAILED`); replace with NVIDIA's JetPack wheel (L4T 36.5 / CUDA 12.6 / py3.10). CPU works for one-off B1 only
+- [ ] B3. Ground-truth collection → train residual with NLL → measure calibration coverage (→0.68)
+
+**C — Housekeeping**
+- [ ] C1. `tof_driver` 500 Hz poll cleanup (threaded blocking read; verify ToF latency doesn't regress)
+- [ ] C2. Fix stale "B0472 stitches 4 cameras into one frame" comment in `camera.py` (it's native per-camera)
+- [ ] C3. Camera color-correction is CPU-bound (~one core/camera at 1640×1232) — won't scale to 4 cameras; move the LUT tone-correction to the GPU (nvvidconv/CUDA) or make it optional

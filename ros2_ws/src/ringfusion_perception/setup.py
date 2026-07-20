@@ -20,6 +20,7 @@ setup(
     entry_points={
         'console_scripts': [
             'perception = ringfusion_perception.perception_node:main',
+            'rectify_view = ringfusion_perception.rectify_view_node:main',
         ],
     },
 )

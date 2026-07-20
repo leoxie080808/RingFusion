@@ -36,6 +36,7 @@ from . import geometry as geo
 from . import pipeline
 from .backbone import MockBackbone
 from .residual import MockResidual
+from .rectify import FisheyeRectifier
 from .cloud_util import xyz_to_pointcloud2
 
 
@@ -45,6 +46,7 @@ def load_calib(path):
         c = yaml.safe_load(f)
     cam = c['camera']
     ext = c['extrinsics_cam_tof']
+    rect = c.get('rectify', {})
     return {
         'K': (cam['fx'], cam['fy'], cam['cx'], cam['cy']),
         'dist': np.asarray(cam.get('dist', [0, 0, 0, 0]), float),
@@ -52,6 +54,12 @@ def load_calib(path):
         'T_cam_tof': geo.make_T_cam_tof(ext['translation_mm'], ext['rotation_rpy_deg']),
         'img_w': cam['width'], 'img_h': cam['height'],
         'fov_h': c['tof']['fov_h_deg'], 'fov_v': c['tof']['fov_v_deg'],
+        'rectify': {
+            'width': rect.get('width', cam['width']),
+            'height': rect.get('height', cam['height']),
+            'balance': rect.get('balance', 0.0),
+            'fov_scale': rect.get('fov_scale', 1.0),
+        },
     }
 
 
@@ -63,12 +71,34 @@ class PerceptionNode(Node):
         self.declare_parameter('backbone_engine', '')
         self.declare_parameter('residual_engine', '')
         self.declare_parameter('min_confidence', -1)
-        self.calib = load_calib(self.get_parameter('calib').value)
+        raw = load_calib(self.get_parameter('calib').value)
         self.frame_id = self.get_parameter('frame_id').value
         self.min_confidence = int(self.get_parameter('min_confidence').value)
 
+        # Stage 1 rectifier: fisheye raw -> rectilinear. Identity until the lens
+        # is calibrated (dist all zeros), so the pipeline runs unchanged today.
+        r = raw['rectify']
+        self.rectifier = FisheyeRectifier(
+            raw['K'], raw['dist'], raw['model'],
+            size_in=(raw['img_w'], raw['img_h']),
+            size_out=(r['width'], r['height']),
+            balance=r['balance'], fov_scale=r['fov_scale'])
+        # Everything downstream runs on the rectified (pinhole) image, so the
+        # pipeline's zone projection and cloud unprojection use one consistent
+        # model -- the whole point of Stage 1.
+        self.calib = dict(raw)
+        self.calib['K'] = self.rectifier.K_rect
+        self.calib['model'] = 'pinhole'
+        self.calib['dist'] = np.zeros(4)
+        self.calib['img_w'], self.calib['img_h'] = self.rectifier.size
+
         self.backbone = self._load_backbone()
         self.residual = self._load_residual()
+        self.get_logger().info(
+            "rectify: " + ("IDENTITY (lens not calibrated -- raw frame used as-is; "
+                           "run tools/calibrate_camera.py)"
+                           if self.rectifier.is_identity
+                           else f"fisheye->pinhole {self.rectifier.size}"))
 
         self.last_image = None
         self.create_subscription(Image, 'image', self.on_image, 5)
@@ -101,7 +131,7 @@ class PerceptionNode(Node):
             self.get_logger().warn(f"expected rgb8, got {msg.encoding}")
             return
         img = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.width, 3)
-        self.last_image = img
+        self.last_image = self.rectifier.rectify(img)   # Stage 1
 
     def on_tof(self, msg):
         if self.last_image is None:

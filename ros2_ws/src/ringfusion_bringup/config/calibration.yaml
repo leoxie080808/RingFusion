@@ -1,21 +1,33 @@
 # RingFusion single-module calibration (bench: 1 camera + 1 LightRanger 14).
 # Camera: Arducam B0179 (IMX219 1/4", 2.5 mm M12 fisheye, 170D x 155H x 115V).
 #
-# INTRINSICS BELOW ARE NOMINAL PLACEHOLDERS, computed from the datasheet for a
-# 1280x720 capture. They let the pipeline run and let you eyeball zone landing,
-# but a 155-degree fisheye MUST be calibrated (tools/calibrate_camera.py) before
-# any depth value is trustworthy. Replace this whole block with the output.
+# Deploy resolution: 1640x1232 -- the IMX219 full-sensor 2x2-binned mode, which
+# keeps the FULL fisheye field (~155H x 115V) rather than the cropped 16:9 modes.
+# INTRINSICS BELOW ARE NOMINAL PLACEHOLDERS (equidistant-fisheye estimate at this
+# resolution). They let the pipeline run and give a rough de-warp, but a 155-degree
+# fisheye MUST be calibrated (tools/calibrate_camera.py) before any depth value is
+# trustworthy. Replace this whole block with the tool's output.
 camera:
-  width: 1280
-  height: 720
+  width: 1640
+  height: 1232
   model: fisheye              # fisheye (Kannala-Brandt) | pinhole
-  # Nominal derivation (see geometry.py header):
-  #   fx = f_mm / pixel_mm * (capture_w / sensor_active_w)
-  fx: 460.0
-  fy: 460.0
-  cx: 640.0
-  cy: 360.0
+  # Nominal equidistant estimate: fx ~= (w/2) / (fov_h/2 in rad); cx,cy at center.
+  fx: 610.0
+  fy: 610.0
+  cx: 820.0
+  cy: 616.0
   dist: [0.0, 0.0, 0.0, 0.0]  # k1..k4 fisheye; zeros until calibrated
+
+# Stage 1 rectification output: the rectilinear (pinhole) image the perception
+# pipeline actually consumes, built from the fisheye calibration above. A fisheye
+# model always produces a real de-warp (a zero-distortion fisheye is still an
+# equidistant fisheye); real calibration just refines it. Same size as the capture
+# keeps full detail before the backbone downscales to 384x288.
+rectify:
+  width: 1640
+  height: 1232
+  balance: 0.0        # 0 = crop to all-valid pixels, 1 = keep all source pixels
+  fov_scale: 1.0      # >1 zooms in (narrower FOV, less extreme edge stretch)
 
 tof:
   fov_h_deg: 61.0             # TMF8829 ~80 deg diagonal -> ~61 h at 4:3
