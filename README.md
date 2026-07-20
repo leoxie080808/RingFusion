@@ -21,8 +21,8 @@ least-squares fit joins them with **no learned parameters**. Full design in
 
 The **sensor stack and full perception pipeline run today with mock networks**. The
 two neural nets are written but **not trained**. Depth is **not metric until the
-fisheye lens is calibrated**. The GPU (PyPI torch) currently has a broken cuBLAS —
-training needs NVIDIA's JetPack torch first.
+fisheye lens is calibrated**. GPU torch is **fixed** (cuBLAS/cuDNN verified on the Orin)
+and the Step-0 teacher sanity **passed**, so distillation (B2) is unblocked.
 
 Full breakdown + living checklist:
 **[ros2_ws/README.md → Task tracker](ros2_ws/README.md#task-tracker)**.
@@ -34,14 +34,12 @@ Full breakdown + living checklist:
    paste the result into
    [`ros2_ws/src/ringfusion_bringup/config/calibration.yaml`](ros2_ws/src/ringfusion_bringup/config/calibration.yaml).
    Turns the nominal de-warp into the accurate one.
-2. **Fix GPU torch.** The `~/.local` PyPI `torch 2.11.0` has broken cuBLAS
-   (`CUBLAS_STATUS_ALLOC_FAILED`). Replace with NVIDIA's JetPack wheel
-   (L4T 36.5 / CUDA 12.6 / py3.10). Unblocks all of training (Section B).
-3. **B1 — Step 0 sanity.** `python training/step0_sanity.py --image step0_raw_frame.png --raw`
-   — eyeball Depth Anything V2 on a rectified frame before investing in distillation.
-   (Instant once GPU is fixed; slow on CPU.)
-4. **B2 — distillation.** Collect ~20k rectified images → `cache_teacher` →
+2. **B2 — distillation.** Collect ~20k rectified images → `cache_teacher` →
    `distill_backbone` → `export_onnx` → `build_engine`, and measure Orin FPS.
+
+**✅ Done:** GPU torch fixed (cuBLAS/cuDNN verified — recipe in
+[training/README.md](training/README.md#gpu-torch-on-the-orin--working-recipe-resolved));
+B1 Step-0 sanity passed (Depth Anything V2 looks good on our rectified fisheye → `step0.png`).
 
 ## Quick start (view the live sensors)
 

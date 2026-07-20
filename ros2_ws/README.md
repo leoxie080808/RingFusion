@@ -331,17 +331,14 @@ as they land. Detail on each in the technical reference and the sections above.
    **100% scale**, tape it flat to something rigid, measure one square with a ruler.
    Then ping me to drive the capture + calibrate; I paste the result into
    `calibration.yaml`. This turns the nominal de-warp into the accurate one.
-2. **Fix GPU torch — unblocks all of Section B.** The `~/.local` PyPI `torch 2.11.0`
-   has broken cuBLAS (`CUBLAS_STATUS_ALLOC_FAILED`). Replace with NVIDIA's JetPack
-   wheel (L4T 36.5 / CUDA 12.6 / py3.10). Required before B2; makes B1 instant. Say go
-   and I'll look up the exact wheel and do the swap.
-3. **B1 Step-0 sanity — eyeball the teacher.** `python training/step0_sanity.py
-   --image step0_raw_frame.png --raw` (add `--long-side 640` on CPU; runs in seconds
-   once the GPU is fixed). Looking for: near surfaces warm, far cool, crisp edges, no
-   big smeared/flat blobs. A bad result changes the plan *before* B2.
-4. **B2 distillation — after 1–3.** Collect ~20k rectified images (the camera +
-   `rectify_view` can produce them), then `cache_teacher` → `distill_backbone` →
-   `export_onnx` → `build_engine`, and measure Orin FPS.
+2. **B2 distillation.** Collect ~20k rectified images (the camera + `rectify_view` can
+   produce them), then `cache_teacher` → `distill_backbone` → `export_onnx` →
+   `build_engine`, and measure Orin FPS. GPU is fixed and Step 0 passed, so this is unblocked.
+
+**✅ Done recently:** GPU torch fixed — cuBLAS + cuDNN verified on the Orin (recipe in
+[training/README.md](../training/README.md#gpu-torch-on-the-orin--working-recipe-resolved));
+**B1 Step-0 passed** — Depth Anything V2 produces clean depth on our rectified fisheye
+(`step0.png`), validating the distillation plan.
 
 **A — Camera / Arducam pipeline**
 - [x] A1. `tools/calibrate_camera.py` — fisheye (Kannala-Brandt) checkerboard calibration tool
@@ -350,8 +347,8 @@ as they land. Detail on each in the technical reference and the sections above.
 - [x] A4. Capture resolution = **1640×1232** (IMX219 full-sensor 2×2-binned — full fisheye FOV; the 16:9 modes crop it). Wired into `calibration.yaml`, both launch files, `camera_node`, and the calib tool. Runs ~15 Hz capping a full core (color-correct at 2 MP; fine for the ~5 Hz fusion, see C3)
 
 **B — Networks (need no ground truth for B1–B2)**
-- [ ] B1. Step 0 sanity: run Depth Anything V2 on real **rectified** frames (cheap; could change the plan). *Script ready + validated: `training/step0_sanity.py` (rectifies inline, reuses `cache_teacher`'s teacher). `transformers` + `pillow>=10` installed; test frame `step0_raw_frame.png`. Runs but is slow on CPU (minutes even at `--long-side 640`) — GPU fix (above) makes it instant. Output: `[ RGB | inverse-depth ]` side-by-side.*
-- [ ] B2. Distill backbone → ONNX → INT8 engine **on the Orin** → measure FPS (headline number). Backbone input size (default **384×288**, must be a **multiple of 32**) is the depth-detail lever, tunable here with a latency measurement — *not* the camera resolution. Built student is **3.66M params** (design doc's "6.1M" was a placeholder). **PREREQUISITE: fix GPU torch** — the `~/.local` PyPI `torch 2.11.0` has a broken cuBLAS (`CUBLAS_STATUS_ALLOC_FAILED`); replace with NVIDIA's JetPack wheel (L4T 36.5 / CUDA 12.6 / py3.10). CPU works for one-off B1 only
+- [x] B1. Step 0 sanity — **PASSED**. Depth Anything V2 on our rectified fisheye produces clean depth (near/far correct, crisp edges, objects separated) → distillation plan validated. `training/step0_sanity.py --image step0_raw_frame.png --raw` runs in ~14 s on GPU; result in `step0.png`.
+- [ ] B2. Distill backbone → ONNX → INT8 engine **on the Orin** → measure FPS (headline number). Backbone input size (default **384×288**, must be a **multiple of 32**) is the depth-detail lever, tunable here with a latency measurement — *not* the camera resolution. Built student is **3.66M params** (design doc's "6.1M" was a placeholder). **GPU torch fixed** (cuBLAS/cuDNN verified — recipe in training/README). Needs ~20k rectified images collected first.
 - [ ] B3. Ground-truth collection → train residual with NLL → measure calibration coverage (→0.68)
 
 **C — Housekeeping**

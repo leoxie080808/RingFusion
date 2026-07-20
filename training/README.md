@@ -34,12 +34,35 @@ pip install -r training/requirements.txt
 # On the Orin: install torch/torchvision from JetPack wheels instead of PyPI.
 ```
 
-> **⚠ GPU prerequisite (blocks all training on the Orin).** A plain PyPI
-> `torch` on the Jetson has a **broken cuBLAS** — you'll see
-> `CUBLAS_STATUS_ALLOC_FAILED` on the first matmul even though `torch.cuda.is_available()`
-> is True. Install torch/torchvision from **NVIDIA's JetPack wheels** for your L4T
-> (this rig: L4T 36.5 / CUDA 12.6 / py3.10). CPU works only for a one-off
-> `step0_sanity.py` check; caching the teacher (~20k imgs) and distillation need the GPU.
+### GPU torch on the Orin — working recipe (RESOLVED)
+
+A plain PyPI `torch` on the Jetson has a **broken cuBLAS** — `CUBLAS_STATUS_ALLOC_FAILED`
+on the first matmul even though `torch.cuda.is_available()` is True. Cause: PyPI torch drags
+in pip CUDA libs (`nvidia-cublas-cu12` **12.9**, cu13 variants) that need a newer CUDA driver
+than the Jetson's **12.6** (the driver ships with JetPack and can't be upgraded separately).
+The Jetson's own CUDA 12.6 has cuBLAS/cuDNN/cuSPARSE/cuSOLVER; torch just needs to use them.
+
+Recipe that works on **L4T 36.5 / CUDA 12.6 / py3.10 / Orin** (verified: cuBLAS + cuDNN pass):
+
+```bash
+# 1. Remove PyPI torch + ALL the mismatched pip CUDA libs it pulled in
+pip3 uninstall -y $(pip3 list | grep -iE "^torch |^torchvision |^nvidia-" | awk '{print $1}')
+
+# 2. Jetson-native torch/torchvision, --no-deps so it does NOT re-pull pip CUDA libs
+pip3 install --user --no-deps torch==2.11.0 torchvision==0.26.0 \
+    --index-url https://pypi.jetson-ai-lab.io/jp6/cu126
+
+# 3. The one lib not in system CUDA: libcudss.so.0 (cuDSS). It drags cublas-cu12 back in,
+#    so install then remove that (torch then uses SYSTEM cuBLAS 12.6).
+pip3 install --user nvidia-cudss-cu12
+pip3 uninstall -y nvidia-cublas-cu12 nvidia-cuda-nvrtc-cu12 cuda-toolkit
+
+# 4. Verify
+python3 -c "import torch; a=torch.randn(64,64,device='cuda'); print('cuBLAS OK', (a@a).sum().item())"
+```
+
+> **⚠ Gotcha:** never let anything `pip install nvidia-cublas-cu12` — it's built for a newer
+> CUDA than the Orin's 12.6 driver and re-breaks cuBLAS. torch must use the **system** cuBLAS.
 > Also ensure `pillow>=10` (older Pillow breaks recent `transformers`).
 
 ## 1. Backbone (Network A) — needs images only
