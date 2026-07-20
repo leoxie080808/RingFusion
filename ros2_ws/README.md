@@ -2,13 +2,74 @@
 
 ROS 2 Humble workspace for the RingFusion project (ToF hub + camera driver, perception, bringup, and message definitions).
 
+## Project status (handoff)
+
+Snapshot for anyone picking this up. The **sensor stack and the full perception
+pipeline are code-complete and run today with mock networks.** The two neural
+networks are written but **not yet trained**, and nothing has been **built or run on
+the Jetson** yet. Depth is not metrically trustworthy until the fisheye lens is
+calibrated. Design details live in `RingFusion_technical_reference_updateP2.md`;
+the training/export workflow is in [../training/README.md](../training/README.md).
+
+### Done
+
+- **Sensors, MCU → ROS.** ESP32-C6 firmware streams TMF8829 ToF frames; `tof_driver`
+  (serial → `ToFFrame`) and `camera` (Arducam IMX219 CSI) nodes publish live, plus
+  `tof_heatmap` + `dual_view` for inspection.
+- **Perception pipeline, structurally complete** (stages 2–8): backbone → zone
+  projection → closed-form anchoring → analytic per-pixel variance → residual →
+  unprojection. Publishes `/cloud`, `/depth`, `/depth_var`. The pure-numpy core
+  ([src/ringfusion_perception/ringfusion_perception/pipeline.py](src/ringfusion_perception/ringfusion_perception/pipeline.py))
+  has a PC test suite ([src/ringfusion_perception/test/](src/ringfusion_perception/test/), 5/5 passing — no ROS/CUDA needed). See [Perception](#perception).
+- **Both networks are pluggable and default to mocks**, so the pipeline runs now and
+  swaps to real engines with a launch arg (`backbone_engine:=…`, `residual_engine:=…`) —
+  no code change. `MockResidual` is the exact identity, so output = the closed-form fit.
+- **Training + export code written** ([../training/](../training/), [../tools/](../tools/)): Network A
+  (student backbone), Network B (residual, measured ~0.46M params), distillation + NLL
+  losses, datasets, teacher caching, ONNX + TensorRT build scripts. Torch-only parts
+  smoke-tested; the residual reuses the deployed anchoring math so training matches inference.
+
+### Not done / blocked
+
+- **Fisheye calibration** — [src/ringfusion_bringup/config/calibration.yaml](src/ringfusion_bringup/config/calibration.yaml) still holds
+  NOMINAL placeholder intrinsics. **Depth is not metrically trustworthy until this is
+  done** (checkerboard, Kannala-Brandt). Blocking prerequisite.
+- **Networks not trained** — no `student_best.pth` / `residual_best.pth` yet; the pipeline
+  is running mocks.
+- **No TensorRT engines** — must be built on the Orin (hardware-/version-specific). Never
+  built or run on the Jetson yet.
+- **Residual ground truth** — synthetic/LiDAR/OAK-D depth not collected (the schedule risk).
+- **All paper numbers are placeholders** — FPS, accuracy, and param counts (student TBD;
+  residual measured 0.46M). Nothing is submittable until measured on real hardware.
+- The dev PC (Windows) **cannot build the ROS workspace** (`rclpy` is Linux/ROS) — build and
+  train on the Jetson or a Linux GPU box. The pure-numpy pipeline + training code do run on the PC.
+
+### Next steps (in dependency order)
+
+| # | Step | Needs | Note |
+|---|---|---|---|
+| 0 | Run Depth Anything V2 on real **rectified** Arducam frames (sanity) | camera | cheap; could change the plan |
+| 1 | Fisheye calibration → real intrinsics in `calibration.yaml` | camera | **blocks trustworthy depth** |
+| 2 | Collect ~20k rectified images | camera | diversity > volume |
+| 3 | `cache_teacher.py` — cache DA V2 disparity targets | GPU | once; expensive |
+| 4 | `distill_backbone.py` → student, validate vs teacher | 3 | retires MockBackbone |
+| 5 | `export_onnx` → `build_engine` INT8, **measure Orin FPS** | 4, Jetson | headline number |
+| 6 | Run DEPTHOR-Small on the same Orin | Jetson | efficiency claim |
+| 7 | Ground-truth collection (synthetic first) | — | unblocks residual |
+| 8 | `train_residual.py` with NLL, measure coverage (→0.68) | 7 | calibration claim |
+| 9 | Export residual FP16, integrate, re-measure end-to-end | 8 | final numbers |
+
+**Steps 0–6 need no ground truth and deliver the two headline results** (Orin throughput and
+the DEPTHOR comparison) — do them first. Because the residual is zero-initialized to the
+identity, the system ships and produces the closed-form result before Network B exists.
+
 ## Packages
 
 | Package | Type | Purpose |
 |---|---|---|
 | `ringfusion_msgs` | ament_cmake | Custom message definitions (`ToFFrame.msg`) |
 | `ringfusion_drivers` | ament_python | ToF hub (`tof_driver`), Arducam camera (`camera`), ToF heatmap colorizer (`tof_heatmap`), local combined viewer (`dual_view`) |
-| `ringfusion_perception` | ament_python | Mono depth + ToF anchoring perception node |
+| `ringfusion_perception` | ament_python | Mono depth + ToF anchoring perception node (see [Perception](#perception)) |
 | `ringfusion_bringup` | ament_cmake | Launch files and extrinsic calibration config |
 
 > `ringfusion_msgs` must declare `<export><build_type>ament_cmake</build_type></export>` in its `package.xml`, or colcon misidentifies it as a plain `catkin` package and skips it during the build.
@@ -64,6 +125,42 @@ ros2 run ringfusion_perception perception
 ```
 
 View the output point cloud in `rviz2`: add a `PointCloud2` display on `/cloud` with fixed frame `cam_0`.
+
+## Perception
+
+`perception_node` caches the latest camera frame + ToF frame and runs the pure-numpy
+pipeline (`pipeline.run`) whenever a ToF frame arrives (~5 Hz). It publishes:
+
+| Topic | Type | Contents |
+|---|---|---|
+| `/cloud` | `sensor_msgs/PointCloud2` | metric point cloud (the goal) |
+| `/depth` | `sensor_msgs/Image` `32FC1` | metric depth map |
+| `/depth_var` | `sensor_msgs/Image` `32FC1` | per-pixel depth variance (calibrated uncertainty) |
+
+The pipeline runs two neural networks, both **pluggable** so the workspace runs today
+with mocks and swaps to real engines on the Jetson with no other changes:
+
+- **Backbone** (Network A, `backbone.py`) — monocular relative disparity. `MockBackbone`
+  by default; pass `backbone_engine:=student_int8.engine` to use `TensorRTBackbone`.
+- **Residual** (Network B, `residual.py`) — per-pixel correction to the affine fit plus
+  extra variance. `MockResidual` (the exact identity → output equals the closed-form
+  fit) by default; pass `residual_engine:=residual_fp16.engine` to use `ResidualRefiner`.
+
+The math between them (zone projection, closed-form anchoring, analytic covariance,
+unprojection) has no learned parameters. See `RingFusion_technical_reference_updateP2.md`.
+
+Parameters (`perception_node`): `calib`, `frame_id`, `backbone_engine`, `residual_engine`,
+`min_confidence` (default `-1` = ignore ToF confidence and weight all zones equally; set
+`>= 0` to reject weak zones and weight the fit by confidence).
+
+**Testing on a dev PC (no ROS/CUDA/cv2 needed).** `pipeline.py`, `geometry.py`,
+`anchoring.py`, `residual.MockResidual`, and `backbone.MockBackbone` are pure numpy, so
+the whole pipeline runs and is unit-tested off-robot:
+
+```bash
+cd src/ringfusion_perception
+python -m pytest test/ -v          # or: python test/test_pipeline.py
+```
 
 ## Camera hardware (Arducam IMX219 on the B0472 CSI adapter)
 

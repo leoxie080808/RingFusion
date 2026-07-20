@@ -1,0 +1,21 @@
+# RingFusion training + export dependencies (runs OFF the robot / on the Orin).
+# On the Jetson, install torch/torchvision from NVIDIA's JetPack wheels, not PyPI.
+torch
+torchvision
+numpy
+pillow
+
+# Teacher for distillation (Depth Anything V2)
+transformers
+# accelerate            # optional, speeds up transformers model loading
+
+# ONNX export + parity check (tools/export_onnx.py)
+onnx
+onnxsim
+onnxruntime
+
+# opencv is needed only by tools/build_engine.py INT8 calibration image loading
+# opencv-python
+
+# NOTE: tensorrt and pycuda are provided by JetPack on the Orin. Do NOT pip
+# install them -- use the versions that ship with your JetPack (tools/build_engine.py).

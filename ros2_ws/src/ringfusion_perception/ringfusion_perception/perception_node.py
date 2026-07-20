@@ -1,28 +1,41 @@
 """RingFusion single-module perception node.
 
-Subscribes:  image (sensor_msgs/Image, rgb8)   from camera_node
-             tof   (ringfusion_msgs/ToFFrame)  from tof_driver_node
-Publishes:   cloud (sensor_msgs/PointCloud2)   metric point cloud  <-- the goal
-             depth (sensor_msgs/Image, 32FC1)  metric depth map
+Subscribes:  image     (sensor_msgs/Image, rgb8)   from camera_node
+             tof       (ringfusion_msgs/ToFFrame)  from tof_driver_node
+Publishes:   cloud     (sensor_msgs/PointCloud2)   metric point cloud  <-- the goal
+             depth     (sensor_msgs/Image, 32FC1)  metric depth map
+             depth_var (sensor_msgs/Image, 32FC1)  per-pixel depth variance
 
-Caches the latest image and ToF frame and runs pipeline.run() whenever a fresh
-ToF frame arrives (ToF is the slower stream at ~5 Hz). The heavy math is the
-tested geometry/anchoring/backbone imported unchanged.
+Thin ROS wrapper: it caches the latest image + ToF frame and calls the pure-numpy
+pipeline.run() whenever a fresh ToF frame arrives (ToF is the slower stream at
+~5 Hz). All the heavy math lives in pipeline/geometry/anchoring, which are unit
+tested off-robot.
+
+Backbone and residual are pluggable. Ship with MockBackbone + MockResidual (the
+mock residual is the exact identity, so output = the closed-form fit); swap in
+TensorRTBackbone(engine) and ResidualRefiner(engine) once the engines are built
+on the Jetson -- a one-line change each, nothing downstream changes.
 
 Parameters:
-  calib (str)   path to calibration.yaml
-  frame_id (str) frame the cloud is expressed in (the camera optical frame)
+  calib (str)            path to calibration.yaml
+  frame_id (str)         frame the cloud/depth are expressed in (camera optical)
+  backbone_engine (str)  path to the backbone .engine; '' -> MockBackbone
+  residual_engine (str)  path to the residual .engine; '' -> MockResidual
+  min_confidence (int)   reject ToF zones below this confidence and weight the fit
+                         by confidence; -1 (default) = ignore confidence (uniform)
 """
 import array
 import numpy as np
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
+from sensor_msgs.msg import PointCloud2
 from ringfusion_msgs.msg import ToFFrame
 
 from . import geometry as geo
-from . import anchoring as anc
+from . import pipeline
 from .backbone import MockBackbone
+from .residual import MockResidual
 from .cloud_util import xyz_to_pointcloud2
 
 
@@ -47,17 +60,41 @@ class PerceptionNode(Node):
         super().__init__('perception')
         self.declare_parameter('calib', 'calibration.yaml')
         self.declare_parameter('frame_id', 'cam_0')
+        self.declare_parameter('backbone_engine', '')
+        self.declare_parameter('residual_engine', '')
+        self.declare_parameter('min_confidence', -1)
         self.calib = load_calib(self.get_parameter('calib').value)
         self.frame_id = self.get_parameter('frame_id').value
-        self.backbone = MockBackbone()   # swap TensorRTBackbone once engine exists
+        self.min_confidence = int(self.get_parameter('min_confidence').value)
+
+        self.backbone = self._load_backbone()
+        self.residual = self._load_residual()
 
         self.last_image = None
         self.create_subscription(Image, 'image', self.on_image, 5)
         self.create_subscription(ToFFrame, 'tof', self.on_tof, 5)
-        self.cloud_pub = self.create_publisher(__import__(
-            'sensor_msgs.msg', fromlist=['PointCloud2']).PointCloud2, 'cloud', 5)
+        self.cloud_pub = self.create_publisher(PointCloud2, 'cloud', 5)
         self.depth_pub = self.create_publisher(Image, 'depth', 5)
-        self.get_logger().info("Perception: image + tof -> /cloud, /depth")
+        self.var_pub = self.create_publisher(Image, 'depth_var', 5)
+        self.get_logger().info(
+            f"Perception up: backbone={self.backbone.name} "
+            f"residual={self.residual.name} -> /cloud, /depth, /depth_var")
+
+    def _load_backbone(self):
+        path = self.get_parameter('backbone_engine').value
+        if path:
+            from .backbone import TensorRTBackbone
+            self.get_logger().info(f"loading backbone engine: {path}")
+            return TensorRTBackbone(path)
+        return MockBackbone()
+
+    def _load_residual(self):
+        path = self.get_parameter('residual_engine').value
+        if path:
+            from .residual import ResidualRefiner
+            self.get_logger().info(f"loading residual engine: {path}")
+            return ResidualRefiner(path)
+        return MockResidual()
 
     def on_image(self, msg):
         if msg.encoding != 'rgb8':
@@ -71,53 +108,40 @@ class PerceptionNode(Node):
             return  # wait for first camera frame
         dist_m = np.asarray(msg.dist_m, dtype=np.float32).reshape(msg.rows, msg.cols)
         valid = np.isfinite(dist_m)
-        res = self.run_pipeline(self.last_image, dist_m, valid)
+        confidence = None
+        if len(msg.confidence) == msg.rows * msg.cols:
+            confidence = np.asarray(msg.confidence, np.uint8).reshape(msg.rows, msg.cols)
+
+        res = pipeline.run(self.last_image, dist_m, valid, self.calib,
+                           self.backbone, self.residual,
+                           confidence=confidence, min_confidence=self.min_confidence)
         if not res['ok']:
             self.get_logger().warn(
                 f"anchoring failed ({res['n_anchors']} anchors this frame)")
             return
+
         # publish cloud (the goal)
         cloud_msg = xyz_to_pointcloud2(res['cloud'], self.frame_id, msg.header.stamp)
         self.cloud_pub.publish(cloud_msg)
-        # publish metric depth as 32FC1
-        d = res['metric'].astype(np.float32)
-        dm = Image()
-        dm.header = msg.header
-        dm.header.frame_id = self.frame_id
-        dm.height, dm.width = d.shape
-        dm.encoding = '32FC1'
-        dm.is_bigendian = 0
-        dm.step = d.shape[1] * 4
-        # array.array for the fast setter path; raw bytes would be validated
-        # element-by-element (~600ms for this 3.7MB map). See cloud_util.
-        dm.data = array.array('B', d.tobytes())
-        self.depth_pub.publish(dm)
+        # publish metric depth and per-pixel variance as 32FC1
+        self.depth_pub.publish(self._float_image(res['metric'], msg.header.stamp))
+        if res['var'] is not None:
+            self.var_pub.publish(self._float_image(res['var'], msg.header.stamp))
 
-    def run_pipeline(self, rgb, dist_m, valid):
-        """Inlined pipeline.run() using the imported tested math."""
-        h, w = rgb.shape[:2]
-        K = self.calib['K']
-        rows, cols = dist_m.shape
-        disp = self.backbone.infer(rgb)
-        proj = geo.project_zone_to_pixel(
-            dist_m, valid, cols, rows, self.calib['fov_h'], self.calib['fov_v'],
-            self.calib['T_cam_tof'], K, self.calib['dist'], model=self.calib['model'])
-        uv = proj['uv']; z = proj['z_cam']; ok = proj['valid']
-        finite = np.isfinite(uv[:, 0]) & np.isfinite(uv[:, 1]) & np.isfinite(z)
-        u = np.round(np.where(finite, uv[:, 0], -1)).astype(int)
-        v = np.round(np.where(finite, uv[:, 1], -1)).astype(int)
-        inb = ok & finite & (u >= 0) & (u < w) & (v >= 0) & (v < h) & (z > 0)
-        du = disp[np.clip(v, 0, h - 1), np.clip(u, 0, w - 1)]
-        disp_at = du[inb]; inv_depth = 1.0 / z[inb]
-        weights = np.ones_like(inv_depth)
-        fit = anc.solve_robust(disp_at, inv_depth, weights, iters=1)
-        if fit is None:
-            return {'ok': False, 'n_anchors': int(inb.sum())}
-        a, b = fit
-        metric = anc.to_metric_depth(disp, a, b)
-        cloud = geo.unproject_depth_to_cloud(metric, K, model='pinhole', stride=2)
-        return {'ok': True, 'n_anchors': int(inb.sum()),
-                'metric': metric, 'cloud': cloud, 'a': a, 'b': b}
+    def _float_image(self, arr, stamp):
+        """Pack an HxW float array into a 32FC1 sensor_msgs/Image."""
+        d = np.ascontiguousarray(arr, dtype=np.float32)
+        m = Image()
+        m.header.stamp = stamp
+        m.header.frame_id = self.frame_id
+        m.height, m.width = d.shape
+        m.encoding = '32FC1'
+        m.is_bigendian = 0
+        m.step = d.shape[1] * 4
+        # array.array hits the message data setter's fast path; raw bytes would be
+        # validated element-by-element (~600ms for this 3.7MB map). See cloud_util.
+        m.data = array.array('B', d.tobytes())
+        return m
 
 
 def main(args=None):
