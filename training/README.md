@@ -34,6 +34,14 @@ pip install -r training/requirements.txt
 # On the Orin: install torch/torchvision from JetPack wheels instead of PyPI.
 ```
 
+> **⚠ GPU prerequisite (blocks all training on the Orin).** A plain PyPI
+> `torch` on the Jetson has a **broken cuBLAS** — you'll see
+> `CUBLAS_STATUS_ALLOC_FAILED` on the first matmul even though `torch.cuda.is_available()`
+> is True. Install torch/torchvision from **NVIDIA's JetPack wheels** for your L4T
+> (this rig: L4T 36.5 / CUDA 12.6 / py3.10). CPU works only for a one-off
+> `step0_sanity.py` check; caching the teacher (~20k imgs) and distillation need the GPU.
+> Also ensure `pillow>=10` (older Pillow breaks recent `transformers`).
+
 ## 1. Backbone (Network A) — needs images only
 
 The teacher generates the targets, so distillation needs **no measured depth**.
