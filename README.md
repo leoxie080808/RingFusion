@@ -29,15 +29,14 @@ Full breakdown + living checklist:
 
 ## ▶ Do next (immediate)
 
-1. **Calibrate the lens.** Print `checkerboard_9x6_25mm.pdf` (100% scale, tape flat,
-   measure a square), then run `tools/calibrate_camera.py` capture + calibrate and
-   paste the result into
-   [`ros2_ws/src/ringfusion_bringup/config/calibration.yaml`](ros2_ws/src/ringfusion_bringup/config/calibration.yaml).
-   Turns the nominal de-warp into the accurate one.
-2. **B2 — distillation.** Collect ~20k rectified images → `cache_teacher` →
-   `distill_backbone` → `export_onnx` → `build_engine`, and measure Orin FPS.
+1. **B2 — distillation.** Collect ~20k rectified images from the deployment
+   environment → `cache_teacher` → `distill_backbone` → `export_onnx` →
+   `build_engine`, and measure Orin FPS.
 
-**✅ Done:** GPU torch fixed (cuBLAS/cuDNN verified — recipe in
+**✅ Done:** Fisheye lens **calibrated** (cv2.fisheye, RMS 0.5406 px; `rectify_view`
+verified `identity=False` — real de-warp active in
+[`calibration.yaml`](ros2_ws/src/ringfusion_bringup/config/calibration.yaml));
+GPU torch fixed (cuBLAS/cuDNN verified — recipe in
 [training/README.md](training/README.md#gpu-torch-on-the-orin--working-recipe-resolved));
 B1 Step-0 sanity passed (Depth Anything V2 looks good on our rectified fisheye → `step0.png`).
 

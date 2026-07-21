@@ -3,20 +3,18 @@
 #
 # Deploy resolution: 1640x1232 -- the IMX219 full-sensor 2x2-binned mode, which
 # keeps the FULL fisheye field (~155H x 115V) rather than the cropped 16:9 modes.
-# INTRINSICS BELOW ARE NOMINAL PLACEHOLDERS (equidistant-fisheye estimate at this
-# resolution). They let the pipeline run and give a rough de-warp, but a 155-degree
-# fisheye MUST be calibrated (tools/calibrate_camera.py) before any depth value is
-# trustworthy. Replace this whole block with the tool's output.
+# CALIBRATED 2026-07-21 with tools/calibrate_camera.py (cv2.fisheye, RMS 0.5406 px).
+# Intrinsics are resolution-specific -- this block is valid only at 1640x1232.
+# Re-run the tool if the capture resolution or lens changes.
 camera:
   width: 1640
   height: 1232
   model: fisheye              # fisheye (Kannala-Brandt) | pinhole
-  # Nominal equidistant estimate: fx ~= (w/2) / (fov_h/2 in rad); cx,cy at center.
-  fx: 610.0
-  fy: 610.0
-  cx: 820.0
-  cy: 616.0
-  dist: [0.0, 0.0, 0.0, 0.0]  # k1..k4 fisheye; zeros until calibrated
+  fx: 584.5138
+  fy: 584.4460
+  cx: 823.6587
+  cy: 582.5783
+  dist: [0.043055, -0.016065, 0.008961, -0.001736]  # k1..k4 Kannala-Brandt
 
 # Stage 1 rectification output: the rectilinear (pinhole) image the perception
 # pipeline actually consumes, built from the fisheye calibration above. A fisheye

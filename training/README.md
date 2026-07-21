@@ -85,8 +85,13 @@ worst 20%** so the student never learns those mistakes. Always validate the teac
 *your own* rectified frames first — that is the Step-0 sanity check (`step0.png`).
 
 ```bash
-# Collect ~20k RECTIFIED frames (rectify first — the teacher is garbage on raw
-# fisheye, and that garbage becomes your target). Then:
+# Collect ~20k RECTIFIED frames FROM THE DEPLOYMENT ENVIRONMENT (not a generic/online
+# dataset — the student only gets good at scenes that look like its training set, and
+# you can't rectify a normal photo to mimic this fisheye). Rectify first — the teacher
+# is garbage on raw fisheye, and that garbage becomes your target. Use the ROS collector
+# `ros2 run ringfusion_perception collect_frames` (see ros2_ws/README.md "Collecting
+# training images") — it saves rectified frames through the exact deployment path, with
+# dedup + blur rejection. Diversity > volume. Then:
 
 # a) cache teacher disparity (expensive, once)
 python training/cache_teacher.py --images data/rect --cache data/teacher \

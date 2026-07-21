@@ -1,0 +1,18 @@
+# ---- paste into src/ringfusion_bringup/config/calibration.yaml ----
+camera:
+  width: 1640
+  height: 1232
+  model: fisheye
+  fx: 584.5138
+  fy: 584.4460
+  cx: 823.6587
+  cy: 582.5783
+  dist: [0.043055, -0.016065, 0.008961, -0.001736]   # k1..k4 Kannala-Brandt
+
+rectify:
+  # rectilinear (pinhole) output that the perception pipeline consumes.
+  # Same WxH is fine; tune fov_scale/balance after eyeballing the rectified image.
+  width: 1640
+  height: 1232
+  balance: 0.0        # 0 = crop to all-valid pixels, 1 = keep all source pixels
+  fov_scale: 1.0      # >1 zooms in (narrower FOV, less extreme edge stretch)

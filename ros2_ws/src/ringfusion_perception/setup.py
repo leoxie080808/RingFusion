@@ -21,6 +21,7 @@ setup(
         'console_scripts': [
             'perception = ringfusion_perception.perception_node:main',
             'rectify_view = ringfusion_perception.rectify_view_node:main',
+            'collect_frames = ringfusion_perception.collect_frames_node:main',
         ],
     },
 )

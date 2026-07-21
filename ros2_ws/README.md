@@ -5,11 +5,13 @@ ROS 2 Humble workspace for the RingFusion project (ToF hub + camera driver, perc
 ## Project status (handoff)
 
 Snapshot for anyone picking this up. The **sensor stack and the full perception
-pipeline are code-complete and run today with mock networks.** The two neural
-networks are written but **not yet trained**, and nothing has been **built or run on
-the Jetson** yet. Depth is not metrically trustworthy until the fisheye lens is
-calibrated. Design details live in `RingFusion_technical_reference_updateP2.md`;
-the training/export workflow is in [../training/README.md](../training/README.md).
+pipeline are code-complete and run today with mock networks.** The **fisheye lens is
+now calibrated** (RMS 0.5406 px) and the `camera → rectify → frame-collection` path
+runs on the Jetson. The two neural networks are written but **not yet trained** — the
+**current task is collecting ~20k rectified images** in the deployment environment to
+distill the backbone (Network A). Design details live in
+`RingFusion_technical_reference_updateP2.md`; the training/export workflow is in
+[../training/README.md](../training/README.md).
 
 ### Done
 
@@ -31,9 +33,9 @@ the training/export workflow is in [../training/README.md](../training/README.md
 
 ### Not done / blocked
 
-- **Fisheye calibration** — [src/ringfusion_bringup/config/calibration.yaml](src/ringfusion_bringup/config/calibration.yaml) still holds
-  NOMINAL placeholder intrinsics. **Depth is not metrically trustworthy until this is
-  done** (checkerboard, Kannala-Brandt). Blocking prerequisite.
+- **Training-image collection (current task)** — the `collect_frames` node is built;
+  ~20k rectified images from the deployment environment still need to be gathered
+  (take the Jetson to the field). This is the one thing blocking B2 distillation.
 - **Networks not trained** — no `student_best.pth` / `residual_best.pth` yet; the pipeline
   is running mocks.
 - **No TensorRT engines** — must be built on the Orin (hardware-/version-specific). Never
@@ -49,9 +51,9 @@ the training/export workflow is in [../training/README.md](../training/README.md
 
 | # | Step | Needs | Note |
 |---|---|---|---|
-| 0 | Run Depth Anything V2 on real **rectified** Arducam frames (sanity) | camera | cheap; could change the plan |
-| 1 | Fisheye calibration → real intrinsics in `calibration.yaml` | camera | **blocks trustworthy depth** |
-| 2 | Collect ~20k rectified images | camera | diversity > volume |
+| 0 | ~~Run Depth Anything V2 on real rectified Arducam frames (sanity)~~ | — | **DONE** (B1 passed → `step0.png`) |
+| 1 | ~~Fisheye calibration → real intrinsics in `calibration.yaml`~~ | — | **DONE** (RMS 0.5406 px, `identity=False` verified) |
+| 2 | **Collect ~20k rectified images** (`collect_frames`) ← **you are here** | camera | diversity > volume; in-domain only |
 | 3 | `cache_teacher.py` — cache DA V2 disparity targets | GPU | once; expensive |
 | 4 | `distill_backbone.py` → student, validate vs teacher | 3 | retires MockBackbone |
 | 5 | `export_onnx` → `build_engine` INT8, **measure Orin FPS** | 4, Jetson | headline number |
@@ -123,6 +125,7 @@ ros2 run ringfusion_drivers tof_driver
 ros2 run ringfusion_drivers camera
 ros2 run ringfusion_drivers tof_heatmap
 ros2 run ringfusion_perception perception
+ros2 run ringfusion_perception collect_frames   # collect rectified training images (see below)
 ```
 
 View the output point cloud in `rviz2`: add a `PointCloud2` display on `/cloud` with fixed frame `cam_0`.
@@ -191,6 +194,104 @@ the whole pipeline runs and is unit-tested off-robot:
 cd src/ringfusion_perception
 python -m pytest test/ -v          # or: python test/test_pipeline.py
 ```
+
+## Collecting training images (backbone distillation — B2)
+
+The backbone (Network A) is trained by **distillation**: Depth Anything V2 (the
+"teacher") auto-generates the depth targets, so collection needs **images only — no
+measured depth**. The `collect_frames` node banks **rectified** frames off `/image`
+through the exact `color-correct → rectify` path the robot runs at inference (the
+camera node has already white-balanced/contrast-corrected the frame; this node then
+rectifies it with the same `FisheyeRectifier` + `calibration.yaml` the pipeline uses),
+straight into a folder that `training/cache_teacher.py` reads as-is.
+
+**Why the DEPLOYMENT ENVIRONMENT, not a generic/online dataset.** Distillation makes
+the student copy the teacher's depth *on whatever image distribution you show it*, so
+the student ends up good at scenes that look like its training set. Your deployed
+frames have a specific look — this rectified 155° fisheye crop, the IMX219's
+color/noise, your scenes and lighting — that internet photos (different camera, lens,
+projection, content) do not share, and you **cannot rectify a normal photo to mimic
+your lens**. So the bulk of the data must be your own rectified frames. External
+images can be a **minority supplement** for diversity if your environment is very
+homogeneous, but they never substitute for in-domain data — and since your own frames
+are free to label (the teacher does it), there's little reason to. To stretch a
+smaller set, prefer **augmentation of your own frames** (the distill trainer already
+augments) over importing foreign images. Rule of thumb: **diversity > volume** —
+~15–20k varied in-domain frames is the target, but you can pilot with ~5k and re-run
+(the cached teacher makes re-distilling cheap).
+
+**Lock `fov_scale`/`balance` before collecting.** The whole dataset *and* the deployed
+pipeline must use the same `rectify:` settings in `calibration.yaml`, or the training
+frames won't match what the robot sees. (Eyeball the crop first with `rectify_view`.)
+
+### Run it (two terminals, both sourced)
+
+```bash
+# one-time: build so ros2 run sees the node
+cd ~/RingFusion/ros2_ws
+colcon build --symlink-install --packages-select ringfusion_perception
+source install/setup.bash
+```
+
+```bash
+# Terminal 1 — camera (publishes the color-corrected /image)
+cd ~/RingFusion/ros2_ws && source install/setup.bash
+PYTHONNOUSERSITE=1 ros2 run ringfusion_drivers camera
+```
+
+```bash
+# Terminal 2 — collector (live preview window on the Jetson's monitor)
+cd ~/RingFusion/ros2_ws && source install/setup.bash
+ros2 run ringfusion_perception collect_frames --ros-args \
+  -p calib:=$HOME/RingFusion/ros2_ws/src/ringfusion_bringup/config/calibration.yaml \
+  -p out_dir:=$HOME/RingFusion/data/rect \
+  -p target:=20000
+```
+
+Startup log should read `identity=False` (real de-warp active) and report how many
+frames are already on disk. If `imshow` errors, prefix Terminal 2 with
+`PYTHONNOUSERSITE=1` too (forces JetPack's GTK-enabled OpenCV). Needs the Jetson's
+own monitor — not over SSH.
+
+### Controls (shown in the preview window)
+
+| Key | Action |
+|---|---|
+| **SPACE / y** | save the current rectified frame (manual) |
+| **c** | toggle **continuous** auto-capture on/off |
+| **q / ESC** | quit |
+
+The overlay shows `[count/target]`, the mode, and a live `NEW`/`similar` + `sharp NNN`/`BLURRY NNN` status.
+
+### Two automatic quality gates (continuous mode)
+
+- **Dedup** — a frame counts as new only if it differs enough from the last *saved*
+  frame (mean abs gray diff > `dedup_thresh`, default 8). Stops you banking 500 copies
+  of the same wall as you stand still.
+- **Sharpness / blur** — continuous mode saves only frames with variance-of-Laplacian
+  ≥ `blur_thresh` (default 60), so **motion-blurred frames from walking are rejected**.
+  Watch the live `sharp NNN` readout: stand still to see the sharp value, wave the
+  camera to see it drop, set `blur_thresh` between the two (e.g. `-p blur_thresh:=100`).
+  **Manual `y`-save always honours your keypress** (shows the BLURRY tag as a warning).
+
+### Parameters
+
+`out_dir` (default `data/rect`), `calib`, `target` (default 20000), `dedup_thresh`
+(default 8.0), `min_interval` (seconds between auto-saves, default 0.3), `blur_thresh`
+(default 60.0).
+
+### Field-session tips
+
+- **Cover the variety axes:** different areas/rooms, distances (close *and* far),
+  angles/heights, lighting conditions. Diversity is what matters, not raw count.
+- **Beat blur physically:** walk slowly or **pause-step** (a half-second stop lets a
+  clean frame land, and continuous mode grabs it). Motion blur comes from long
+  exposure, which comes from dim scenes — **brighter areas → sharper frames**, so move
+  slowest where it's dark.
+- **Manual for deliberate shots, continuous for bulk.** Hold `c` on while walking a
+  route; tap it off and use `y` for specific poses you care about.
+- **Stop and resume anytime:** quit with `q`; re-running **appends** (it continues
+  numbering after the frames already in `out_dir`), so collect across several sessions.
 
 ## Camera hardware (Arducam IMX219 on the B0472 CSI adapter)
 
@@ -327,13 +428,13 @@ as they land. Detail on each in the technical reference and the sections above.
 
 ### ▶ Do next (immediate action items)
 
-1. **Calibrate the lens (A2) — physical, you.** Print `checkerboard_9x6_25mm.pdf` at
-   **100% scale**, tape it flat to something rigid, measure one square with a ruler.
-   Then ping me to drive the capture + calibrate; I paste the result into
-   `calibration.yaml`. This turns the nominal de-warp into the accurate one.
-2. **B2 distillation.** Collect ~20k rectified images (the camera + `rectify_view` can
-   produce them), then `cache_teacher` → `distill_backbone` → `export_onnx` →
-   `build_engine`, and measure Orin FPS. GPU is fixed and Step 0 passed, so this is unblocked.
+1. **B2 distillation — collect ~20k rectified images (IN PROGRESS).** Lens is
+   calibrated (A2 done) and the collector tool is built: take the Jetson to the
+   deployment environment and run `collect_frames` (see
+   [Collecting training images](#collecting-training-images-backbone-distillation--b2)
+   for the exact commands, controls, and field tips). Then
+   `cache_teacher` → `distill_backbone` → `export_onnx` → `build_engine`, and measure
+   Orin FPS. GPU is fixed and Step 0 passed, so this is unblocked.
 
 **✅ Done recently:** GPU torch fixed — cuBLAS + cuDNN verified on the Orin (recipe in
 [training/README.md](../training/README.md#gpu-torch-on-the-orin--working-recipe-resolved));
@@ -342,13 +443,13 @@ as they land. Detail on each in the technical reference and the sections above.
 
 **A — Camera / Arducam pipeline**
 - [x] A1. `tools/calibrate_camera.py` — fisheye (Kannala-Brandt) checkerboard calibration tool
-- [ ] A2. Run calibration on the real lens → replace nominal intrinsics in `calibration.yaml` *(needs a printed checkerboard; physical step)*
+- [x] A2. **DONE (2026-07-21).** Calibrated the real lens (cv2.fisheye, RMS **0.5406 px**); real intrinsics in `calibration.yaml`. Verified live: `rectify_view` logs `identity=False` and straight edges de-warp correctly.
 - [x] A3. Stage 1 rectification (fisheye → rectilinear) wired into perception (`rectify.py`); **active now** with the nominal equidistant model (a real de-warp), refined once A2 lands. Confirm live: `rectify_view` → `/rectify_compare`
 - [x] A4. Capture resolution = **1640×1232** (IMX219 full-sensor 2×2-binned — full fisheye FOV; the 16:9 modes crop it). Wired into `calibration.yaml`, both launch files, `camera_node`, and the calib tool. Runs ~15 Hz capping a full core (color-correct at 2 MP; fine for the ~5 Hz fusion, see C3)
 
 **B — Networks (need no ground truth for B1–B2)**
 - [x] B1. Step 0 sanity — **PASSED**. Depth Anything V2 on our rectified fisheye produces clean depth (near/far correct, crisp edges, objects separated) → distillation plan validated. `training/step0_sanity.py --image step0_raw_frame.png --raw` runs in ~14 s on GPU; result in `step0.png`.
-- [ ] B2. Distill backbone → ONNX → INT8 engine **on the Orin** → measure FPS (headline number). Backbone input size (default **384×288**, must be a **multiple of 32**) is the depth-detail lever, tunable here with a latency measurement — *not* the camera resolution. Built student is **3.66M params** (design doc's "6.1M" was a placeholder). **GPU torch fixed** (cuBLAS/cuDNN verified — recipe in training/README). Needs ~20k rectified images collected first.
+- [ ] B2. Distill backbone → ONNX → INT8 engine **on the Orin** → measure FPS (headline number). Backbone input size (default **384×288**, must be a **multiple of 32**) is the depth-detail lever, tunable here with a latency measurement — *not* the camera resolution. Built student is **3.66M params** (design doc's "6.1M" was a placeholder). **GPU torch fixed** (cuBLAS/cuDNN verified — recipe in training/README). **Now blocked only on data collection:** the `collect_frames` node is built and ready — take the Jetson to the field and gather ~20k rectified images (see [Collecting training images](#collecting-training-images-backbone-distillation--b2)).
 - [ ] B3. Ground-truth collection → train residual with NLL → measure calibration coverage (→0.68)
 
 **C — Housekeeping**

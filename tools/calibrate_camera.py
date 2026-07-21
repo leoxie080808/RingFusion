@@ -50,17 +50,20 @@ def gst_pipeline(sensor_id, w, h, fps, flip):
     )
 
 
-def capture(outdir, cols, rows, num, sensor_id, w, h, fps, flip):
+def capture(outdir, cols, rows, num, sensor_id, w, h, fps, flip, manual=False):
     os.makedirs(outdir, exist_ok=True)
     cap = cv2.VideoCapture(gst_pipeline(sensor_id, w, h, fps, flip), cv2.CAP_GSTREAMER)
     if not cap.isOpened():
         print("Could not open camera. Is the Arducam driver installed and "
               "PYTHONNOUSERSITE=1 set (so cv2 has GStreamer)?", file=sys.stderr)
         return 1
+    flags = cv2.CALIB_CB_ADAPTIVE_THRESH | cv2.CALIB_CB_NORMALIZE_IMAGE
+    if manual:
+        return _capture_manual(cap, outdir, cols, rows, num, flags)
+
     print(f"Auto-capturing {num} checkerboard views to {outdir}/ ."
           f" Move the board slowly; cover the edges/corners. Ctrl-C to stop.")
     saved, tries = 0, 0
-    flags = cv2.CALIB_CB_ADAPTIVE_THRESH | cv2.CALIB_CB_NORMALIZE_IMAGE
     try:
         while saved < num:
             ok, frame = cap.read()
@@ -82,6 +85,61 @@ def capture(outdir, cols, rows, num, sensor_id, w, h, fps, flip):
         print("\nstopped.")
     finally:
         cap.release()
+    print(f"Collected {saved} views. Now run with --images {outdir} to calibrate.")
+    return 0
+
+
+def _capture_manual(cap, outdir, cols, rows, num, flags):
+    """Live-preview capture: shows the feed with detected corners overlaid, and
+    saves the CURRENT frame only when you press SPACE/y AND a board is visible
+    (overlay green). q or ESC finishes. Needs a display (a monitor on the Orin);
+    falls back with a message if there is none."""
+    win = "calib capture  |  SPACE/y = save (when green),  q/ESC = done"
+    try:
+        cv2.namedWindow(win, cv2.WINDOW_NORMAL)
+    except cv2.error as e:
+        print(f"No display for the preview window ({e}).\n"
+              f"Run without --manual to use headless auto-capture instead.",
+              file=sys.stderr)
+        cap.release()
+        return 1
+    print("Manual capture. Position the board (hit the corners/edges, vary the tilt); "
+          "when the overlay is GREEN press SPACE or y to save. Press q/ESC when done.")
+    saved = 0
+    try:
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                continue
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            # detect on a downscaled copy so the preview stays responsive at full res
+            scale = 640.0 / gray.shape[1]
+            small = cv2.resize(gray, None, fx=scale, fy=scale) if scale < 1 else gray
+            found, corners = cv2.findChessboardCorners(small, (cols, rows), flags)
+            disp = frame.copy()
+            if found:
+                pts = (corners / scale if scale < 1 else corners).astype(np.float32)
+                cv2.drawChessboardCorners(disp, (cols, rows), pts, found)
+            color = (0, 255, 0) if found else (0, 0, 255)
+            label = "BOARD FOUND - SPACE/y to save" if found else "no board detected"
+            cv2.putText(disp, f"[{saved}/{num}] {label}", (20, 44),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.1, color, 2, cv2.LINE_AA)
+            cv2.imshow(win, disp)
+            key = cv2.waitKey(1) & 0xFF
+            if key in (ord('q'), 27):
+                break
+            if key in (ord('y'), ord(' ')) and found:
+                path = os.path.join(outdir, f"view_{saved:03d}.png")
+                cv2.imwrite(path, frame)   # save the CLEAN full-res frame, no overlay
+                saved += 1
+                print(f"  [{saved}/{num}] saved {path}")
+                if saved >= num:
+                    break
+    except KeyboardInterrupt:
+        print("\nstopped.")
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
     print(f"Collected {saved} views. Now run with --images {outdir} to calibrate.")
     return 0
 
@@ -185,11 +243,15 @@ def main():
     ap.add_argument("--flip", type=int, default=FLIP_180,
                     help="nvvidconv flip-method; keep matching camera.py (default 2)")
     ap.add_argument("--sensor-id", type=int, default=0)
+    ap.add_argument("--manual", action="store_true",
+                    help="live preview; press SPACE/y to save each view (needs a display). "
+                         "Recommended: lets you vary angle/distance between shots.")
     args = ap.parse_args()
 
     if args.capture:
         return capture(args.capture, args.cols, args.rows, args.num,
-                       args.sensor_id, args.width, args.height, args.fps, args.flip)
+                       args.sensor_id, args.width, args.height, args.fps, args.flip,
+                       manual=args.manual)
     if args.images:
         return calibrate(args.images, args.cols, args.rows, args.square_mm,
                          args.width, args.height)
