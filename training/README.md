@@ -69,6 +69,21 @@ python3 -c "import torch; a=torch.randn(64,64,device='cuda'); print('cuBLAS OK',
 
 The teacher generates the targets, so distillation needs **no measured depth**.
 
+**Why images alone are enough — and why unusual objects don't break it.** Monocular
+depth is *relative only*: from a single image a small near object and a large far one
+are pixel-identical (scale ambiguity), so the teacher — and therefore the student —
+predicts disparity *up to a global scale + shift*, **never metres**. It recovers that
+relative structure from object-*agnostic* geometric cues (occlusion, perspective,
+ground contact, relative size, texture gradient, shading), **not** object recognition,
+so it generalizes to machinery and uncommon items it has never seen — they still
+occlude, sit on the floor, and show perspective. Absolute scale is never the network's
+job: the **ToF supplies it at inference** and the closed-form anchoring (Stage 5)
+stretches the relative map onto those real ranges. Two consequences for training:
+(1) targets are free — images only, no measured depth; (2) where the teacher genuinely
+fails (glass, mirrors, sky, blank walls — no geometric cues), the SSI loss **trims the
+worst 20%** so the student never learns those mistakes. Always validate the teacher on
+*your own* rectified frames first — that is the Step-0 sanity check (`step0.png`).
+
 ```bash
 # Collect ~20k RECTIFIED frames (rectify first — the teacher is garbage on raw
 # fisheye, and that garbage becomes your target). Then:
