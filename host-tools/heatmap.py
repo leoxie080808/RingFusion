@@ -27,13 +27,21 @@ STARTUP_DELAY_SECONDS = 1.0
 # Prevent unbounded memory growth if a newline is lost.
 MAX_SERIAL_BUFFER_BYTES = 1_000_000
 
+# Live viewer: when the parse/draw loop falls behind the incoming frame rate, keep
+# only the most recent complete serial lines each cycle and drop the older (stale)
+# ones. ASCII-parsing every frame at 40 Hz is the bottleneck; without dropping, a
+# fixed backlog (~0.5 s) builds up and the display always trails real time. We are
+# only viewing, not recording, so showing the freshest frame is exactly what we want.
+# 4 lines comfortably covers one even+odd subframe pair (one complete map).
+KEEP_RECENT_LINES = 4
+
 
 # ===========================================================================
 # TMF8829 frame configuration
 # ===========================================================================
 
 ROWS = 32
-COLS = 48
+COLS = 32
 
 # Current result format:
 #   byte 0: distance LSB
@@ -42,7 +50,7 @@ COLS = 48
 BASE_RESULT_FORMAT = 0x01
 BYTES_PER_PIXEL = 3
 
-# A 48×32 result arrives as two 48×16 subframes.
+# A 32×32 result arrives as two 32×16 row-interleaved subframes.
 SUBFRAME_ROWS = ROWS // 2
 PIXELS_PER_SUBFRAME = COLS * SUBFRAME_ROWS
 
@@ -126,7 +134,7 @@ END_MARKER_HIGH = 0xE0
 
 @dataclass
 class ParsedSubframe:
-    """One decoded 48×16 TMF8829 subframe."""
+    """One decoded 32×16 TMF8829 subframe."""
 
     subframe_index: int
     layout: int
@@ -153,6 +161,7 @@ class ParserStats:
     orphan_odd_subframes: int = 0
     replaced_even_subframes: int = 0
     stale_even_subframes: int = 0
+    dropped_stale_lines: int = 0
 
     layout_counts: dict[int, int] = field(default_factory=dict)
 
@@ -482,7 +491,7 @@ def parse_tmf8829_record(
 def assemble_complete_map(
     subframe: ParsedSubframe,
 ) -> tuple[np.ndarray, np.ndarray] | None:
-    """Combine even-row and odd-row subframes into one 48×32 map."""
+    """Combine even-row and odd-row subframes into one 32×32 map."""
 
     global _pending_even_subframe
 
@@ -574,6 +583,7 @@ def print_status() -> None:
         f"stale={stats.stale_even_subframes}, "
         f"incomplete={stats.incomplete_payloads}, "
         f"invalid-footer={stats.invalid_footers}, "
+        f"dropped-stale={stats.dropped_stale_lines}, "
         f"layouts=[{layout_summary}]"
     )
 
@@ -713,6 +723,17 @@ def main() -> None:
                 )
 
                 serial_buffer.clear()
+
+            # Drop stale buffered frames so the display stays current (see
+            # KEEP_RECENT_LINES). Only triggers when we've fallen behind; when the
+            # loop keeps up there are <= KEEP_RECENT_LINES lines and nothing is dropped.
+            newline_count = serial_buffer.count(b"\n")
+            if newline_count > KEEP_RECENT_LINES:
+                parts = bytes(serial_buffer).split(b"\n")
+                stats.dropped_stale_lines += newline_count - KEEP_RECENT_LINES
+                serial_buffer = bytearray(
+                    b"\n".join(parts[-(KEEP_RECENT_LINES + 1):])
+                )
 
             while b"\n" in serial_buffer:
                 raw_line, separator, remaining = (
