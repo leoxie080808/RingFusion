@@ -27,32 +27,39 @@ class MobileNetV3Encoder(nn.Module):
         super().__init__()
         weights = MobileNet_V3_Large_Weights.IMAGENET1K_V2 if pretrained else None
         self.blocks = mobilenet_v3_large(weights=weights).features
-        self.out_channels = self._probe()
+        self.tap_indices, self.out_channels = self._probe()
+        self._tap_set = set(self.tap_indices)
 
     @torch.no_grad()
     def _probe(self):
+        """Find ONCE (eager, plain Python ints) the block index of the last feature
+        at each of out_strides, plus its channel count. Doing the stride math here
+        rather than in forward keeps forward trace-/ONNX-friendly: forward taps fixed
+        integer indices instead of building a dict keyed by shape-derived values --
+        under torch.jit tracing those keys become traced tensors and the int lookup
+        misses (KeyError during ONNX export)."""
         was_training = self.training
         self.eval()
         x = torch.zeros(1, 3, 256, 256)
-        chans = self._collect(x)
-        self.train(was_training)
-        return [chans[s][1] for s in self.out_strides]
-
-    def _collect(self, x):
-        """Map stride -> (feature tensor, channels), keeping the last block at
-        each stride (largest receptive field before the next downsample)."""
         h0 = x.shape[-2]
         out = x
-        collected = {}
-        for blk in self.blocks:
+        last = {}                        # stride -> (block index, channels)
+        for i, blk in enumerate(self.blocks):
             out = blk(out)
-            s = h0 // out.shape[-2]
-            collected[s] = (out, out.shape[1])
-        return collected
+            last[int(h0 // out.shape[-2])] = (i, int(out.shape[1]))
+        self.train(was_training)
+        tap_indices = [last[s][0] for s in self.out_strides]
+        out_channels = [last[s][1] for s in self.out_strides]
+        return tap_indices, out_channels
 
     def forward(self, x):
-        collected = self._collect(x)
-        return [collected[s][0] for s in self.out_strides]
+        out = x
+        feats = {}
+        for i, blk in enumerate(self.blocks):
+            out = blk(out)
+            if i in self._tap_set:       # fixed int indices -> trace-safe
+                feats[i] = out
+        return [feats[i] for i in self.tap_indices]
 
 
 class ResidualConvUnit(nn.Module):

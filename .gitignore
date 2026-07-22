@@ -22,9 +22,19 @@ venv/
 *.swp
 
 # ---- data / models (usually too big for git) ----
+# NOTE: .gitignore has NO inline comments -- '#' is only a comment at line start.
+# collected images + cached teacher targets (many GB, regenerable)
+data/
+# training checkpoints
+runs/
+# camera-calibration capture images
+calib_image/
+calib_imgs/
+# TensorRT engines (hardware-specific), ONNX, torch checkpoints, INT8 calib cache
 *.engine
 *.onnx
 *.pth
+*.cache
 *.ply
 *.bag
 *.db3

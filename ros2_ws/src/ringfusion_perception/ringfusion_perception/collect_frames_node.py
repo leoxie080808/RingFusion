@@ -64,7 +64,7 @@ class CollectFrames(Node):
         self.blur_thresh = float(self.get_parameter('blur_thresh').value)
         os.makedirs(self.out_dir, exist_ok=True)
 
-        c = load_calib(self.get_parameter('calib').value)
+        c = load_calib(self._resolve_calib(self.get_parameter('calib').value))
         r = c['rectify']
         self.rect = FisheyeRectifier(
             c['K'], c['dist'], c['model'], size_in=(c['img_w'], c['img_h']),
@@ -94,6 +94,23 @@ class CollectFrames(Node):
         self.get_logger().info(
             f"collect_frames: /image -> {self.out_dir}/  | identity={self.rect.is_identity} "
             f"| {self.on_disk} already on disk, target {self.target}")
+
+    def _resolve_calib(self, path):
+        """Use the given calib path if it exists; otherwise fall back to the
+        installed ringfusion_bringup config, so `ros2 run collect_frames` works with
+        no -p calib and from any directory."""
+        if os.path.exists(path):
+            return path
+        try:
+            from ament_index_python.packages import get_package_share_directory
+            cand = os.path.join(get_package_share_directory('ringfusion_bringup'),
+                                'config', 'calibration.yaml')
+            if os.path.exists(cand):
+                self.get_logger().info(f"calib '{path}' not found; using {cand}")
+                return cand
+        except Exception as e:
+            self.get_logger().warn(f"could not locate bringup calib: {e}")
+        return path   # let load_calib raise a clear FileNotFoundError
 
     def _is_new(self, rect_bgr):
         """True if rect_bgr differs enough from the last saved frame."""

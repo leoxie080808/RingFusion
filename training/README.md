@@ -16,7 +16,9 @@ training/
 ├── anchoring_bridge.py   reuses the deployed geometry/anchoring; simulate_tof
 ├── cache_teacher.py      Depth Anything V2 -> cached fp16 disparity targets
 ├── distill_backbone.py   teacher -> student
-└── train_residual.py     residual + NLL calibration
+├── train_residual.py     residual + NLL calibration
+├── compare_student.py    student vs teacher depth montage (eyeball check)
+└── eval_student.py       distillation-fidelity metrics (rho / SSI-MAE / d1.25)
 tools/
 ├── export_onnx.py        PyTorch -> ONNX (+ parity check)
 └── build_engine.py       ONNX -> TensorRT INT8/FP16   (run on the Jetson)
@@ -103,6 +105,31 @@ python training/distill_backbone.py --images data/rect --cache data/teacher \
 # -> runs/student/student_best.pth
 ```
 
+**Expected training behaviour:** `val_ssi` may sit on a **flat plateau for the first
+~10-15 epochs** (the scale-shift alignment can't lock onto a structureless early
+student, so the loss parks at ~the mean target magnitude) and then **collapse quickly**
+once the student develops structure. That plateau-then-drop is normal — don't kill the
+run during the flat part.
+
+### Validate the distilled student
+
+A low loss alone can hide blur/artifacts, so **check the student before exporting**:
+
+```bash
+# eyeball: montage [ RGB | student | teacher ] for N frames spread across the set
+python training/compare_student.py --ckpt runs/student/student_best.pth --n 5   # -> student_vs_teacher.png
+
+# scorecard: mimicry metrics on the SAME held-out val split training used
+python training/eval_student.py --ckpt runs/student/student_best.pth
+```
+
+Track **rho** (Pearson correlation with the teacher — structure match; >0.98 excellent)
+as the mimicry metric, **d1.25** (fraction within 25% of the teacher) secondary. These
+measure fidelity **to the teacher**, not correctness — real accuracy needs measured
+ground truth (residual + system validation), and AbsRel is only meaningful there.
+Re-run after any retrain to quantify the change. **Pilot baseline (2000 imgs):
+rho 0.9962, d1.25 0.89, val_ssi 3.51.**
+
 ## 2. Residual (Network B) — needs measured depth
 
 Start on synthetic renders (Hypersim/Replica/Blender) where depth is exact; ToF is
@@ -124,22 +151,61 @@ system before it is trained — an untrained residual changes nothing.
 
 ## 3. Export → TensorRT (build engines on the Jetson)
 
+**3a. Export to ONNX.** `export_onnx.py` forces the **legacy TorchScript exporter**
+(`dynamo=False`). Torch >= 2.9 defaults to the new torch.export exporter, which needs
+the `onnxscript` package — absent from the Jetson's pinned torch env, so the default
+fails with `ModuleNotFoundError: No module named 'onnxscript'`. The legacy path needs
+no extra install and emits cleaner ONNX for the TensorRT parser on these plain-conv nets.
+(If you still hit the onnxscript error, you're on an older copy of the tool.)
+
 ```bash
 python tools/export_onnx.py --ckpt runs/student/student_best.pth  --arch student  --out student.onnx
 python tools/export_onnx.py --ckpt runs/residual/residual_best.pth --arch residual --out residual.onnx
+```
 
-# ON THE ORIN:
+A `DeprecationWarning` about the legacy exporter is expected — ignore it. **Watch the
+parity check:** `PyTorch vs ONNXRuntime max abs diff: <n> (OK)` — `OK` (< 1e-4) means
+the ONNX matches the PyTorch model. If it prints `HIGH`, fix that before building an engine.
+
+**3b. Build engines (ON THE ORIN — engines are hardware-specific).** De-risk in two
+passes: a quick FP16 build to prove the path works, then INT8 for the headline speed.
+
+```bash
+# smoke test first (fast, no calibration)
+python tools/build_engine.py --onnx student.onnx --out student_fp16.engine --precision fp16
+# then INT8 (calibrates on REAL rectified images; INT8 the backbone, FP16 the residual)
 python tools/build_engine.py --onnx student.onnx  --out student_int8.engine \
-    --precision int8 --calib-dir calib_images/ --calib-cache student.cache   # REAL images
+    --precision int8 --calib-dir data/rect --calib-cache student.cache
 python tools/build_engine.py --onnx residual.onnx --out residual_fp16.engine --precision fp16
 ```
 
-Then run perception with the engines (no code change):
+**3c. Run perception with the engine + measure FPS** (no code change — swaps out the
+mocks; retires `MockBackbone`):
 
 ```bash
 ros2 launch ringfusion_bringup single_module.launch.py \
-    backbone_engine:=/path/student_int8.engine residual_engine:=/path/residual_fp16.engine
+    backbone_engine:=$HOME/RingFusion/student_int8.engine
+# add residual_engine:=$HOME/RingFusion/residual_fp16.engine once the residual is trained
+ros2 topic hz /depth      # headline throughput (/cloud also works)
 ```
+
+Before the full launch, smoke-test the **runtime** in isolation (it has clear errors
+vs a buried ROS failure): load an engine and run one inference through `TRTRunner`.
+
+**3d. Export/engine gotchas (all fixed in-tree — documented so nobody re-hits them):**
+
+- **ONNX exporter** — `export_onnx.py` pins the legacy exporter (`dynamo=False`). The
+  torch >= 2.9 default routes through `onnxscript`, which is absent from the Jetson's
+  pinned torch env → `ModuleNotFoundError: No module named 'onnxscript'`.
+- **Student encoder trace-safety** — the encoder taps **fixed integer block indices**
+  (found once at build time), not a dict keyed by `stride = h0 // feat_h`. Under ONNX
+  tracing the shape-derived keys become traced tensors and the plain-int lookup misses
+  → `KeyError: 4`. Keep it integer-indexed (see `models/student.py`).
+- **No pycuda on the Jetson** — it isn't installed and is painful to build. BOTH the INT8
+  calibrator (`build_engine.py`) and the runtime (`ros2_ws/.../trt_util.TRTRunner`) use
+  **torch CUDA tensors** — `.data_ptr()` for the device address, `torch.cuda.Stream().cuda_stream`
+  for the stream — instead of pycuda. **Never `pip install pycuda`**; torch is the CUDA runtime here.
+- **Engines are not portable** — hardware- and TensorRT-version-specific. Always build on the target Orin.
 
 ## Notes / gotchas
 

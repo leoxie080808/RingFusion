@@ -22,6 +22,8 @@ setup(
             'perception = ringfusion_perception.perception_node:main',
             'rectify_view = ringfusion_perception.rectify_view_node:main',
             'collect_frames = ringfusion_perception.collect_frames_node:main',
+            'depth_heatmap = ringfusion_perception.depth_heatmap_node:main',
+            'vision_depth_view = ringfusion_perception.vision_depth_view_node:main',
         ],
     },
 )

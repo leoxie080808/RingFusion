@@ -35,13 +35,17 @@ def _preprocess_image(path, hw):
 
 
 class ImageCalibrator(trt.IInt8EntropyCalibrator2):
-    """Feeds preprocessed real images to the INT8 calibrator (backbone, 3-channel)."""
+    """Feeds preprocessed real images to the INT8 calibrator (backbone, 3-channel).
+
+    Uses a torch CUDA tensor for the device buffer instead of pycuda: torch is the
+    working CUDA runtime already installed on the Jetson, whereas pycuda is not present
+    (and is painful to build there). `tensor.data_ptr()` is the device address TensorRT
+    wants -- identical to what `int(pycuda.mem_alloc(...))` returned."""
 
     def __init__(self, calib_dir, cache_path, input_hw, batch=1):
         super().__init__()
-        import pycuda.driver as cuda
-        import pycuda.autoinit  # noqa: F401
-        self.cuda = cuda
+        import torch
+        self.torch = torch
         self.cache_path = cache_path
         self.hw = input_hw
         self.batch = batch
@@ -50,8 +54,9 @@ class ImageCalibrator(trt.IInt8EntropyCalibrator2):
         if not self.files:
             raise SystemExit(f"no calibration images in {calib_dir}")
         self.idx = 0
-        self.device_input = cuda.mem_alloc(
-            int(np.prod((batch, 3, *input_hw))) * 4)
+        # persistent device buffer; must stay alive so the pointer remains valid
+        self.device_input = torch.empty((batch, 3, *input_hw),
+                                        dtype=torch.float32, device='cuda')
 
     def get_batch_size(self):
         return self.batch
@@ -62,9 +67,10 @@ class ImageCalibrator(trt.IInt8EntropyCalibrator2):
         imgs = [_preprocess_image(self.files[self.idx + i], self.hw)
                 for i in range(self.batch)]
         arr = np.ascontiguousarray(np.concatenate(imgs, axis=0), dtype=np.float32)
-        self.cuda.memcpy_htod(self.device_input, arr)
+        self.device_input.copy_(self.torch.from_numpy(arr))
+        self.torch.cuda.synchronize()          # ensure H2D done before TRT reads it
         self.idx += self.batch
-        return [int(self.device_input)]
+        return [int(self.device_input.data_ptr())]
 
     def read_calibration_cache(self):
         if os.path.exists(self.cache_path):
@@ -118,7 +124,13 @@ def main():
     ap.add_argument('--calib-cache', default='calib.cache')
     ap.add_argument('--input-hw', type=int, nargs=2, default=[288, 384])
     ap.add_argument('--workspace', type=int, default=4, help='GiB')
-    build(ap.parse_args())
+    ap.add_argument('--verbose', action='store_true',
+                    help='stream TensorRT build progress (per-layer tactic timing) '
+                         'instead of building silently')
+    args = ap.parse_args()
+    if args.verbose:
+        TRT_LOGGER.min_severity = trt.Logger.VERBOSE
+    build(args)
 
 
 if __name__ == '__main__':

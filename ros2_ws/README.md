@@ -6,12 +6,15 @@ ROS 2 Humble workspace for the RingFusion project (ToF hub + camera driver, perc
 
 Snapshot for anyone picking this up. The **sensor stack and the full perception
 pipeline are code-complete and run today with mock networks.** The **fisheye lens is
-now calibrated** (RMS 0.5406 px) and the `camera → rectify → frame-collection` path
-runs on the Jetson. The two neural networks are written but **not yet trained** — the
-**current task is collecting ~20k rectified images** in the deployment environment to
-distill the backbone (Network A). Design details live in
-`RingFusion_technical_reference_updateP2.md`; the training/export workflow is in
-[../training/README.md](../training/README.md).
+calibrated** (RMS 0.5406 px) and the **backbone (Network A) has been distilled on a
+2000-image pilot** (val_ssi 3.51, **ρ 0.9962** vs the Depth Anything V2 teacher —
+validated with `compare_student.py` / `eval_student.py`). The student is **exported to
+ONNX, the FP16 engine is built, and the INT8 engine is building** on the Orin; the
+TensorRT runtime (`trt_util.TRTRunner`) and the INT8 calibrator were **ported off pycuda
+to torch** (pycuda isn't on the Jetson). **Next: an isolated `TRTRunner` smoke test, then
+wire the engine into perception to measure FPS** (retiring `MockBackbone`). The residual
+(Network B) is written but not yet trained. Design details live in
+`RingFusion_technical_reference_updateP2.md`.
 
 ### Done
 
@@ -33,11 +36,14 @@ distill the backbone (Network A). Design details live in
 
 ### Not done / blocked
 
-- **Training-image collection (current task)** — the `collect_frames` node is built;
-  ~20k rectified images from the deployment environment still need to be gathered
-  (take the Jetson to the field). This is the one thing blocking B2 distillation.
-- **Networks not trained** — no `student_best.pth` / `residual_best.pth` yet; the pipeline
-  is running mocks.
+- **Full training set** — only a **2000-image pilot** has been collected so far. The
+  full ~15–20k (deployment environment, via `collect_frames`) still needs gathering for
+  the final-quality backbone; the pilot is enough to prove the pipeline, not to ship.
+- **Live real backbone** — engines are building on the Orin (FP16 done, INT8 in progress),
+  but none has been *run* live yet: `TRTRunner` smoke test + `backbone_engine:=…` launch
+  still to do. Perception runs `MockBackbone` until an engine is passed in.
+- **Residual (Network B) not trained** — no `residual_best.pth`; needs measured/synthetic
+  ground-truth depth (the schedule risk). `MockResidual` (identity) until then.
 - **No TensorRT engines** — must be built on the Orin (hardware-/version-specific). Never
   built or run on the Jetson yet.
 - **Residual ground truth** — synthetic/LiDAR/OAK-D depth not collected (the schedule risk).
@@ -53,10 +59,10 @@ distill the backbone (Network A). Design details live in
 |---|---|---|---|
 | 0 | ~~Run Depth Anything V2 on real rectified Arducam frames (sanity)~~ | — | **DONE** (B1 passed → `step0.png`) |
 | 1 | ~~Fisheye calibration → real intrinsics in `calibration.yaml`~~ | — | **DONE** (RMS 0.5406 px, `identity=False` verified) |
-| 2 | **Collect ~20k rectified images** (`collect_frames`) ← **you are here** | camera | diversity > volume; in-domain only |
-| 3 | `cache_teacher.py` — cache DA V2 disparity targets | GPU | once; expensive |
-| 4 | `distill_backbone.py` → student, validate vs teacher | 3 | retires MockBackbone |
-| 5 | `export_onnx` → `build_engine` INT8, **measure Orin FPS** | 4, Jetson | headline number |
+| 2 | Collect rectified images (`collect_frames`) | camera | **pilot done (2000)**; full ~15–20k still to gather |
+| 3 | ~~`cache_teacher.py` — cache DA V2 disparity targets~~ | GPU | **DONE** (2000 cached) |
+| 4 | ~~`distill_backbone.py` → student, validate vs teacher~~ | 3 | **DONE** (pilot: val_ssi 3.51, ρ 0.9962) |
+| 5 | `export_onnx` → `build_engine` INT8, **measure Orin FPS** ← **you are here** | 4, Jetson | headline number |
 | 6 | Run DEPTHOR-Small on the same Orin | Jetson | efficiency claim |
 | 7 | Ground-truth collection (synthetic first) | — | unblocks residual |
 | 8 | `train_residual.py` with NLL, measure coverage (→0.68) | 7 | calibration claim |
@@ -152,6 +158,22 @@ with mocks and swaps to real engines on the Jetson with no other changes:
 
 The math between them (zone projection, closed-form anchoring, analytic covariance,
 unprojection) has no learned parameters. See `RingFusion_technical_reference_updateP2.md`.
+
+**Running the real TensorRT backbone (retires the mock).** Once an engine is built on
+the Orin (see [../training/README.md](../training/README.md) §3), pass it in and the
+node loads `TensorRTBackbone` instead of `MockBackbone` — no code change:
+
+```bash
+ros2 launch ringfusion_bringup single_module.launch.py \
+    backbone_engine:=$HOME/RingFusion/student_int8.engine port:=/dev/ttyACM1
+ros2 topic hz /depth      # headline FPS; compare student_int8.engine vs student_fp16.engine
+```
+
+The runtime (`trt_util.TRTRunner`) uses **torch** for device memory + the CUDA stream,
+**not pycuda** (pycuda isn't installed on the Jetson and is painful to build). So the
+only runtime deps are `tensorrt` (JetPack) + `torch` (both present). Before the full
+launch you can smoke-test the runtime in isolation: instantiate `TRTRunner` with an
+engine and run one inference — a clear error beats a buried ROS failure.
 
 **Stage 1 rectification.** The lens is a ~155° fisheye, so `perception_node` remaps each
 frame to a rectilinear (pinhole) image before the pipeline runs (`rectify.FisheyeRectifier`),
@@ -428,13 +450,16 @@ as they land. Detail on each in the technical reference and the sections above.
 
 ### ▶ Do next (immediate action items)
 
-1. **B2 distillation — collect ~20k rectified images (IN PROGRESS).** Lens is
-   calibrated (A2 done) and the collector tool is built: take the Jetson to the
-   deployment environment and run `collect_frames` (see
-   [Collecting training images](#collecting-training-images-backbone-distillation--b2)
-   for the exact commands, controls, and field tips). Then
-   `cache_teacher` → `distill_backbone` → `export_onnx` → `build_engine`, and measure
-   Orin FPS. GPU is fixed and Step 0 passed, so this is unblocked.
+1. **B2 — get the pilot engine live on the Orin + measure FPS (CURRENT).** Pilot done:
+   2000 images → distilled (val_ssi **3.51**, **ρ 0.9962**). **Exported to ONNX; FP16
+   engine built; INT8 building.** Remaining: (a) isolated `TRTRunner` smoke test against
+   an engine, (b) `ros2 launch … single_module.launch.py backbone_engine:=…student_int8.engine`
+   → `ros2 topic hz /depth` for the FPS number (retires `MockBackbone`). Export/engine
+   gotchas (onnxscript, KeyError, pycuda→torch) are all fixed — see
+   [../training/README.md](../training/README.md) §3.
+2. **Then collect the full ~15–20k images and re-distill** for the deployable-quality
+   student — the 2000-image pilot is intentionally small. Re-run `compare_student` /
+   `eval_student` to quantify the gain (target ρ → ~0.998, d1.25 → >0.9).
 
 **✅ Done recently:** GPU torch fixed — cuBLAS + cuDNN verified on the Orin (recipe in
 [training/README.md](../training/README.md#gpu-torch-on-the-orin--working-recipe-resolved));
@@ -449,7 +474,7 @@ as they land. Detail on each in the technical reference and the sections above.
 
 **B — Networks (need no ground truth for B1–B2)**
 - [x] B1. Step 0 sanity — **PASSED**. Depth Anything V2 on our rectified fisheye produces clean depth (near/far correct, crisp edges, objects separated) → distillation plan validated. `training/step0_sanity.py --image step0_raw_frame.png --raw` runs in ~14 s on GPU; result in `step0.png`.
-- [ ] B2. Distill backbone → ONNX → INT8 engine **on the Orin** → measure FPS (headline number). Backbone input size (default **384×288**, must be a **multiple of 32**) is the depth-detail lever, tunable here with a latency measurement — *not* the camera resolution. Built student is **3.66M params** (design doc's "6.1M" was a placeholder). **GPU torch fixed** (cuBLAS/cuDNN verified — recipe in training/README). **Now blocked only on data collection:** the `collect_frames` node is built and ready — take the Jetson to the field and gather ~20k rectified images (see [Collecting training images](#collecting-training-images-backbone-distillation--b2)).
+- [ ] B2. Distill backbone → ONNX → INT8 engine **on the Orin** → measure FPS (headline number). Backbone input size (default **384×288**, must be a **multiple of 32**) is the depth-detail lever, tunable here with a latency measurement — *not* the camera resolution. Built student is **3.66M params** (design doc's "6.1M" was a placeholder). **GPU torch fixed** (cuBLAS/cuDNN verified — recipe in training/README). **Pilot done (2000 imgs):** collected (`collect_frames`) → cached → distilled → **val_ssi 3.51, ρ 0.9962** vs teacher (validated via `compare_student.py` / `eval_student.py`). **Now exporting to TensorRT on the Orin** (`export_onnx` legacy exporter → `build_engine` FP16→INT8 → `backbone_engine:=…` → `ros2 topic hz /depth`); then re-collect the full ~15–20k and re-distill for final quality.
 - [ ] B3. Ground-truth collection → train residual with NLL → measure calibration coverage (→0.68)
 
 **C — Housekeeping**

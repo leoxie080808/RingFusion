@@ -51,10 +51,14 @@ def main():
     model, in_ch = build(args.arch, args.ckpt, args.device)
     dummy = torch.randn(args.batch, in_ch, h, w, device=args.device)
 
+    # dynamo=False forces the legacy TorchScript exporter. Torch >=2.9 defaults to
+    # the new torch.export-based exporter, which needs the `onnxscript` package (not
+    # in the Jetson's pinned torch env) and can emit ops the TensorRT parser dislikes.
+    # For these plain-conv nets the legacy path is well-tested and produces clean ONNX.
     torch.onnx.export(
         model, dummy, args.out,
         input_names=['input'], output_names=['output'],
-        opset_version=args.opset, do_constant_folding=True)
+        opset_version=args.opset, do_constant_folding=True, dynamo=False)
     print(f"exported {args.arch} -> {args.out}  (input {tuple(dummy.shape)})")
 
     if not args.no_simplify:
