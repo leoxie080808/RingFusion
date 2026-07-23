@@ -2,8 +2,10 @@
 
 The ESP32-C6 firmware emits ASCII CSV records over USB serial:
     ...TMF8829_FRAME_HEADER,<hdr bytes>,PAYLOAD,<pixel bytes>,<footer>...
-A full 48x32 map arrives as TWO 48x16 subframes (even rows, then odd rows),
-distances are in 0.25 mm units, confidence is one byte per zone.
+A full 32x32 map arrives as TWO 32x16 subframes (even rows, then odd rows),
+distances are in 0.25 mm units, confidence is one byte per zone. (The firmware
+loads the official CMD_LOAD_CFG_32X32 mode -> 32x32 @ ~40 Hz; earlier builds used
+48x32, so COLS here must match the flashed firmware's focal-plane mode.)
 
 This module reuses that exact parsing (ported from the laptop heatmap.py) and
 exposes a clean interface the pipeline consumes:
@@ -19,7 +21,7 @@ from dataclasses import dataclass
 import time
 import numpy as np
 
-ROWS, COLS = 32, 48
+ROWS, COLS = 32, 32
 SUBFRAME_ROWS = ROWS // 2
 BYTES_PER_PIXEL = 3
 PIXELS_PER_SUBFRAME = COLS * SUBFRAME_ROWS
