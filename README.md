@@ -45,6 +45,35 @@ anchoring → `/cloud`); fisheye **calibrated** (cv2.fisheye, RMS 0.5406 px, rea
 Network A **distilled (pilot) → TensorRT FP16/INT8 → running live**; ToF **binary firmware +
 persistent assembler** (~8 → ~16 Hz); perception **GPU-offloaded** (~5.6 → ~27 Hz capable).
 
+## Output: point cloud → LiDAR / SLAM layer (planned)
+
+The pipeline publishes `/cloud` (`sensor_msgs/PointCloud2`) — per-frame **metric 3D points**
+(back-projected from the depth via the camera intrinsics), the same data type a LiDAR or
+depth camera emits. So it feeds RViz, PCL, Nav2, and SLAM nodes directly.
+
+**Coverage — how it compares to LiDAR.** We are **forward-facing**, not 360°: the cloud
+covers the **camera's FOV cone** (denser than LiDAR — ~125k pts/frame — but narrower). True
+all-around coverage needs the multi-module **ring** (future) or driving/turning to sweep.
+
+**Depth confirmation coverage.** The ToF is a **32×32 = 1024-zone grid** over its central
+~61°×45° cone (≈830 valid zones/frame in practice), so it ground-truths **many objects at
+once across the center**, not a single point. The wider camera **periphery** is dense but
+**mono-estimated** (scaled by the global fit, not ToF-confirmed) — which is exactly what
+**Network B** refines and assigns calibrated uncertainty. Held-out ToF anchors are how we
+*measure* depth accuracy at many non-center points (see training/README §2a). Over motion the
+narrow ToF cone **sweeps** the scene, so an accumulated map ends up ToF-confirmed far beyond
+any single frame's center.
+
+**SLAM without wheel odometry — yes.** Like LiDAR SLAM (which also has no wheels), motion is
+recovered **from the sensor data itself**: register consecutive frames — geometrically (ICP
+on the clouds) and/or visually (RGB feature tracking + our metric depth = RGB-D odometry) —
+then accumulate. Two advantages over the alternatives: the ToF gives **absolute scale every
+frame** (no monocular-SLAM scale drift), and the RGB enables **visual loop closure** (harder
+for bare LiDAR). The cost is our **narrow FOV** (less frame-to-frame overlap → more drift on
+fast turns / blank walls / long corridors), where an optional **IMU or wheel-odom prior** adds
+robustness but is **not required**. Fastest path to a working no-wheels map: `/depth` + RGB
+into **RTAB-Map** (RGB-D SLAM). This is the last roadmap stage (post-Network B).
+
 ## Quick start (view the live sensors)
 
 ```bash
