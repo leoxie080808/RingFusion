@@ -12,8 +12,10 @@ training/
 │   └── residual.py       Network B: g_phi U-Net  (zero-init -> identity at step 0)
 ├── losses.py             SSI + gradient (distill); log-depth + NLL + coverage (residual)
 ├── data.py               DistillDataset (+ shared image/normalize helpers)
-├── residual_data.py      ResidualDepthDataset (rgb + dense GT depth)
-├── anchoring_bridge.py   reuses the deployed geometry/anchoring; simulate_tof
+├── residual_data.py      ResidualDepthDataset (rgb + dense GT depth; synthetic path)
+├── residual_real_data.py ResidualRealDataset (rgb + raw 32x32 ToF; real held-out-anchor path)
+├── anchoring_bridge.py   reuses the deployed geometry/anchoring; simulate_tof,
+│                         calib_from_yaml, build_real_supervision (held-out anchors)
 ├── cache_teacher.py      Depth Anything V2 -> cached fp16 disparity targets
 ├── distill_backbone.py   teacher -> student
 ├── train_residual.py     residual + NLL calibration
@@ -132,22 +134,68 @@ rho 0.9962, d1.25 0.89, val_ssi 3.51.**
 
 ## 2. Residual (Network B) — needs measured depth
 
-Start on synthetic renders (Hypersim/Replica/Blender) where depth is exact; ToF is
-simulated from the GT. Fine-tune on real GT later.
+Network B predicts a per-pixel correction `(da, db)` to the closed-form affine fit
+plus a calibrated variance `tau²`. It is **zero-initialized to the identity**, so you
+can ship the closed-form system before it is trained — an untrained residual changes
+nothing. Two ways to train it:
 
+### 2a. Real data — held-out ToF anchors (RECOMMENDED here)
+
+No synthetic→real domain gap, and it's the *only* source of the real backbone's real
+error statistics (what actually calibrates `tau²`). Collect paired `(rectified image,
+32×32 ToF)` logs by pushing the robot around the deployment environment.
+
+**Why not just use the ToF as dense GT?** A sparse sensor can't densely supervise a
+dense residual: its zones coincide with the anchors the closed-form fit already nails,
+so supervising there teaches the identity. Instead each frame's valid zones are split —
+an **anchor set** drives the fit + feeds the net (exactly as the robot runs), and a
+disjoint **hold-out set** becomes a sparse target at pixels the net had *no* input for.
+That's true generalization signal, in-environment, real error stats. (`build_real_supervision`
+guarantees the two sets are pixel-disjoint — no target leakage.) The ToF FOV (~61°×45°)
+is narrower than the fisheye, so the periphery gets no supervision and B safely stays
+identity there — acceptable, since that's exactly where it has no information anyway.
+
+Capture format (matched by stem; produced by the paired ToF+image logger):
+```
+data/real/rgb/<...>/000123.png    # the RECTIFIED (pinhole) image, as the robot feeds the net
+data/real/tof/<...>/000123.npz    # np.savez(dist_m=(32,32) float32 NaN-invalid, confidence=(32,32) uint8)
+```
+Prefer stationary "stations" (stop, average a few ToF frames, snap one image) for clean
+pairs; slow rolling works if you pair each ToF frame with the nearest-in-time image.
+Vary geometry (near/far walls, clutter, corners); the loss only sees ToF-covered pixels,
+so coverage across scenes matters more than raw frame count.
+
+```bash
+python training/train_residual.py --real \
+    --rgb data/real/rgb --tof data/real/tof \
+    --calib ros2_ws/src/ringfusion_bringup/config/calibration.yaml \
+    --student-ckpt runs/student/student_best.pth --out runs/residual \
+    --epochs 40 --holdout-frac 0.25
+# --calib rebuilds the SAME rectified pinhole K_rect the robot uses, scaled to 288x384.
+# watch coverage -> 0.68 (calibrated).
+```
+
+### 2b. Synthetic pretrain (optional bootstrap)
+
+Renders (Hypersim/Replica/Blender) where depth is exact; ToF is *simulated* from the GT.
+Useful to warm-start before real fine-tuning, but mind the fisheye/FOV domain gap —
+render at matching intrinsics or it learns the wrong periphery behaviour.
 ```
 data/syn/rgb/*.png      data/syn/depth/*.npy   (matching stems; depth in metres)
 ```
-
 ```bash
 python training/train_residual.py --rgb data/syn/rgb --depth data/syn/depth \
     --student-ckpt runs/student/student_best.pth --out runs/residual \
     --epochs 40 --hfov 90
-# watch coverage -> 0.68 (calibrated). --depth-scale 0.001 for 16-bit-mm PNGs.
+# --depth-scale 0.001 for 16-bit-mm PNGs.
 ```
 
-The residual is **zero-initialized to the identity**, so you can ship the closed-form
-system before it is trained — an untrained residual changes nothing.
+### Testing Network B
+
+1. **Identity sanity** — untrained B must equal the closed-form baseline (zero-init); B must never regress *below* it.
+2. **Accuracy** — B's depth vs the held-out ToF zones (AbsRel/RMSE at hold-out pixels), gains concentrated at edges.
+3. **Calibration** — `coverage` → **0.68** @1σ (the headline number); reported live during training.
+4. **On-robot** — build the FP16 engine (§3), `residual_engine:=…`, confirm `/depth` rate holds and the variance field is sane.
 
 ## 3. Export → TensorRT (build engines on the Jetson)
 

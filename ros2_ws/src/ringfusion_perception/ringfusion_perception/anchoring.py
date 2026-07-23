@@ -60,6 +60,7 @@ def covariance(disp, inv_depth, weights, a, b):
 
 
 def to_metric_depth(disp, a, b, min_disp=1e-4):
-    inv = a * np.asarray(disp, float) + b
+    # fp32, not fp64 -- this runs over the full 2 MP disparity every frame.
+    inv = np.float32(a) * np.asarray(disp, np.float32) + np.float32(b)
     inv = np.clip(inv, min_disp, None)
     return (1.0 / inv).astype(np.float32)

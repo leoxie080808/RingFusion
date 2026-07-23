@@ -139,7 +139,8 @@ View the output point cloud in `rviz2`: add a `PointCloud2` display on `/cloud` 
 ## Perception
 
 `perception_node` caches the latest camera frame + ToF frame and runs the pure-numpy
-pipeline (`pipeline.run`) whenever a ToF frame arrives (~5 Hz). It publishes:
+pipeline (`pipeline.run`) whenever a ToF frame arrives (~8 Hz; ToF-limited — see
+Performance notes). Heavy per-pixel math is GPU-offloaded via `gpu_ops.py`. It publishes:
 
 | Topic | Type | Contents |
 |---|---|---|
@@ -392,18 +393,52 @@ quality loss; drop to `30`-`40` if lag persists. Local viewing avoids this entir
 
 ### Performance notes (Jetson AGX Orin)
 
+Measured live, full pipeline, MAXN + `jetson_clocks`, backbone on TensorRT:
+
+| Topic | Component | Rate | Limited by |
+|-------|-----------|------|------------|
+| `/image` | camera | **~26 Hz** | IMX219 sensor mode (30 fps cap on 1640×1232) |
+| `/depth`, `/cloud` | perception | **~27 Hz capable**, runs at ToF rate | backbone TensorRT (~17 ms) |
+| `/tof` | ToF driver | **~8 Hz** ← pipeline bottleneck | ASCII USB delivery (see below) |
+
+Everything downstream of the ToF has ~3× headroom, so the fused output rate equals
+whatever the ToF delivers. Lift the ToF and the whole pipeline rises with it.
+
 - **Power mode.** Check with `nvpmodel -q`. If it's not MAXN, everything is throttled (fewer
   cores, lower clocks) — set it with `sudo nvpmodel -m 0` (applies immediately, no reboot;
-  persists across reboots) then `sudo jetson_clocks` (re-run after each boot). The higher-res
-  camera modes (1080p30) also appear to need MAXN's CSI/ISP bandwidth.
-- **Camera rate.** The Arducam IMX219 tuning here only accepts **1280x720** via
-  `nvarguscamerasrc`; higher-res modes report `INVALID_SETTINGS`. 720p runs up to ~30fps.
-- **ToF rate.** Capped at 5Hz by the firmware (`MEASUREMENT_PERIOD_MS = 200` in
-  `firmware-esp/main/main.c`). Lower it (e.g. `33` → 30Hz target; will self-limit to the
-  sensor's real 48x32 max) and reflash the ESP32. The ROS side forwards whatever it emits.
+  persists across reboots) then `sudo jetson_clocks` (re-run after each boot).
+
+- **Camera rate.** Runs at **1640×1232** (full-FOV 2×2-binned mode) at **~26 Hz**. The node's
+  serial tick is ~36 ms (`cap.read()` 33 ms at the 30 fps sensor cap + ~10 ms tone-correct),
+  so 30 fps is the hard ceiling at this resolution. It was formerly throttled to 15 Hz by the
+  `rate` launch param — that's now `30.0` in `single_module.launch.py` (uncapped). Going past
+  30 Hz would need a different sensor mode and re-calibration.
+
+- **Perception is GPU-offloaded.** Profiling found the bottleneck was *not* the neural net —
+  the backbone is ~17 ms and the GPU sat near-idle. It was the pure-numpy per-pixel 2 MP math
+  on the CPU: analytic variance (`depth**4`, ~74 ms), cloud unprojection (~43 ms), metric depth
+  (~13 ms). Those are embarrassingly parallel, so `gpu_ops.py` moves them to torch/CUDA (numpy
+  fallback preserved for off-robot testing), and float64 waste was cut to float32. Perception
+  went from ~5.6 Hz to ~27 Hz capable. `cloud_stride=4` in `pipeline.run` also thins the cloud.
+
+- **ToF rate — why ~8 Hz here but ~15–30 on the laptop `heatmap.py`.** Not the parser: the
+  Orin decodes a full 32×32 map from ASCII in **~1.2 ms** (816 maps/s ceiling — benchmarked),
+  so CPU parsing has enormous headroom. The cap is upstream — how fast complete **even+odd
+  subframe pairs** actually arrive over USB and survive assembly. The laptop viewer wins for
+  two reasons that don't apply to us: a faster x86 core, and it **drops stale buffered lines**
+  (`KEEP_RECENT_LINES=4`) so it never stalls, whereas `tof_source.SerialToFSource.read()`
+  processes every line and silently orphans any subframe whose partner it misses under load.
+  The real fix is the **binary output** change (`firmware-esp/BINARY_OUTPUT_HANDOFF.md`): ~4×
+  shorter USB bursts + trivial binary parse + CRC resync that drops only *corrupted* frames
+  instead of orphaning their partners. That also cuts the CSI-ribbon EMI (shorter bursts).
+  (Firmware note: ToF resolution is set by the flashed focal-plane mode — `CMD_LOAD_CFG_32X32`
+  for 32×32; `tof_source.ROWS,COLS` must match the flashed build.)
+
 - **`nvargus-daemon`.** If the camera starts failing with `INVALID_SETTINGS` intermittently,
   the Argus daemon is wedged (often from `kill -9`-ing a camera process). Fix:
   `sudo systemctl restart nvargus-daemon`. Stop camera nodes with SIGTERM, not `kill -9`.
+  Note the camera's separate EMI failure mode (`PD_CRC_ERR`): the ESP32's USB cable radiates
+  into the CSI ribbon — keep them ~12–15 cm apart with ground shielding (binary ToF also helps).
 
 ## Sanity checks / useful `ros2` commands
 
@@ -470,12 +505,12 @@ as they land. Detail on each in the technical reference and the sections above.
 - [x] A1. `tools/calibrate_camera.py` — fisheye (Kannala-Brandt) checkerboard calibration tool
 - [x] A2. **DONE (2026-07-21).** Calibrated the real lens (cv2.fisheye, RMS **0.5406 px**); real intrinsics in `calibration.yaml`. Verified live: `rectify_view` logs `identity=False` and straight edges de-warp correctly.
 - [x] A3. Stage 1 rectification (fisheye → rectilinear) wired into perception (`rectify.py`); **active now** with the nominal equidistant model (a real de-warp), refined once A2 lands. Confirm live: `rectify_view` → `/rectify_compare`
-- [x] A4. Capture resolution = **1640×1232** (IMX219 full-sensor 2×2-binned — full fisheye FOV; the 16:9 modes crop it). Wired into `calibration.yaml`, both launch files, `camera_node`, and the calib tool. Runs ~15 Hz capping a full core (color-correct at 2 MP; fine for the ~5 Hz fusion, see C3)
+- [x] A4. Capture resolution = **1640×1232** (IMX219 full-sensor 2×2-binned — full fisheye FOV; the 16:9 modes crop it). Wired into `calibration.yaml`, both launch files, `camera_node`, and the calib tool. Runs **~26 Hz** (was throttled to 15 by the `rate` launch param, now `30.0`; 30 fps is the sensor ceiling at this resolution). Tone-correct is ~10 ms/frame — not the limiter, see C3 for the 4-camera scaling concern.
 
 **B — Networks (need no ground truth for B1–B2)**
 - [x] B1. Step 0 sanity — **PASSED**. Depth Anything V2 on our rectified fisheye produces clean depth (near/far correct, crisp edges, objects separated) → distillation plan validated. `training/step0_sanity.py --image step0_raw_frame.png --raw` runs in ~14 s on GPU; result in `step0.png`.
 - [ ] B2. Distill backbone → ONNX → INT8 engine **on the Orin** → measure FPS (headline number). Backbone input size (default **384×288**, must be a **multiple of 32**) is the depth-detail lever, tunable here with a latency measurement — *not* the camera resolution. Built student is **3.66M params** (design doc's "6.1M" was a placeholder). **GPU torch fixed** (cuBLAS/cuDNN verified — recipe in training/README). **Pilot done (2000 imgs):** collected (`collect_frames`) → cached → distilled → **val_ssi 3.51, ρ 0.9962** vs teacher (validated via `compare_student.py` / `eval_student.py`). **Now exporting to TensorRT on the Orin** (`export_onnx` legacy exporter → `build_engine` FP16→INT8 → `backbone_engine:=…` → `ros2 topic hz /depth`); then re-collect the full ~15–20k and re-distill for final quality.
-- [ ] B3. Ground-truth collection → train residual with NLL → measure calibration coverage (→0.68)
+- [ ] B3. Train residual (Network B) with NLL → calibration coverage (→0.68). **Real-data path scaffolded & tested** (`training/residual_real_data.py` + `anchoring_bridge.build_real_supervision`): collect paired `(rectified image, 32×32 ToF)` logs, train via **held-out ToF anchors** (no dense GT, no fisheye domain gap) — `train_residual.py --real`. See training/README §2a. Remaining: collect the paired logs (needs the ToF binary firmware + a paired logger), then train/export FP16.
 
 **C — Housekeeping**
 - [ ] C1. `tof_driver` 500 Hz poll cleanup (threaded blocking read; verify ToF latency doesn't regress)

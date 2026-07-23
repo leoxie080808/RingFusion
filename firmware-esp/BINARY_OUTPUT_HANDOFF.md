@@ -10,12 +10,24 @@ plugged). **Binary output makes each USB burst ~4× shorter**, cutting the EMI d
 cycle. (Physical mitigation — routing the USB away from the ribbon + a ferrite clip —
 is still the primary fix; this is complementary.)
 
-Two files change, and they must change **together**:
-- **Firmware:** `firmware-esp/components/tmf8829/tmf8829_shim.c` (the emit path)
-- **ROS parser:** `ros2_ws/src/ringfusion_drivers/ringfusion_drivers/tof_source.py`
+Two files change:
+- **Firmware:** `firmware-esp/components/tmf8829/tmf8829_shim.c` (the emit path) — **TODO (you)**
+- **ROS parser:** `ros2_ws/src/ringfusion_drivers/ringfusion_drivers/tof_source.py` — **✅ DONE**
+
+> **ROS side is already implemented and unit-tested.** `SerialToFSource` now
+> **auto-detects** ASCII vs binary on the first recognizable bytes (MAGIC → binary,
+> `TMF8829_FRAME_HEADER,` → ASCII), so the pipeline keeps running on the current ASCII
+> firmware and switches over automatically the moment you flash the binary build — no
+> coordinated edit, no flag. The binary state machine, `_crc16_ccitt` (verified against
+> the standard `0x29B1` check vector — it MUST match the firmware CRC below), and
+> `_parse_binary_body` are all in place. The parser sketches later in this doc are what
+> was implemented; they're kept for reference. **Only the firmware `.c` changes remain.**
 
 Nothing else in the pipeline changes (tof_driver publishes the frame's dynamic shape;
-geometry reads cols/rows from the packet).
+geometry reads cols/rows from the packet). Note the ROS side also now uses a **persistent
+subframe assembler**: each even/odd subframe overwrites its half of a kept 32×32 map and
+publishes immediately, so a dropped subframe carries its half forward instead of orphaning
+the whole map — independent of ASCII/binary, and it stacks with the EMI win here.
 
 ---
 

@@ -14,17 +14,27 @@ rows); distances are in 0.25 mm units, confidence is one byte per zone. (The
 firmware loads the official CMD_LOAD_CFG_32X32 mode -> 32x32; earlier builds used
 48x32, so COLS here must match the flashed firmware's focal-plane mode.)
 
-This module reuses that exact parsing (ported from the laptop heatmap.py) and
-exposes a clean interface the pipeline consumes:
+  * ASCII CSV  (original):  ...TMF8829_FRAME_HEADER,<hdr>,PAYLOAD,<pixels>,<footer>...
+  * BINARY     (preferred): MAGIC(4) + LEN(2 LE) + BODY(LEN) + CRC16(2 LE), where
+                            BODY is the raw hdr+payload bytes. ~4x shorter on the
+                            wire (less CSI-ribbon EMI) and CRC lets us drop only
+                            *corrupted* frames instead of orphaning their partner.
+                            Spec: firmware-esp/BINARY_OUTPUT_HANDOFF.md.
 
-    src = SerialToFSource('/dev/ttyACM0')      # live
-    src = ReplayToFSource(lines)               # from a captured text log
+A full 32x32 map arrives as TWO 32x16 subframes (even rows, then odd rows) in
+BOTH formats; distances are 0.25 mm units, confidence one byte per zone. (The
+firmware loads CMD_LOAD_CFG_32X32 -> 32x32; earlier builds used 48x32, so
+ROWS/COLS here must match the flashed focal-plane mode.)
+
+    src = SerialToFSource('/dev/ttyACM1')      # live (auto-detects ASCII/binary)
+    src = ReplayToFSource(lines)               # from a captured ASCII text log
     frame = src.read()   # -> ToFFrame or None
 
 ToFFrame.dist_m is metres, NaN where the sensor returned no distance.
 """
 from __future__ import annotations
 from dataclasses import dataclass
+import sys
 import time
 import numpy as np
 
@@ -48,6 +58,10 @@ BASE_RESULT_FORMAT = 0x01
 END_MARKER_LOW = 0xF7
 END_MARKER_HIGH = 0xE0
 
+# Binary framing (see BINARY_OUTPUT_HANDOFF.md). MAGIC's 0xAA/0xC3 bytes never
+# occur in the ASCII stream, so its presence unambiguously flags binary output.
+MAGIC = b"\xAA\x55\xC3\x3C"
+
 # Zones with confidence below this are weak (still measured, just uncertain).
 CONFIDENCE_STRONG = 6
 
@@ -62,8 +76,8 @@ MAGIC = b"\xAA\x55\xC3\x3C"
 
 @dataclass
 class ToFFrame:
-    dist_mm: np.ndarray      # (32,48) float32, NaN where no return
-    confidence: np.ndarray   # (32,48) uint8
+    dist_mm: np.ndarray      # (32,32) float32, NaN where no return
+    confidence: np.ndarray   # (32,32) uint8
     t: float
 
     @property
@@ -103,8 +117,31 @@ def _records_from_line(line):
     return [FRAME_PREFIX + p for p in parts[1:] if PAYLOAD_MARKER in p]
 
 
+def _subframe_from_fields(layout, pixels_bytes, footer):
+    """Shared tail for both wire formats: validate the footer/status and turn the
+    raw pixel bytes into (sub_index, dist(16,32), conf(16,32)), or None if the
+    sensor flagged the frame invalid/aborted. `pixels_bytes` is a length-1536
+    uint16-able sequence; `footer` is a length-12 sequence."""
+    if footer[10] != END_MARKER_LOW or footer[11] != END_MARKER_HIGH:
+        return None
+    status = footer[8]
+    if not (status & 0x01) or (status & 0xC0):      # invalid or aborted
+        return None
+    pb = np.asarray(pixels_bytes, np.uint16).reshape(PIXELS_PER_SUBFRAME, BYTES_PER_PIXEL)
+    raw = pb[:, 0] | (pb[:, 1] << 8)
+    conf = pb[:, 2].astype(np.uint8).reshape(SUBFRAME_ROWS, COLS)
+    dist = (raw.astype(np.float32) * DISTANCE_SCALE_MM).reshape(SUBFRAME_ROWS, COLS)
+    dist[raw.reshape(SUBFRAME_ROWS, COLS) == 0] = np.nan     # 0 range = no return
+    sub_index = 1 if (layout & SUB_RESULT_BIT) else 0
+    return sub_index, dist, conf
+
+
+# --------------------------------------------------------------------------- #
+# ASCII CSV parsing (original firmware)
+# --------------------------------------------------------------------------- #
+
 def _parse_subframe(record):
-    """Returns (subframe_index, dist_mm(16,48), conf(16,48)) or None."""
+    """Parse one ASCII CSV record -> (sub_index, dist, conf) or None."""
     if PAYLOAD_MARKER not in record:
         return None
     header_text, payload_text = record.split(PAYLOAD_MARKER, 1)
@@ -117,10 +154,9 @@ def _parse_subframe(record):
     if len(hv) < PREHEADER_SIZE + FRAME_HEADER_SIZE:
         return None
     fh = hv[PREHEADER_SIZE:PREHEADER_SIZE + FRAME_HEADER_SIZE]
-    frame_type = fh[0] & 0xF0
-    layout = fh[1]
-    if frame_type != RESULT_FRAME_TYPE:
+    if (fh[0] & 0xF0) != RESULT_FRAME_TYPE:
         return None
+    layout = fh[1]
     if (layout & RESULT_FORMAT_MASK) != BASE_RESULT_FORMAT:
         return None
     if len(pv) < EXPECTED_PAYLOAD_VALUES:
@@ -128,20 +164,7 @@ def _parse_subframe(record):
     pv = pv[:EXPECTED_PAYLOAD_VALUES]
     pixels = pv[:PIXEL_BYTES_PER_SUBFRAME]
     footer = pv[PIXEL_BYTES_PER_SUBFRAME:PIXEL_BYTES_PER_SUBFRAME + FRAME_FOOTER_BYTES]
-    if footer[10] != END_MARKER_LOW or footer[11] != END_MARKER_HIGH:
-        return None
-    status = footer[8]
-    if not (status & 0x01) or (status & 0xC0):      # invalid or aborted
-        return None
-    pb = np.asarray(pixels, np.uint16).reshape(PIXELS_PER_SUBFRAME, BYTES_PER_PIXEL)
-    raw = pb[:, 0] | (pb[:, 1] << 8)
-    conf = pb[:, 2].astype(np.uint8)
-    dist = raw.astype(np.float32) * DISTANCE_SCALE_MM
-    dist = dist.reshape(SUBFRAME_ROWS, COLS)
-    conf = conf.reshape(SUBFRAME_ROWS, COLS)
-    dist[raw.reshape(SUBFRAME_ROWS, COLS) == 0] = np.nan
-    sub_index = 1 if (layout & SUB_RESULT_BIT) else 0
-    return sub_index, dist, conf
+    return _subframe_from_fields(layout, pixels, footer)
 
 
 def _crc16_ccitt(b: bytes) -> int:
@@ -182,28 +205,45 @@ def _parse_binary_body(body):
 
 
 class _Assembler:
-    """Pairs even-row + odd-row subframes into a full 48x32 map."""
-    def __init__(self):
-        self._pending_even = None
+    """Persistent full 32x32 map. Each subframe overwrites just its half (even or
+    odd rows) of a kept buffer, and the map is published on EVERY subframe once
+    both halves have been seen. This replaces the old all-or-nothing pairing: a
+    lost/corrupted subframe now merely carries its half forward for ~half a period
+    (fine for slow-moving anchoring) instead of dropping the whole map -- so a
+    single missed subframe no longer costs a full map cycle, and the publish rate
+    roughly doubles (per-subframe, not per-pair). A half that stops arriving for
+    >HALF_MAX_AGE_S is expired to NaN so we never anchor on stale rows; the
+    pipeline already treats NaN zones as "no anchor here"."""
+    def __init__(self, max_age=HALF_MAX_AGE_S):
+        self._dist = np.full((ROWS, COLS), np.nan, np.float32)
+        self._conf = np.zeros((ROWS, COLS), np.uint8)
+        self._half_t = [0.0, 0.0]         # last-update monotonic time: [even, odd]
+        self._seen = [False, False]
+        self._max_age = float(max_age)
 
     def feed(self, parsed):
         idx, dist, conf = parsed
-        if idx == 0:
-            self._pending_even = (dist, conf, time.monotonic())
-            return None
-        if self._pending_even is None:
-            return None
-        ed, ec, _ = self._pending_even
-        self._pending_even = None
-        D = np.full((ROWS, COLS), np.nan, np.float32)
-        C = np.zeros((ROWS, COLS), np.uint8)
-        D[0::2, :] = ed;   C[0::2, :] = ec
-        D[1::2, :] = dist; C[1::2, :] = conf
-        return ToFFrame(D, C, time.monotonic())
+        now = time.monotonic()
+        rows = slice(0, ROWS, 2) if idx == 0 else slice(1, ROWS, 2)
+        self._dist[rows, :] = dist
+        self._conf[rows, :] = conf
+        self._half_t[idx] = now
+        self._seen[idx] = True
+        if not (self._seen[0] and self._seen[1]):
+            return None                    # wait until both halves seeded once
+        D = self._dist.copy()              # snapshot: caller must not see later writes
+        C = self._conf.copy()
+        for h in (0, 1):                   # expire a half that stopped arriving
+            if now - self._half_t[h] > self._max_age:
+                r = slice(h, ROWS, 2)
+                D[r, :] = np.nan
+                C[r, :] = 0
+        return ToFFrame(D, C, now)
 
 
 class SerialToFSource:
-    """Live source: read the ESP32-C6 over USB serial."""
+    """Live source: read the ESP32-C6 over USB serial, auto-detecting ASCII vs
+    binary framing on the first recognizable bytes."""
     def __init__(self, port, baud=115200, timeout=0.02):
         import serial
         self.ser = serial.Serial(port, baud, timeout=timeout)
@@ -217,7 +257,19 @@ class SerialToFSource:
         self.ser.rts = False
         self.buf = bytearray()
         self.asm = _Assembler()
-        time.sleep(1.0)          # let the port settle; do NOT flush (loses a subframe)
+        self.stream_mode = None          # 'binary' | 'ascii', decided on first data
+        time.sleep(1.0)                  # let the port settle; do NOT flush (loses a subframe)
+
+    def _detect_mode(self):
+        """Set stream_mode once we can tell. MAGIC wins (its bytes can't appear in
+        the ASCII stream); otherwise the CSV prefix."""
+        if self.buf.find(MAGIC) >= 0:
+            self.stream_mode = 'binary'
+        elif FRAME_PREFIX.encode('ascii') in self.buf:
+            self.stream_mode = 'ascii'
+        if self.stream_mode is not None:
+            print(f"[tof_source] detected {self.stream_mode.upper()} frame stream",
+                  file=sys.stderr, flush=True)
 
     def read(self):
         """Return the next COMPLETE frame, or None if not ready yet."""
@@ -268,7 +320,14 @@ class SerialToFSource:
         if chunk:
             self.buf.extend(chunk)
         if len(self.buf) > 1_000_000:
-            self.buf.clear()
+            del self.buf[:-4]            # keep a possible partial magic / line tail
+        if self.stream_mode is None:
+            self._detect_mode()
+            if self.stream_mode is None:
+                return None
+        return self._read_binary() if self.stream_mode == 'binary' else self._read_ascii()
+
+    def _read_ascii(self):
         while b"\n" in self.buf:
             raw, _, rest = self.buf.partition(b"\n")
             self.buf = bytearray(rest)
@@ -281,6 +340,34 @@ class SerialToFSource:
                 if frame is not None:
                     return frame
         return None
+
+    def _read_binary(self):
+        buf = self.buf                   # in-place alias; never reassigned in this path
+        while True:
+            i = buf.find(MAGIC)
+            if i < 0:                    # no frame start yet; drop scanned garbage
+                if len(buf) > len(MAGIC):
+                    del buf[:-(len(MAGIC) - 1)]
+                return None
+            if len(buf) < i + 6:         # need MAGIC(4) + LEN(2)
+                del buf[:i]
+                return None
+            ln = buf[i + 4] | (buf[i + 5] << 8)
+            end = i + 6 + ln + 2         # + CRC16(2)
+            if len(buf) < end:
+                del buf[:i]              # wait for the rest of this frame
+                return None
+            body = bytes(buf[i + 6:i + 6 + ln])
+            crc_rx = buf[i + 6 + ln] | (buf[i + 7 + ln] << 8)
+            del buf[:end]                # consume this frame either way
+            if _crc16_ccitt(body) != crc_rx:
+                continue                 # corrupted (EMI) -> resync to next MAGIC
+            parsed = _parse_binary_body(body)
+            if parsed is None:
+                continue
+            frame = self.asm.feed(parsed)
+            if frame is not None:
+                return frame
 
     def close(self):
         self.ser.close()

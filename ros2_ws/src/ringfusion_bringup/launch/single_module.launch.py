@@ -49,7 +49,8 @@ def generate_launch_description():
              name='camera', output='screen',
              additional_env={'PYTHONNOUSERSITE': '1'},
              parameters=[{'image': image, 'frame_id': 'cam_0',
-                          'width': 1640, 'height': 1232}]),   # full-FOV binned mode
+                          'width': 1640, 'height': 1232,   # full-FOV binned mode
+                          'rate': 30.0}]),                 # uncap publish (node does ~27 Hz; was 15)
 
         Node(package='ringfusion_perception', executable='perception',
              name='perception', output='screen',

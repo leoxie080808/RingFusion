@@ -45,7 +45,9 @@ class ToFDriverNode(Node):
             raise
         self.get_logger().info(
             f"ToF driver module {self.module_id} reading {port} -> /tof")
-        # poll fast; frames only publish when a full 48x32 is assembled (~5 Hz)
+        # Poll fast; the source publishes a 32x32 map on every subframe once both
+        # halves are seeded (persistent assembler), so /tof runs at the subframe
+        # rate rather than the paired-map rate. Auto-detects ASCII vs binary firmware.
         self.timer = self.create_timer(0.002, self.poll)
 
     def poll(self):

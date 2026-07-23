@@ -19,6 +19,7 @@ import numpy as np
 
 from . import geometry as geo
 from . import anchoring as anc
+from . import gpu_ops
 
 
 def splat_anchors(u, v, z, inb, shape):
@@ -37,7 +38,7 @@ def splat_anchors(u, v, z, inb, shape):
 
 
 def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
-        confidence=None, min_confidence=-1):
+        confidence=None, min_confidence=-1, cloud_stride=4, use_gpu=None):
     """One perception frame.
 
     Args:
@@ -97,7 +98,14 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
     if fit is None:
         return {'ok': False, 'n_anchors': int(inb.sum())}
     a, b = fit
-    metric = anc.to_metric_depth(disp, a, b)       # D0, closed form only
+    # The per-pixel 2 MP math (metric depth, variance, cloud) is the pipeline's real
+    # cost -- the GPU sits idle while numpy grinds it on the CPU. Offload it to torch
+    # when CUDA is present; fall back to numpy (fp32) so off-robot tests still run.
+    gpu = gpu_ops.available() if use_gpu is None else use_gpu
+
+    # Stage 5 -- closed-form metric depth (D0)
+    metric = (gpu_ops.to_metric_depth(disp, a, b) if gpu
+              else anc.to_metric_depth(disp, a, b))
 
     # Stage 6 -- analytic per-pixel variance by the delta method.
     # Var[D](p) = D^4 * j^T Cov(a,b) j,  j = (disp, 1). The D^4 factor is why far
@@ -105,12 +113,16 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
     var = None
     cov = anc.covariance(disp_at, inv_depth, weights, a, b)
     if cov is not None:
-        j0, j1 = disp, np.ones_like(disp)
-        quad = (j0 * (cov[0, 0] * j0 + cov[0, 1] * j1) +
-                j1 * (cov[1, 0] * j0 + cov[1, 1] * j1))
-        var = (metric.astype(np.float64) ** 4) * quad
+        if gpu:
+            var = gpu_ops.analytic_variance(disp, metric, cov)
+        else:
+            j0, j1 = disp, np.ones_like(disp)
+            quad = (j0 * (cov[0, 0] * j0 + cov[0, 1] * j1) +
+                    j1 * (cov[1, 0] * j0 + cov[1, 1] * j1))
+            var = (metric.astype(np.float32) ** 4) * quad      # fp32 (was fp64)
 
-    # Stage 7 -- residual refinement (identity if residual is None/mock)
+    # Stage 7 -- residual refinement (identity if residual is None/mock). Stays numpy;
+    # gpu_ops returns numpy, so Network B sees exactly the types it did before.
     if residual is not None:
         anchor_depth, anchor_mask = splat_anchors(u, v, z, inb, (h, w))
         metric, var_extra = residual.refine(rgb, metric, disp,
@@ -119,7 +131,8 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
             var = var + var_extra                  # total = analytic + learned
 
     # Stage 8 -- unproject metric depth to a camera-frame point cloud
-    cloud = geo.unproject_depth_to_cloud(metric, K, model='pinhole', stride=2)
+    cloud = (gpu_ops.unproject_cloud(metric, K, cloud_stride) if gpu
+             else geo.unproject_depth_to_cloud(metric, K, model='pinhole', stride=cloud_stride))
 
     return {'ok': True, 'n_anchors': int(inb.sum()),
             'metric': metric.astype(np.float32),

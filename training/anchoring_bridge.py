@@ -40,6 +40,103 @@ def default_calib(h=288, w=384, hfov_deg=90.0, tof_fov=(61.0, 45.0)):
     }
 
 
+def calib_from_yaml(yaml_path, train_size=(288, 384)):
+    """Real calib for REAL-frame residual training, matching what the robot runs.
+
+    The deployed perception node rectifies fisheye->pinhole and runs everything on
+    the RECTIFIED image with K_rect (perception_node.load_calib + FisheyeRectifier).
+    So the captured training RGB must be that rectified image, and here we rebuild
+    the SAME K_rect from calibration.yaml and scale it from capture resolution down
+    to the training resolution. ToF FOV + extrinsic come straight from the yaml.
+
+    train_size is (H, W) to match ResidualDepthDataset / args.size.
+    """
+    import yaml
+    from ringfusion_perception.rectify import FisheyeRectifier    # noqa: E402
+    with open(yaml_path) as f:
+        c = yaml.safe_load(f)
+    cam, rect, tof, ex = c['camera'], c.get('rectify', {}), c['tof'], c['extrinsics_cam_tof']
+    K = (cam['fx'], cam['fy'], cam['cx'], cam['cy'])
+    size_in = (cam['width'], cam['height'])
+    size_out = (rect.get('width', cam['width']), rect.get('height', cam['height']))
+    rectifier = FisheyeRectifier(K, np.asarray(cam['dist'], float), cam.get('model', 'fisheye'),
+                                 size_in, size_out,
+                                 balance=rect.get('balance', 0.0),
+                                 fov_scale=rect.get('fov_scale', 1.0))
+    fx, fy, cx, cy = rectifier.K_rect                 # pinhole intrinsics at capture res
+    w_cap, h_cap = rectifier.size
+    ht, wt = train_size
+    sx, sy = wt / float(w_cap), ht / float(h_cap)     # scale K to the training resolution
+    return {
+        'K': (fx * sx, fy * sy, cx * sx, cy * sy),
+        'dist': np.zeros(4),
+        'model': 'pinhole',                           # rectified image -> pinhole, like the robot
+        'T_cam_tof': geo.make_T_cam_tof(ex['translation_mm'], ex['rotation_rpy_deg']),
+        'img_w': wt, 'img_h': ht,
+        'fov_h': tof['fov_h_deg'], 'fov_v': tof['fov_v_deg'],
+    }
+
+
+def build_real_supervision(disp, tof_dist_m, tof_valid, calib, holdout_frac=0.25,
+                           rng=None, confidence=None, min_confidence=-1, min_anchors=16):
+    """Held-out-anchor supervision from ONE real (disp, ToF) sample.
+
+    A sparse sensor can't be a dense GT: its zones coincide with the anchors the
+    closed-form fit already nails, so supervising there teaches the identity. Instead
+    we split the frame's valid ToF zones into two disjoint sets:
+
+      * ANCHOR set  -> drives the fit AND feeds the net's anchor channels (exactly
+                       what the robot does at inference), via build_residual_inputs.
+      * HOLD-OUT set -> fed to nobody as input; splatted into a sparse target so the
+                       loss scores the net at pixels where it had a real measurement
+                       but NO input -> true generalisation + real error stats for the
+                       NLL variance head (the one thing synthetic can't give).
+
+    Returns the build_residual_inputs dict plus D_gt (HxW, metric depth at held-out
+    pixels, 0 else), valid_gt (HxW bool), and n_holdout. None if underdetermined.
+    """
+    rng = rng or np.random.default_rng()
+    h, w = disp.shape
+    rows, cols = tof_dist_m.shape
+    K = calib['K']
+
+    proj = geo.project_zone_to_pixel(
+        tof_dist_m, tof_valid, cols, rows, calib['fov_h'], calib['fov_v'],
+        calib['T_cam_tof'], K, calib['dist'], model=calib['model'])
+    uv, z, ok = proj['uv'], proj['z_cam'], proj['valid']
+    finite = np.isfinite(uv[:, 0]) & np.isfinite(uv[:, 1]) & np.isfinite(z)
+    u = np.round(np.where(finite, uv[:, 0], -1)).astype(int)
+    v = np.round(np.where(finite, uv[:, 1], -1)).astype(int)
+    inb = ok & finite & (u >= 0) & (u < w) & (v >= 0) & (v < h) & (z > 0)
+    if confidence is not None and min_confidence >= 0:
+        inb = inb & (np.asarray(confidence, np.float32).reshape(-1) >= min_confidence)
+
+    idx = np.flatnonzero(inb)
+    if idx.size < 2 * min_anchors:                    # need enough for both sets
+        return None
+    rng.shuffle(idx)
+    n_hold = max(1, int(round(idx.size * holdout_frac)))
+    hold_idx, anchor_idx = idx[:n_hold], idx[n_hold:]
+    if anchor_idx.size < min_anchors:
+        return None
+
+    # Anchor-only validity mask fed back through the SAME inference math.
+    va = np.zeros(rows * cols, bool)
+    va[anchor_idx] = True
+    info = build_residual_inputs(disp, tof_dist_m, va.reshape(rows, cols),
+                                 calib, confidence=confidence, min_confidence=min_confidence)
+    if info is None or info['var_analytic'] is None:
+        return None
+
+    # Sparse hold-out target: metric depth only at the held-out zone pixels.
+    D_gt = np.zeros((h, w), np.float32)
+    valid_gt = np.zeros((h, w), bool)
+    D_gt[v[hold_idx], u[hold_idx]] = z[hold_idx].astype(np.float32)
+    valid_gt[v[hold_idx], u[hold_idx]] = True
+    info['D_gt'], info['valid_gt'], info['n_holdout'] = D_gt, valid_gt, int(hold_idx.size)
+    return info
+
+
 def simulate_tof(gt_depth, calib, rows=32, cols=48, noise_frac=0.02,
                  dropout=0.05, rng=None):
     """Sample a dense metric depth map on the ToF zone grid.
