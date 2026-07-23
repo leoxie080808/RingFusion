@@ -13,6 +13,17 @@
 
 #define LIGHTRANGER_INT_GPIO GPIO_NUM_4
 #define LIGHTRANGER_EN_GPIO  GPIO_NUM_5
+/*
+ * 400 kHz = the ESP32-C6 I2C master maximum ("SCL in master mode should not be
+ * larger than 400 kHz", ESP-IDF C6 I2C docs). The bus previously ran at 1 MHz,
+ * which is 2.5x out of spec; it only worked because the link was short and
+ * lightly loaded, and it failed once the wires were re-terminated/braided (added
+ * capacitance). Note: at 400 kHz a full 32x32 frame (~3 KB) takes ~70 ms to read
+ * out over I2C, so frame rate is readout-bound at roughly ~12 Hz regardless of
+ * MEASUREMENT_PERIOD_MS. Higher rate needs fewer zones or a smaller per-zone
+ * payload, not a faster bus.
+ */
+// #define LIGHTRANGER_I2C_HZ   400000U
 #define LIGHTRANGER_I2C_HZ   1000000U
 /*
  * Poll cadence for the result INT. This MUST be >= one FreeRTOS tick, otherwise

@@ -95,6 +95,12 @@ LOW_CONFIDENCE_MIN_ALPHA = 0.30
 MIN_DISTANCE_MM = 0
 MAX_DISTANCE_MM = 6000
 
+# Colorbar tick spacing (mm). Finer ticks make it easier to read a color back to a
+# distance. NOTE: this only *labels* the scale more densely -- it does not add color
+# *resolution*. If near objects all look the same dark navy, the fix is to lower
+# MAX_DISTANCE_MM (stretches the colormap over a shorter range), not more ticks.
+COLORBAR_TICK_STEP_MM = 500
+
 # Number of 90-degree counterclockwise rotations:
 #   0 = no rotation
 #   1 = 90 degrees
@@ -688,10 +694,29 @@ def main() -> None:
 
     colorbar = figure.colorbar(image, ax=axis)
     colorbar.set_label("Distance (mm)")
+    colorbar.set_ticks(
+        list(range(
+            MIN_DISTANCE_MM,
+            MAX_DISTANCE_MM + 1,
+            COLORBAR_TICK_STEP_MM,
+        ))
+    )
 
     axis.set_title(f"TMF8829 {COLS}×{ROWS} Depth Map")
     axis.set_xlabel("Column")
     axis.set_ylabel("Row")
+
+    # Center crosshair. Aim a flat target here and read "center~" in the title to
+    # verify scale -- far more reliable than the "nearest" min, which catches the
+    # closest edge/corner and reads short.
+    axis.plot(
+        [(COLS - 1) / 2.0],
+        [(ROWS - 1) / 2.0],
+        marker="+",
+        color="white",
+        markersize=16,
+        markeredgewidth=1.5,
+    )
 
     figure.tight_layout()
 
@@ -816,6 +841,26 @@ def main() -> None:
                         np.count_nonzero(strong_mask)
                     )
 
+                    # Center-patch (5x5) median: a stable reading of whatever is at
+                    # the crosshair. Use THIS to check scale, not "nearest".
+                    ch, cw = display_map.shape
+                    cy, cx = ch // 2, cw // 2
+                    center_patch = display_map[
+                        max(0, cy - 2):cy + 3,
+                        max(0, cx - 2):cx + 3,
+                    ]
+                    center_finite = center_patch[np.isfinite(center_patch)]
+                    center_mm = (
+                        float(np.median(center_finite))
+                        if center_finite.size
+                        else float("nan")
+                    )
+                    center_str = (
+                        f"center~{center_mm:.0f} mm"
+                        if np.isfinite(center_mm)
+                        else "center: --"
+                    )
+
                     # Prefer strong pixels when displaying the range.
                     if strong_count > 0:
                         range_values = display_map[strong_mask]
@@ -842,6 +887,7 @@ def main() -> None:
                         axis.set_title(
                             f"TMF8829 {COLS}×{ROWS} Depth Map | "
                             f"{nearest:.0f}–{farthest:.0f} mm | "
+                            f"{center_str} | "
                             f"{valid_count}/{ROWS * COLS} measured | "
                             f"{strong_count} strong | "
                             f"{fps:.2f} maps/s"
@@ -849,6 +895,7 @@ def main() -> None:
                     else:
                         axis.set_title(
                             f"TMF8829 {COLS}×{ROWS} Depth Map | "
+                            f"{center_str} | "
                             f"No distance measurements | "
                             f"{fps:.2f} maps/s"
                         )
