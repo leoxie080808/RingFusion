@@ -13,6 +13,10 @@
 #include "esp_rom_sys.h"
 #include "esp_timer.h"
 
+#ifdef TMF_BINARY_OUTPUT
+#include "driver/usb_serial_jtag_vfs.h"
+#endif
+
 static const char *TAG = "TMF8829_SHIM";
 static i2c_master_bus_handle_t s_bus = NULL;
 static i2c_master_dev_handle_t s_dev = NULL;
@@ -21,6 +25,30 @@ static uint32_t s_i2c_hz = 400000U;
 static void (*s_irq_handler)(void) = NULL;
 static bool s_result_line_open = false;
 static bool s_hist_line_open = false;
+
+#ifdef TMF_BINARY_OUTPUT
+/* One subframe (header + payload) is buffered here, then framed and sent as a
+ * single binary blob. 32x32 subframe = 21 + 1548 = 1569 bytes; 48x32 = 2337 ->
+ * raise TMF_FRAME_MAX if you ever switch back to a 48x32 focal-plane mode. */
+#define TMF_FRAME_MAX 2048
+static uint8_t  s_frame_buf[TMF_FRAME_MAX];
+static uint16_t s_frame_len;
+
+/* CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF) over BODY. Must match the host
+ * parser's _crc16_ccitt so EMI-corrupted frames are dropped, not misread. */
+static uint16_t crc16_ccitt(const uint8_t *d, uint16_t n)
+{
+    uint16_t crc = 0xFFFF;
+    for (uint16_t i = 0; i < n; ++i) {
+        crc ^= (uint16_t)d[i] << 8;
+        for (int b = 0; b < 8; ++b) {
+            crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021)
+                                 : (uint16_t)(crc << 1);
+        }
+    }
+    return crc;
+}
+#endif /* TMF_BINARY_OUTPUT */
 
 static int8_t map_i2c_error(esp_err_t err)
 {
@@ -345,6 +373,65 @@ static void print_raw_bytes(const uint8_t *data, uint16_t len)
     }
 }
 
+void tmf8829PrepareBinaryOutput(void)
+{
+#ifdef TMF_BINARY_OUTPUT
+    /* Stop the USB-Serial-JTAG console from translating 0x0A -> 0x0D 0x0A, which
+     * would corrupt binary frames. With LF endings every byte passes verbatim. */
+    usb_serial_jtag_vfs_set_tx_line_endings(ESP_LINE_ENDINGS_LF);
+#endif
+}
+
+#ifdef TMF_BINARY_OUTPUT
+/* -------- Binary result output (framed, length-prefixed, CRC-checked) --------
+ * Wire format (see BINARY_OUTPUT_HANDOFF.md):
+ *   MAGIC(4)=AA 55 C3 3C | LEN(2 LE)=body length | BODY(LEN)=21 header + payload
+ *   | CRC16(2 LE)=CRC-16/CCITT-FALSE over BODY
+ * BODY is exactly the bytes the ASCII path printed between ,PAYLOAD, markers.
+ * The ASCII implementation is preserved verbatim under #else for rollback. */
+
+void handleReceivedFrameHeaderData(void *dptr, uint8_t *data)
+{
+    (void)dptr;
+    s_frame_len = TMF8829_PRE_HEADER_SIZE + TMF8829_FRAME_HEADER_SIZE;  /* 21 */
+    memcpy(s_frame_buf, data, s_frame_len);
+    s_result_line_open = true;
+}
+
+void handleReceivedResultData(void *dptr, uint8_t *data, uint16_t size)
+{
+    (void)dptr;
+    if (!s_result_line_open) {          /* headerless result -> start a fresh body */
+        s_frame_len = 0;
+        s_result_line_open = true;
+    }
+    if ((uint32_t)s_frame_len + size <= TMF_FRAME_MAX) {
+        memcpy(s_frame_buf + s_frame_len, data, size);
+        s_frame_len = (uint16_t)(s_frame_len + size);
+    }   /* else: overflow -> host drops it on CRC / short read; safe */
+}
+
+void handleReceivedResultDataEnd(void *dptr)
+{
+    (void)dptr;
+    if (!s_result_line_open) {
+        return;
+    }
+    const uint8_t pre[6] = {
+        0xAA, 0x55, 0xC3, 0x3C,
+        (uint8_t)(s_frame_len & 0xFF), (uint8_t)(s_frame_len >> 8),
+    };
+    const uint16_t crc = crc16_ccitt(s_frame_buf, s_frame_len);
+    const uint8_t crcb[2] = { (uint8_t)(crc & 0xFF), (uint8_t)(crc >> 8) };
+    fwrite(pre, 1, sizeof pre, stdout);
+    fwrite(s_frame_buf, 1, s_frame_len, stdout);
+    fwrite(crcb, 1, sizeof crcb, stdout);
+    fflush(stdout);
+    s_result_line_open = false;
+}
+
+#else  /* !TMF_BINARY_OUTPUT : original ASCII CSV path, kept for rollback */
+
 void handleReceivedFrameHeaderData(void *dptr, uint8_t *data)
 {
     (void)dptr;
@@ -377,6 +464,8 @@ void handleReceivedResultDataEnd(void *dptr)
         s_result_line_open = false;
     }
 }
+
+#endif /* TMF_BINARY_OUTPUT */
 
 void handleReceivedHistogramData(void *dptr, uint8_t *data, uint16_t size)
 {

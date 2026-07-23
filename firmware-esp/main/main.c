@@ -10,6 +10,7 @@
 
 #include "tmf8829.h"
 #include "tmf8829_image.h"
+#include "tmf8829_shim.h"   /* TMF_BINARY_OUTPUT switch + tmf8829PrepareBinaryOutput() */
 
 #define LIGHTRANGER_INT_GPIO GPIO_NUM_4
 #define LIGHTRANGER_EN_GPIO  GPIO_NUM_5
@@ -172,7 +173,18 @@ void app_main(void)
     ESP_LOGI(TAG, "RingFusion LightRanger 14 / TMF8829 bring-up");
     ESP_LOGI(TAG, "Pins: SDA=GPIO6, SCL=GPIO7, INT=GPIO4, EN=GPIO5");
 
+    /* Make stdout binary-safe before any result frames are emitted (no-op in
+     * ASCII mode). Must run before ranging starts. */
+    tmf8829PrepareBinaryOutput();
+
     ESP_ERROR_CHECK(tmf8829_start_32x32());
+
+#ifdef TMF_BINARY_OUTPUT
+    /* Silence ESP_LOG so it does not interleave with the binary stream. The host
+     * resyncs via MAGIC+CRC regardless, but a clean stream is cheaper to parse.
+     * (Comment out TMF_BINARY_OUTPUT in tmf8829_shim.h to restore ASCII + logs.) */
+    esp_log_level_set("*", ESP_LOG_NONE);
+#endif
 
     for (;;) {
         /* INT is active-low. Polling keeps the first port simple and reliable. */

@@ -68,6 +68,14 @@ EXPECTED_PAYLOAD_VALUES = (
 # Each raw distance unit represents 0.25 mm.
 DISTANCE_SCALE_MM = 0.25
 
+# Stream format: True = compact binary frames (firmware built with
+# TMF_BINARY_OUTPUT), False = legacy ASCII CSV. Must match the flashed firmware.
+USE_BINARY_FRAMING = True
+
+# Binary frame: MAGIC(4) + LEN(2 LE) + BODY(LEN)=21 header + payload + CRC16(2 LE).
+# Sync word is little-endian on the wire: AA 55 C3 3C.
+MAGIC = b"\xAA\x55\xC3\x3C"
+
 # Reject an even-row frame if its odd-row partner takes too long.
 MAX_SUBFRAME_PAIR_AGE_SECONDS = 3.0
 
@@ -168,6 +176,7 @@ class ParserStats:
     replaced_even_subframes: int = 0
     stale_even_subframes: int = 0
     dropped_stale_lines: int = 0
+    crc_errors: int = 0
 
     layout_counts: dict[int, int] = field(default_factory=dict)
 
@@ -491,6 +500,179 @@ def parse_tmf8829_record(
 
 
 # ===========================================================================
+# Binary framing (MAGIC / LEN / BODY / CRC16)
+# ===========================================================================
+
+def crc16_ccitt(data: bytes) -> int:
+    """CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF). Matches firmware crc16_ccitt."""
+    crc = 0xFFFF
+    for byte in data:
+        crc ^= byte << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if (crc & 0x8000) else (crc << 1) & 0xFFFF
+    return crc
+
+
+def extract_binary_frames(buffer: bytearray) -> list[bytes]:
+    """Drain all complete, CRC-valid BODY blobs from buffer, consuming them.
+
+    Leaves any trailing partial frame (and a possible partial MAGIC) in the
+    buffer for the next call. Tolerates interleaved ESP log / boot text and
+    drops EMI-corrupted frames (bad CRC increments stats.crc_errors).
+    """
+
+    bodies: list[bytes] = []
+
+    while True:
+        i = buffer.find(MAGIC)
+
+        if i < 0:
+            # No MAGIC: discard scanned garbage but keep a possible partial magic.
+            if len(buffer) > len(MAGIC):
+                del buffer[:-(len(MAGIC) - 1)]
+            break
+
+        if len(buffer) < i + 6:                 # need MAGIC + LEN
+            del buffer[:i]
+            break
+
+        length = buffer[i + 4] | (buffer[i + 5] << 8)
+        end = i + 6 + length + 2                 # + CRC16
+
+        if len(buffer) < end:
+            del buffer[:i]                       # wait for the rest of this frame
+            break
+
+        body = bytes(buffer[i + 6:i + 6 + length])
+        crc_rx = buffer[i + 6 + length] | (buffer[i + 7 + length] << 8)
+        del buffer[:end]                         # consume this frame
+
+        if crc16_ccitt(body) != crc_rx:
+            stats.crc_errors += 1
+            continue                             # corrupted (EMI) -> resync to next MAGIC
+
+        bodies.append(body)
+
+    return bodies
+
+
+def parse_binary_body(body: bytes) -> ParsedSubframe | None:
+    """Decode one binary BODY (21 header bytes + payload) into a ParsedSubframe.
+
+    Mirrors parse_tmf8829_record's validation, just reading raw bytes instead of
+    decimal text.
+    """
+
+    stats.records_seen += 1
+
+    required = (
+        PREHEADER_SIZE
+        + FRAME_HEADER_SIZE
+        + PIXEL_BYTES_PER_SUBFRAME
+        + FRAME_FOOTER_BYTES
+    )
+
+    if len(body) < required:
+        stats.incomplete_payloads += 1
+        return None
+
+    frame_header = body[
+        PREHEADER_SIZE:PREHEADER_SIZE + FRAME_HEADER_SIZE
+    ]
+
+    frame_id_and_mode = frame_header[0]
+    frame_type = frame_id_and_mode & 0xF0
+    focal_plane_mode = frame_id_and_mode & 0x0F
+
+    layout = frame_header[1]
+    base_result_format = layout & RESULT_FORMAT_MASK
+
+    stats.layout_counts[layout] = (
+        stats.layout_counts.get(layout, 0) + 1
+    )
+
+    if layout not in _seen_layouts:
+        _seen_layouts.add(layout)
+
+        print(
+            "Detected TMF8829 frame: "
+            f"type=0x{frame_type:02X}, "
+            f"mode=0x{focal_plane_mode:X}, "
+            f"layout=0x{layout:02X}"
+        )
+
+    if frame_type != RESULT_FRAME_TYPE:
+        stats.unsupported_frames += 1
+        return None
+
+    if base_result_format != BASE_RESULT_FORMAT:
+        stats.unsupported_frames += 1
+        return None
+
+    payload = body[PREHEADER_SIZE + FRAME_HEADER_SIZE:]
+
+    pixel_values = payload[:PIXEL_BYTES_PER_SUBFRAME]
+
+    footer = payload[
+        PIXEL_BYTES_PER_SUBFRAME:
+        PIXEL_BYTES_PER_SUBFRAME + FRAME_FOOTER_BYTES
+    ]
+
+    if (
+        footer[10] != END_MARKER_LOW
+        or footer[11] != END_MARKER_HIGH
+    ):
+        stats.invalid_footers += 1
+        return None
+
+    frame_status = footer[8]
+
+    if not (frame_status & 0x01):
+        stats.sensor_invalid_frames += 1
+        return None
+
+    if frame_status & 0xC0:
+        stats.aborted_frames += 1
+        return None
+
+    pixel_bytes = np.frombuffer(
+        pixel_values,
+        dtype=np.uint8,
+    ).reshape(
+        PIXELS_PER_SUBFRAME,
+        BYTES_PER_PIXEL,
+    ).astype(np.uint16)
+
+    raw_distance = (
+        pixel_bytes[:, 0]
+        | (pixel_bytes[:, 1] << 8)
+    )
+
+    confidence = pixel_bytes[:, 2].astype(np.uint8)
+
+    distance_mm = (
+        raw_distance.astype(np.float32)
+        * DISTANCE_SCALE_MM
+    )
+
+    half_distance = distance_mm.reshape(SUBFRAME_ROWS, COLS)
+    half_confidence = confidence.reshape(SUBFRAME_ROWS, COLS)
+    raw_distance_map = raw_distance.reshape(SUBFRAME_ROWS, COLS)
+
+    half_distance[raw_distance_map == 0] = np.nan
+
+    stats.valid_subframes += 1
+
+    return ParsedSubframe(
+        subframe_index=determine_subframe(layout),
+        layout=layout,
+        distance_mm=half_distance,
+        confidence=half_confidence,
+        received_at=time.monotonic(),
+    )
+
+
+# ===========================================================================
 # Subframe assembly
 # ===========================================================================
 
@@ -589,6 +771,7 @@ def print_status() -> None:
         f"stale={stats.stale_even_subframes}, "
         f"incomplete={stats.incomplete_payloads}, "
         f"invalid-footer={stats.invalid_footers}, "
+        f"crc-errors={stats.crc_errors}, "
         f"dropped-stale={stats.dropped_stale_lines}, "
         f"layouts=[{layout_summary}]"
     )
@@ -619,6 +802,126 @@ def calculate_moving_fps(
 
 
 # ===========================================================================
+# Rendering (shared by the ASCII and binary paths)
+# ===========================================================================
+
+def render_map(distance_map, confidence_map, image, axis, figure, fps):
+    """Draw one completed map and update the title. Used by both stream formats."""
+
+    display_map = orient_map(distance_map)
+    display_confidence = orient_map(confidence_map)
+    alpha_map = create_alpha_map(display_map, display_confidence)
+
+    image.set_data(display_map)
+    image.set_alpha(alpha_map)
+
+    display_rows, display_cols = display_map.shape
+    axis.set_xlim(-0.5, display_cols - 0.5)
+    axis.set_ylim(display_rows - 0.5, -0.5)
+
+    finite_mask = np.isfinite(display_map)
+
+    # Strong pixels meet the normal confidence threshold.
+    strong_mask = finite_mask & (display_confidence >= CONFIDENCE_FADE_START)
+
+    valid_count = int(np.count_nonzero(finite_mask))
+    strong_count = int(np.count_nonzero(strong_mask))
+
+    # Center-patch (5x5) median: a stable reading of whatever is at the crosshair.
+    # Use THIS to check scale, not "nearest".
+    ch, cw = display_map.shape
+    cy, cx = ch // 2, cw // 2
+    center_patch = display_map[max(0, cy - 2):cy + 3, max(0, cx - 2):cx + 3]
+    center_finite = center_patch[np.isfinite(center_patch)]
+    center_mm = (
+        float(np.median(center_finite)) if center_finite.size else float("nan")
+    )
+    center_str = (
+        f"center~{center_mm:.0f} mm" if np.isfinite(center_mm) else "center: --"
+    )
+
+    # Prefer strong pixels when displaying the range.
+    if strong_count > 0:
+        range_values = display_map[strong_mask]
+    else:
+        range_values = display_map[finite_mask]
+
+    if range_values.size > 0:
+        nearest = float(np.min(range_values))
+        farthest = float(np.max(range_values))
+        axis.set_title(
+            f"TMF8829 {COLS}×{ROWS} Depth Map | "
+            f"{nearest:.0f}–{farthest:.0f} mm | "
+            f"{center_str} | "
+            f"{valid_count}/{ROWS * COLS} measured | "
+            f"{strong_count} strong | "
+            f"{fps:.2f} maps/s"
+        )
+    else:
+        axis.set_title(
+            f"TMF8829 {COLS}×{ROWS} Depth Map | "
+            f"{center_str} | "
+            f"No distance measurements | "
+            f"{fps:.2f} maps/s"
+        )
+
+    figure.canvas.draw_idle()
+
+
+def process_binary_buffer(serial_buffer, image, axis, figure, map_timestamps):
+    """Parse every complete binary frame in serial_buffer (mutated in place) and
+    render the freshest completed map. Counts every map so maps/s stays accurate
+    even when we render only the latest to stay current."""
+
+    latest = None
+    for body in extract_binary_frames(serial_buffer):
+        subframe = parse_binary_body(body)
+        if subframe is None:
+            continue
+        assembled = assemble_complete_map(subframe)
+        if assembled is None:
+            continue
+        map_timestamps.append(time.monotonic())
+        latest = assembled
+
+    if latest is not None:
+        fps = calculate_moving_fps(map_timestamps, time.monotonic())
+        render_map(latest[0], latest[1], image, axis, figure, fps)
+
+
+def process_ascii_buffer(serial_buffer, image, axis, figure, map_timestamps):
+    """Legacy ASCII line parser. Returns the (possibly trimmed) serial_buffer."""
+
+    # Drop stale buffered lines so the display stays current (see KEEP_RECENT_LINES).
+    newline_count = serial_buffer.count(b"\n")
+    if newline_count > KEEP_RECENT_LINES:
+        parts = bytes(serial_buffer).split(b"\n")
+        stats.dropped_stale_lines += newline_count - KEEP_RECENT_LINES
+        serial_buffer = bytearray(b"\n".join(parts[-(KEEP_RECENT_LINES + 1):]))
+
+    while b"\n" in serial_buffer:
+        raw_line, separator, remaining = serial_buffer.partition(b"\n")
+        if not separator:
+            break
+        serial_buffer = bytearray(remaining)
+
+        line = raw_line.decode("ascii", errors="ignore").strip()
+
+        for record in extract_records_from_line(line):
+            parsed_subframe = parse_tmf8829_record(record)
+            if parsed_subframe is None:
+                continue
+            assembled = assemble_complete_map(parsed_subframe)
+            if assembled is None:
+                continue
+            map_timestamps.append(time.monotonic())
+            fps = calculate_moving_fps(map_timestamps, time.monotonic())
+            render_map(assembled[0], assembled[1], image, axis, figure, fps)
+
+    return serial_buffer
+
+
+# ===========================================================================
 # Main application
 # ===========================================================================
 
@@ -639,8 +942,8 @@ def main() -> None:
     print(f"Reading TMF8829 frames from {PORT}...")
 
     print(
-        "Expected payload after PAYLOAD marker: "
-        f"{EXPECTED_PAYLOAD_VALUES} values per subframe"
+        f"Stream format: {'BINARY (MAGIC+LEN+BODY+CRC16)' if USE_BINARY_FRAMING else 'ASCII CSV'}; "
+        f"{EXPECTED_PAYLOAD_VALUES} payload values per subframe"
     )
 
     print(
@@ -749,158 +1052,14 @@ def main() -> None:
 
                 serial_buffer.clear()
 
-            # Drop stale buffered frames so the display stays current (see
-            # KEEP_RECENT_LINES). Only triggers when we've fallen behind; when the
-            # loop keeps up there are <= KEEP_RECENT_LINES lines and nothing is dropped.
-            newline_count = serial_buffer.count(b"\n")
-            if newline_count > KEEP_RECENT_LINES:
-                parts = bytes(serial_buffer).split(b"\n")
-                stats.dropped_stale_lines += newline_count - KEEP_RECENT_LINES
-                serial_buffer = bytearray(
-                    b"\n".join(parts[-(KEEP_RECENT_LINES + 1):])
+            if USE_BINARY_FRAMING:
+                process_binary_buffer(
+                    serial_buffer, image, axis, figure, map_timestamps
                 )
-
-            while b"\n" in serial_buffer:
-                raw_line, separator, remaining = (
-                    serial_buffer.partition(b"\n")
+            else:
+                serial_buffer = process_ascii_buffer(
+                    serial_buffer, image, axis, figure, map_timestamps
                 )
-
-                if not separator:
-                    break
-
-                serial_buffer = bytearray(remaining)
-
-                line = raw_line.decode(
-                    "ascii",
-                    errors="ignore",
-                ).strip()
-
-                records = extract_records_from_line(line)
-
-                for record in records:
-                    parsed_subframe = parse_tmf8829_record(
-                        record
-                    )
-
-                    if parsed_subframe is None:
-                        continue
-
-                    assembled = assemble_complete_map(
-                        parsed_subframe
-                    )
-
-                    if assembled is None:
-                        continue
-
-                    distance_map, confidence_map = assembled
-
-                    display_map = orient_map(distance_map)
-
-                    display_confidence = orient_map(
-                        confidence_map
-                    )
-
-                    alpha_map = create_alpha_map(
-                        display_map,
-                        display_confidence,
-                    )
-
-                    image.set_data(display_map)
-                    image.set_alpha(alpha_map)
-
-                    display_rows, display_cols = (
-                        display_map.shape
-                    )
-
-                    axis.set_xlim(
-                        -0.5,
-                        display_cols - 0.5,
-                    )
-
-                    axis.set_ylim(
-                        display_rows - 0.5,
-                        -0.5,
-                    )
-
-                    finite_mask = np.isfinite(display_map)
-
-                    # Strong pixels meet the normal confidence threshold.
-                    strong_mask = (
-                        finite_mask
-                        & (
-                            display_confidence
-                            >= CONFIDENCE_FADE_START
-                        )
-                    )
-
-                    valid_count = int(
-                        np.count_nonzero(finite_mask)
-                    )
-
-                    strong_count = int(
-                        np.count_nonzero(strong_mask)
-                    )
-
-                    # Center-patch (5x5) median: a stable reading of whatever is at
-                    # the crosshair. Use THIS to check scale, not "nearest".
-                    ch, cw = display_map.shape
-                    cy, cx = ch // 2, cw // 2
-                    center_patch = display_map[
-                        max(0, cy - 2):cy + 3,
-                        max(0, cx - 2):cx + 3,
-                    ]
-                    center_finite = center_patch[np.isfinite(center_patch)]
-                    center_mm = (
-                        float(np.median(center_finite))
-                        if center_finite.size
-                        else float("nan")
-                    )
-                    center_str = (
-                        f"center~{center_mm:.0f} mm"
-                        if np.isfinite(center_mm)
-                        else "center: --"
-                    )
-
-                    # Prefer strong pixels when displaying the range.
-                    if strong_count > 0:
-                        range_values = display_map[strong_mask]
-                    else:
-                        range_values = display_map[finite_mask]
-
-                    current_time = time.monotonic()
-                    map_timestamps.append(current_time)
-
-                    fps = calculate_moving_fps(
-                        map_timestamps,
-                        current_time,
-                    )
-
-                    if range_values.size > 0:
-                        nearest = float(
-                            np.min(range_values)
-                        )
-
-                        farthest = float(
-                            np.max(range_values)
-                        )
-
-                        axis.set_title(
-                            f"TMF8829 {COLS}×{ROWS} Depth Map | "
-                            f"{nearest:.0f}–{farthest:.0f} mm | "
-                            f"{center_str} | "
-                            f"{valid_count}/{ROWS * COLS} measured | "
-                            f"{strong_count} strong | "
-                            f"{fps:.2f} maps/s"
-                        )
-                    else:
-                        axis.set_title(
-                            f"TMF8829 {COLS}×{ROWS} Depth Map | "
-                            f"{center_str} | "
-                            f"No distance measurements | "
-                            f"{fps:.2f} maps/s"
-                        )
-
-                    figure.canvas.draw_idle()
 
             current_time = time.monotonic()
 

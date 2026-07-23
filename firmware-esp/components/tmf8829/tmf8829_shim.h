@@ -20,6 +20,17 @@ extern "C" {
 #define HOST_TICKS_PER_1000_US 1000
 #define TMF8829_TICKS_PER_1000_US 125
 
+/*
+ * Output format for ToF result frames (see BINARY_OUTPUT_HANDOFF.md):
+ *   defined   -> compact binary: MAGIC(4) + LEN(2 LE) + BODY + CRC16(2 LE).
+ *                ~4x fewer USB bytes than ASCII -> shorter EMI bursts + headroom
+ *                for a higher frame rate.
+ *   undefined -> original human-readable ASCII CSV (handy for debugging).
+ * The host parser (tof_source.py / heatmap.py) MUST match whichever is flashed.
+ * Comment this out to fall back to the ASCII path preserved in tmf8829_shim.c.
+ */
+#define TMF_BINARY_OUTPUT
+
 #ifndef PROGMEM
 #define PROGMEM
 #endif
@@ -95,6 +106,10 @@ void handleReceivedResultData(void *dptr, uint8_t *data, uint16_t size);
 void handleReceivedHistogramData(void *dptr, uint8_t *data, uint16_t size);
 void handleReceivedResultDataEnd(void *dptr);
 void handleReceivedHistogramDataEnd(void *dptr);
+
+/* Configure stdout for binary-safe output. Call once at startup, before ranging.
+ * No-op unless TMF_BINARY_OUTPUT is defined. */
+void tmf8829PrepareBinaryOutput(void);
 
 void printResultHeader(void *dptr, uint8_t *data, uint8_t len);
 void printResults(void *dptr, uint8_t *data, uint16_t len);

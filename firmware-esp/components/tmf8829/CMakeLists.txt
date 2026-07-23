@@ -6,7 +6,7 @@ idf_component_register(
         "tmf8829_image.c"
         "tmf8829_shim.c"
     INCLUDE_DIRS "."
-    REQUIRES esp_driver_i2c esp_driver_gpio esp_timer
+    REQUIRES esp_driver_i2c esp_driver_gpio esp_timer esp_driver_usb_serial_jtag
 )
 
 # The upstream firmware image uses the Arduino PROGMEM annotation.
