@@ -19,26 +19,31 @@ least-squares fit joins them with **no learned parameters**. Full design in
 
 ## Status
 
-The **sensor stack and full perception pipeline run today with mock networks**. The
-two neural nets are written but **not trained**. Depth is **not metric until the
-fisheye lens is calibrated**. GPU torch is **fixed** (cuBLAS/cuDNN verified on the Orin)
-and the Step-0 teacher sanity **passed**, so distillation (B2) is unblocked.
+The **full perception pipeline runs live on the Orin at ~15 Hz** — real Network A backbone
+(distilled → TensorRT FP16), **binary ToF firmware** (~16 Hz), and closed-form ToF→mono
+anchoring. Camera is **calibrated** (fisheye → pinhole), so depth is metric. Validated
+against a known target: Network-A metric depth agrees with the ToF to **~12 mm** (within the
+ToF's ~20 mm accuracy) — see the demo montage [`docs/demo/pipeline_demo.png`](docs/demo/pipeline_demo.png).
 
-Full breakdown + living checklist:
-**[ros2_ws/README.md → Task tracker](ros2_ws/README.md#task-tracker)**.
+**Network B (residual refiner) is still the identity mock — training it is the current focus.**
+Network A is pilot-quality (2,000 imgs, ρ 0.9962 vs teacher); a full ~15–20k re-distill is pending.
 
-## ▶ Do next (immediate)
+Live rates: [ros2_ws/README.md → Performance notes](ros2_ws/README.md#performance-notes-jetson-agx-orin).
+Full breakdown + living checklist: [ros2_ws/README.md → Task tracker](ros2_ws/README.md#task-tracker).
 
-1. **B2 — distillation.** Collect ~20k rectified images from the deployment
-   environment → `cache_teacher` → `distill_backbone` → `export_onnx` →
-   `build_engine`, and measure Orin FPS.
+## ▶ Do next (immediate) — Network B
 
-**✅ Done:** Fisheye lens **calibrated** (cv2.fisheye, RMS 0.5406 px; `rectify_view`
-verified `identity=False` — real de-warp active in
-[`calibration.yaml`](ros2_ws/src/ringfusion_bringup/config/calibration.yaml));
-GPU torch fixed (cuBLAS/cuDNN verified — recipe in
-[training/README.md](training/README.md#gpu-torch-on-the-orin--working-recipe-resolved));
-B1 Step-0 sanity passed (Depth Anything V2 looks good on our rectified fisheye → `step0.png`).
+1. **Collect paired `(rectified image, 32×32 ToF)` logs** with `paired_logger` (stationary
+   stations across varied geometry).
+2. **Train the residual via held-out anchors** — `train_residual.py --real` → coverage → 0.68.
+3. **Export FP16, integrate** (`residual_engine:=…`) → the calibrated-uncertainty "fused depth".
+
+See [training/README.md → §2a Network B](training/README.md).
+
+**✅ Done:** full pipeline live end-to-end (camera → rectify → ToF binary → Network A +
+anchoring → `/cloud`); fisheye **calibrated** (cv2.fisheye, RMS 0.5406 px, real de-warp);
+Network A **distilled (pilot) → TensorRT FP16/INT8 → running live**; ToF **binary firmware +
+persistent assembler** (~8 → ~16 Hz); perception **GPU-offloaded** (~5.6 → ~27 Hz capable).
 
 ## Quick start (view the live sensors)
 

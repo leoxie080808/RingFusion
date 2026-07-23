@@ -139,7 +139,7 @@ View the output point cloud in `rviz2`: add a `PointCloud2` display on `/cloud` 
 ## Perception
 
 `perception_node` caches the latest camera frame + ToF frame and runs the pure-numpy
-pipeline (`pipeline.run`) whenever a ToF frame arrives (~8 Hz; ToF-limited — see
+pipeline (`pipeline.run`) whenever a ToF frame arrives (~15 Hz; ToF-limited — see
 Performance notes). Heavy per-pixel math is GPU-offloaded via `gpu_ops.py`. It publishes:
 
 | Topic | Type | Contents |
@@ -393,26 +393,34 @@ quality loss; drop to `30`-`40` if lag persists. Local viewing avoids this entir
 
 ### Performance notes (Jetson AGX Orin)
 
-Measured live, full pipeline, MAXN + `jetson_clocks`, backbone on TensorRT:
+**Measured live** (2026-07-23), full pipeline, MAXN + `jetson_clocks`, backbone on TensorRT
+FP16, **binary ToF firmware**:
 
 | Topic | Component | Rate | Limited by |
 |-------|-----------|------|------------|
-| `/image` | camera | **~26 Hz** | IMX219 sensor mode (30 fps cap on 1640×1232) |
-| `/depth`, `/cloud` | perception | **~27 Hz capable**, runs at ToF rate | backbone TensorRT (~17 ms) |
-| `/tof` | ToF driver | **~8 Hz** ← pipeline bottleneck | ASCII USB delivery (see below) |
+| `/image` | camera | **~28.5 Hz** | IMX219 sensor mode (30 fps cap on 1640×1232) |
+| `/tof` | ToF driver | **~16 Hz** ← pipeline bottleneck | ToF sensor + USB delivery |
+| `/depth` | perception (Network A + anchoring) | **~14.8 Hz** | runs at ToF rate (backbone ~27 Hz capable) |
+| `/cloud` | perception unprojection | **~15.6 Hz** | runs at ToF rate |
 
-Everything downstream of the ToF has ~3× headroom, so the fused output rate equals
-whatever the ToF delivers. Lift the ToF and the whole pipeline rises with it.
+**Fused pipeline: ~15 Hz** — up from ~8 Hz, roughly doubled by the binary ToF firmware +
+persistent per-subframe assembler (see ToF note below). The ToF is still the single
+bottleneck; camera (~28.5) and perception (~27 capable) both have ~2× headroom, so lifting
+the ToF further raises the whole pipeline.
+
+**Live accuracy check (green cube):** ToF **0.447 m** vs Network-A anchored depth **0.459 m**
+— **~12 mm** apart, inside the ToF's own ~20 mm error band. Confirms the closed-form ToF→mono
+anchoring is metrically correct. Demo montage: [`docs/demo/pipeline_demo.png`](../docs/demo/pipeline_demo.png).
 
 - **Power mode.** Check with `nvpmodel -q`. If it's not MAXN, everything is throttled (fewer
   cores, lower clocks) — set it with `sudo nvpmodel -m 0` (applies immediately, no reboot;
   persists across reboots) then `sudo jetson_clocks` (re-run after each boot).
 
-- **Camera rate.** Runs at **1640×1232** (full-FOV 2×2-binned mode) at **~26 Hz**. The node's
-  serial tick is ~36 ms (`cap.read()` 33 ms at the 30 fps sensor cap + ~10 ms tone-correct),
-  so 30 fps is the hard ceiling at this resolution. It was formerly throttled to 15 Hz by the
-  `rate` launch param — that's now `30.0` in `single_module.launch.py` (uncapped). Going past
-  30 Hz would need a different sensor mode and re-calibration.
+- **Camera rate.** Runs at **1640×1232** (full-FOV 2×2-binned mode) at **~28.5 Hz**, near the
+  30 fps sensor ceiling. The node's serial tick is ~36 ms (`cap.read()` at the 30 fps cap +
+  ~10 ms tone-correct). It was formerly throttled to 15 Hz by the `rate` launch param — now
+  `30.0` in `single_module.launch.py`. Going past 30 Hz needs a different sensor mode + re-calibration.
+  (Passive camera → needs light: a dark room yields black/noise frames, not an EMI fault.)
 
 - **Perception is GPU-offloaded.** Profiling found the bottleneck was *not* the neural net —
   the backbone is ~17 ms and the GPU sat near-idle. It was the pure-numpy per-pixel 2 MP math
@@ -421,16 +429,14 @@ whatever the ToF delivers. Lift the ToF and the whole pipeline rises with it.
   fallback preserved for off-robot testing), and float64 waste was cut to float32. Perception
   went from ~5.6 Hz to ~27 Hz capable. `cloud_stride=4` in `pipeline.run` also thins the cloud.
 
-- **ToF rate — why ~8 Hz here but ~15–30 on the laptop `heatmap.py`.** Not the parser: the
-  Orin decodes a full 32×32 map from ASCII in **~1.2 ms** (816 maps/s ceiling — benchmarked),
-  so CPU parsing has enormous headroom. The cap is upstream — how fast complete **even+odd
-  subframe pairs** actually arrive over USB and survive assembly. The laptop viewer wins for
-  two reasons that don't apply to us: a faster x86 core, and it **drops stale buffered lines**
-  (`KEEP_RECENT_LINES=4`) so it never stalls, whereas `tof_source.SerialToFSource.read()`
-  processes every line and silently orphans any subframe whose partner it misses under load.
-  The real fix is the **binary output** change (`firmware-esp/BINARY_OUTPUT_HANDOFF.md`): ~4×
-  shorter USB bursts + trivial binary parse + CRC resync that drops only *corrupted* frames
-  instead of orphaning their partners. That also cuts the CSI-ribbon EMI (shorter bursts).
+- **ToF rate — binary firmware (live).** The ESP32-C6 now streams framed **binary** subframes
+  (`MAGIC + LEN + BODY + CRC16`, `firmware-esp/BINARY_OUTPUT_HANDOFF.md`) instead of ASCII CSV
+  — ~4× fewer USB bytes and a CRC that drops only *corrupted* frames. `tof_source.py`
+  auto-detects ASCII vs binary and uses a **persistent per-subframe assembler**: each even/odd
+  subframe updates its half of a kept 32×32 map and publishes immediately (per-subframe, not
+  per-pair), carrying a missed half forward instead of dropping the whole map. Together these
+  took `/tof` from ~8 Hz (ASCII, all-or-nothing pairing) to **~16 Hz**. Parsing was never the
+  limit (Orin decodes a map in ~1.2 ms); the cap was USB delivery + assembly survival.
   (Firmware note: ToF resolution is set by the flashed focal-plane mode — `CMD_LOAD_CFG_32X32`
   for 32×32; `tof_source.ROWS,COLS` must match the flashed build.)
 
