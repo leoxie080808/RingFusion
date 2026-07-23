@@ -197,6 +197,41 @@ python training/train_residual.py --rgb data/syn/rgb --depth data/syn/depth \
 3. **Calibration** — `coverage` → **0.68** @1σ (the headline number); reported live during training.
 4. **On-robot** — build the FP16 engine (§3), `residual_engine:=…`, confirm `/depth` rate holds and the variance field is sane.
 
+### First training run — results & concerns (2026-07-23)
+
+First end-to-end Network B run: **563 real paired frames** (collected with `paired_logger`
+`auto` mode, well-lit, median 818 valid ToF zones/frame), trained 40 epochs, `--holdout-frac 0.25`,
+exported to `residual_fp16.engine`, integrated live (`residual=residual_trt`).
+
+| Metric | Result | Notes |
+|---|---|---|
+| Best val loss | **0.263** | converged by ~epoch 25 |
+| **Coverage** | **~0.88** | plateaued; did **not** reach 0.68 (see concern 3) |
+| B correction \|A+B − A\| | **median 41 mm** | B makes genuine local corrections (~8% on a 0.5 m scene) |
+| B correction max | **~10 km (clamped)** | ⚠️ degenerate pixels (concern 1) |
+| Uncertainty (std) | **median ~490 mm** | large — the under-confidence |
+| Live rate `/depth` | **~7 Hz** (was ~15) | B's apply is on CPU (concern 2) |
+
+**B works** (trained → exported → live, making real corrections), but it is **not yet a clean
+win**. Three concerns to resolve before trusting it:
+
+1. **Degenerate pixels (heavy tail).** Median correction is a healthy 41 mm, but the max hits
+   the 10 km far-clamp: at some pixels `(a+da)·disp + (b+db)` → ≈0, blowing depth up. Those junk
+   points pollute the cloud. Signals B is **under-constrained** — wants more/varied data and/or a
+   **regularizer or clamp on `da, db`** magnitude.
+2. **Rate 15 → 7 Hz.** `ResidualRefiner.refine()` upsamples 3 fields to 2 MP and applies them on
+   the **CPU** (not GPU-offloaded like the main pipeline). Recoverable by moving the apply to
+   `gpu_ops` — same fix already done for the closed-form tail. Not a training issue.
+3. **Calibration capped at ~0.88 (under-confident).** Total variance = `analytic + tau²` with
+   `tau² ≥ 0`, so B can only **add** uncertainty — it can't shrink an already-over-conservative
+   analytic variance down to 0.68. Errs on the safe side (over- not under-estimating uncertainty),
+   but not tight. Fixing calibration means letting B **scale** the analytic variance, not just add.
+
+**Go/no-go still pending:** the **held-out-anchor accuracy eval** — does A+B predict the held-out
+ToF zones *more accurately* than A-only? We have B's correction *magnitude* (41 mm) but not its
+*sign*. If A+B beats A-only → keep B, fix the tail + rate. If not → **re-collect** more/varied data
+and add a stability regularizer, then retrain.
+
 ## 3. Export → TensorRT (build engines on the Jetson)
 
 **3a. Export to ONNX.** `export_onnx.py` forces the **legacy TorchScript exporter**

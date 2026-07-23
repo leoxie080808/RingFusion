@@ -408,6 +408,11 @@ persistent per-subframe assembler (see ToF note below). The ToF is still the sin
 bottleneck; camera (~28.5) and perception (~27 capable) both have ~2× headroom, so lifting
 the ToF further raises the whole pipeline.
 
+> **With Network B enabled** (`residual_engine:=…`), `/depth` currently drops to **~7 Hz** —
+> B's `refine()` upsamples/applies its 3 fields over 2 MP **on the CPU** (not GPU-offloaded like
+> the closed-form tail). Recoverable by moving B's apply to `gpu_ops`. See training/README →
+> "First training run — results & concerns".
+
 **Live accuracy check (green cube):** ToF **0.447 m** vs Network-A anchored depth **0.459 m**
 — **~12 mm** apart, inside the ToF's own ~20 mm error band. Confirms the closed-form ToF→mono
 anchoring is metrically correct. Demo montage: [`docs/demo/pipeline_demo.png`](../docs/demo/pipeline_demo.png).

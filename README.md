@@ -25,25 +25,33 @@ anchoring. Camera is **calibrated** (fisheye → pinhole), so depth is metric. V
 against a known target: Network-A metric depth agrees with the ToF to **~12 mm** (within the
 ToF's ~20 mm accuracy) — see the demo montage [`docs/demo/pipeline_demo.png`](docs/demo/pipeline_demo.png).
 
-**Network B (residual refiner) is still the identity mock — training it is the current focus.**
+**Network B (residual refiner): first real training run done — trained → exported → live**
+(563 paired frames, `residual=residual_trt`), but **not yet a clean win.** It makes genuine
+corrections (median 41 mm) yet has three open concerns: degenerate-pixel blow-ups (heavy tail
+→ 10 km clamp), a rate drop (15 → ~7 Hz; its apply is on CPU), and coverage capped at ~0.88
+(under-confident; additive-variance ceiling). Full write-up:
+[training/README.md → First training run](training/README.md#first-training-run--results--concerns-2026-07-23).
 Network A is pilot-quality (2,000 imgs, ρ 0.9962 vs teacher); a full ~15–20k re-distill is pending.
 
 Live rates: [ros2_ws/README.md → Performance notes](ros2_ws/README.md#performance-notes-jetson-agx-orin).
 Full breakdown + living checklist: [ros2_ws/README.md → Task tracker](ros2_ws/README.md#task-tracker).
 
-## ▶ Do next (immediate) — Network B
+## ▶ Do next (immediate) — Network B go/no-go
 
-1. **Collect paired `(rectified image, 32×32 ToF)` logs** with `paired_logger` (stationary
-   stations across varied geometry).
-2. **Train the residual via held-out anchors** — `train_residual.py --real` → coverage → 0.68.
-3. **Export FP16, integrate** (`residual_engine:=…`) → the calibrated-uncertainty "fused depth".
+1. **Held-out-anchor accuracy eval** — does A+B predict held-out ToF zones *more accurately*
+   than A-only? The objective keep-or-recollect decision (we have B's correction magnitude,
+   not its sign yet).
+2. **If B wins:** GPU-offload B's apply (restore ~15 Hz) + add a `da,db` stability clamp/regularizer
+   (kill the 10 km tail).
+3. **If not:** re-collect more/varied paired data (`paired_logger auto`) + retrain with the regularizer.
 
-See [training/README.md → §2a Network B](training/README.md).
+See [training/README.md → §2 Network B](training/README.md).
 
 **✅ Done:** full pipeline live end-to-end (camera → rectify → ToF binary → Network A +
 anchoring → `/cloud`); fisheye **calibrated** (cv2.fisheye, RMS 0.5406 px, real de-warp);
 Network A **distilled (pilot) → TensorRT FP16/INT8 → running live**; ToF **binary firmware +
-persistent assembler** (~8 → ~16 Hz); perception **GPU-offloaded** (~5.6 → ~27 Hz capable).
+persistent assembler** (~8 → ~16 Hz); perception **GPU-offloaded** (~5.6 → ~27 Hz capable);
+**Network B trained on 563 real frames → exported FP16 → integrated live** (concerns above).
 
 ## Output: point cloud → LiDAR / SLAM layer (planned)
 
