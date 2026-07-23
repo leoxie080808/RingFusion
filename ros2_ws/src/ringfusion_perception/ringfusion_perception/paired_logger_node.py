@@ -14,10 +14,14 @@ Held-out-anchor training (train_residual.py --real) turns each frame's ToF into 
 net's anchor input and a sparse supervision target, so we do NOT need dense GT -- the ToF
 IS the measurement. See training/README section 2a.
 
-Two modes (param `mode`):
+Three modes (param `mode`):
   station     (default) live preview; press 'c' to capture ONE station -- averages the
               last `avg` ToF frames (denoises + lifts coverage) with the current image.
               Best pairs: stop, hold still, capture. 'q'/ESC quits.
+  auto        hands-free stations: a stop-and-go state machine. Push the robot; when the
+              view SETTLES (frame-to-frame change < stable_thresh) at a NEW spot it auto-
+              snaps one averaged pair, then re-arms only after you MOVE away (change >
+              move_thresh). One clean pair per stop, no keypress. Works headless.
   continuous  auto-save deduped, sharp, well-synced pairs as you push slowly (headless-ok).
 
 Only saves when a ToF frame is within `sync_thresh` seconds of the image, so a moving
@@ -26,13 +30,15 @@ robot never banks a mismatched pair. Re-running appends (continues the numbering
 Parameters:
   out_dir (str)        root; writes out_dir/rgb and out_dir/tof   (default data/real)
   calib (str)          path to calibration.yaml
-  mode (str)           'station' | 'continuous'                    (default station)
+  mode (str)           'station' | 'auto' | 'continuous'           (default station)
   avg (int)            ToF frames to average per station           (default 3)
   sync_thresh (float)  max |t_img - t_tof| seconds to pair         (default 0.08)
   target (int)         stop after this many pairs on disk          (default 5000)
-  dedup_thresh (float) continuous: mean abs gray diff for "new"    (default 8.0)
-  min_interval (float) continuous: min seconds between saves       (default 0.5)
-  blur_thresh (float)  continuous: min variance-of-Laplacian       (default 60.0)
+  dedup_thresh (float) auto/continuous: mean abs gray diff for "new" spot (default 8.0)
+  min_interval (float) auto/continuous: min seconds between saves  (default 0.5)
+  blur_thresh (float)  auto/continuous: min variance-of-Laplacian  (default 60.0)
+  stable_thresh (float) auto: frame-to-frame diff below which the view is "settled" (default 2.0)
+  move_thresh (float)  auto: frame-to-frame diff above which we re-arm (moved away) (default 6.0)
   preview (bool)       show the live window (needs the monitor)    (default True)
 """
 import glob
@@ -68,6 +74,8 @@ class PairedLogger(Node):
         self.declare_parameter('dedup_thresh', 8.0)
         self.declare_parameter('min_interval', 0.5)
         self.declare_parameter('blur_thresh', 60.0)
+        self.declare_parameter('stable_thresh', 2.0)
+        self.declare_parameter('move_thresh', 6.0)
         self.declare_parameter('preview', True)
 
         self.out_dir = self.get_parameter('out_dir').value
@@ -78,6 +86,8 @@ class PairedLogger(Node):
         self.dedup_thresh = float(self.get_parameter('dedup_thresh').value)
         self.min_interval = float(self.get_parameter('min_interval').value)
         self.blur_thresh = float(self.get_parameter('blur_thresh').value)
+        self.stable_thresh = float(self.get_parameter('stable_thresh').value)
+        self.move_thresh = float(self.get_parameter('move_thresh').value)
         self.preview = bool(self.get_parameter('preview').value)
 
         self.rgb_dir = os.path.join(self.out_dir, 'rgb')
@@ -106,6 +116,10 @@ class PairedLogger(Node):
         self.tof_buf = deque(maxlen=16)
         self.ref_small = None
         self.last_save_t = 0.0
+        # auto mode: stop-and-go state (frame-to-frame diff hysteresis)
+        self.prev_small = None           # previous frame's 128x128 gray, for motion
+        self.settled = False             # captured at the current stop; wait to move
+        self.last_ftf = 0.0              # last frame-to-frame diff (for the overlay)
 
         if self.preview:
             try:
@@ -214,15 +228,33 @@ class PairedLogger(Node):
                 and (time.time() - self.last_save_t) >= self.min_interval):
             self._save(self.img, synced[0][1], synced[0][2], small)
 
+        # auto: stop-and-go. Snap one averaged pair when the view SETTLES at a NEW
+        # spot; re-arm only after it MOVES away (frame-to-frame diff hysteresis:
+        # stable_thresh < move_thresh). One clean pair per stop, hands-free.
+        if self.mode == 'auto':
+            if self.prev_small is not None:
+                self.last_ftf = float(np.abs(small - self.prev_small).mean())
+                if self.last_ftf > self.move_thresh:
+                    self.settled = False                       # moving -> re-arm
+                elif (not self.settled and self.last_ftf < self.stable_thresh
+                      and is_new and sharp_ok and synced
+                      and (time.time() - self.last_save_t) >= self.min_interval):
+                    frames = self._synced_tof(n=self.avg)
+                    if frames:
+                        dist, conf = self._merge_tof(frames)
+                        self._save(self.img, dist, conf, small)
+                        self.settled = True                    # captured; wait to move
+            self.prev_small = small
+
         if self.preview:
             self._draw(is_new, sharp, sharp_ok, synced)
 
     def _draw(self, is_new, sharp, sharp_ok, synced):
         disp = self.img.copy()
         total = self.on_disk + self.saved
+        mode_col = {'continuous': (0, 165, 255), 'auto': (255, 200, 0)}.get(self.mode, (0, 255, 0))
         cv2.putText(disp, f"[{total}/{self.target}]  {self.mode.upper()}", (24, 44),
-                    FONT, 1.1, (0, 165, 255) if self.mode == 'continuous' else (0, 255, 0),
-                    3, cv2.LINE_AA)
+                    FONT, 1.1, mode_col, 3, cv2.LINE_AA)
         if synced:
             dt = abs(synced[0][0] - self.img_t) * 1e3
             nv = int(np.isfinite(synced[0][1]).sum())
@@ -234,7 +266,17 @@ class PairedLogger(Node):
         cv2.putText(disp, f"{'NEW' if is_new else 'similar'}   {blur_tag}", (24, 128),
                     FONT, 0.8, (0, 255, 0) if (is_new and sharp_ok) else (0, 0, 255),
                     2, cv2.LINE_AA)
-        cv2.putText(disp, "c capture station   q quit", (24, disp.shape[0] - 24),
+        if self.mode == 'auto':          # stop-and-go state feedback
+            if self.settled:
+                st, col = "CAPTURED - move to next spot", (0, 255, 0)
+            elif self.last_ftf > self.move_thresh:
+                st, col = f"MOVING (ftf {self.last_ftf:.1f})", (0, 165, 255)
+            else:
+                st, col = f"settling... hold still (ftf {self.last_ftf:.1f})", (0, 255, 255)
+            cv2.putText(disp, st, (24, 168), FONT, 0.85, col, 2, cv2.LINE_AA)
+        help_txt = "auto-capturing on stop   q quit" if self.mode == 'auto' else \
+                   "c capture station   q quit"
+        cv2.putText(disp, help_txt, (24, disp.shape[0] - 24),
                     FONT, 0.8, (255, 255, 255), 2, cv2.LINE_AA)
         cv2.imshow(WIN, disp)
 
