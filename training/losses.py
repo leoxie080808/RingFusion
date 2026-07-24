@@ -57,9 +57,23 @@ def distill_loss(student_out, teacher_out, grad_weight=0.5, trim=0.2):
 
 # --- residual ---------------------------------------------------------------
 
+# log_tau2 is an unbounded network output; exp() of a large value overflows to inf,
+# which turns the NLL (var.log(), err2/var) into inf -> NaN gradients -> dead training.
+# Clamp it to a sane band (exp(-8)..exp(8) = 3e-4..3e3) and floor the total variance.
+LOGVAR_MIN, LOGVAR_MAX = -8.0, 8.0
+VAR_FLOOR = 1e-6
+# A degenerate residual can drive D_pred to the ~10 km depth clamp, giving err2 ~1e8
+# that dominates the NLL and thrashes training. Clamp D_pred to a physically-plausible
+# ceiling in the loss so a single bad pixel can't blow up the objective (the ToF GT is
+# already range-gated well below this in build_real_supervision).
+MAX_DEPTH_LOSS = 15.0
+
+
 def residual_loss(D_pred, D_gt, var_analytic, log_tau2, valid, nll_weight=0.2):
     """Accuracy (log-depth L1) + Gaussian NLL over valid pixels."""
-    var = var_analytic + log_tau2.exp()               # total predicted variance
+    tau2 = log_tau2.clamp(LOGVAR_MIN, LOGVAR_MAX).exp()
+    var = (var_analytic + tau2).clamp(min=VAR_FLOOR)  # bounded, strictly positive
+    D_pred = D_pred.clamp(max=MAX_DEPTH_LOSS)
     err2 = (D_pred - D_gt) ** 2
 
     denom = valid.sum().clamp(min=1.0)
@@ -73,6 +87,7 @@ def residual_loss(D_pred, D_gt, var_analytic, log_tau2, valid, nll_weight=0.2):
 def coverage(D_pred, D_gt, var_analytic, log_tau2, valid):
     """Fraction of valid pixels whose error is within 1 sigma. Should approach
     0.68 for a calibrated Gaussian (~0.95 = too timid, ~0.30 = over-confident)."""
-    sigma = (var_analytic + log_tau2.exp()).sqrt()
+    tau2 = log_tau2.clamp(LOGVAR_MIN, LOGVAR_MAX).exp()
+    sigma = (var_analytic + tau2).clamp(min=VAR_FLOOR).sqrt()
     hit = ((D_pred - D_gt).abs() <= sigma) & (valid > 0)
     return hit.sum().float() / (valid > 0).sum().clamp(min=1).float()

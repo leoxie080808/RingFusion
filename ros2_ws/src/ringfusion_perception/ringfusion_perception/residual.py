@@ -21,6 +21,13 @@ Contract for both:
 """
 import numpy as np
 
+from . import gpu_ops
+
+# Inference ceiling on B's output depth. A degenerate residual can drive the
+# inverse-depth to its 1e-4 floor -> D up to 10 km; cap it to a sane indoor value
+# so B never emits a 10 km pixel into /depth or the cloud on a bad frame.
+MAX_DEPTH_M = 20.0
+
 
 class MockResidual:
     """Identity. da = db = 0, no extra variance -> the estimator reduces exactly
@@ -50,7 +57,15 @@ class ResidualRefiner:
             out_shape=(1, 3, self.h, self.w))    # da, db, log_tau2
 
     def _pack(self, rgb, D0, anchor_depth, anchor_mask):
-        """Assemble the 6-channel input at engine resolution."""
+        """Assemble the 6-channel input at engine resolution.
+
+        Uses the GPU pack (gpu_ops.pack_residual_input) when CUDA is present: it's
+        ~3x faster AND uses bilinear/align_corners=False, which byte-matches the
+        TRAINING pack (training/data._resize) -- the old cv2.INTER_AREA path here was
+        off from training by up to ~2.7 on the normalized rgb, a real domain shift.
+        The numpy fallback (below) keeps off-robot behaviour working."""
+        if gpu_ops.available():
+            return gpu_ops.pack_residual_input(rgb, D0, anchor_depth, anchor_mask, self.h, self.w)
         import cv2
         img = cv2.resize(rgb, (self.w, self.h), interpolation=cv2.INTER_AREA)
         img = img.astype(np.float32) / 255.0
@@ -75,12 +90,17 @@ class ResidualRefiner:
         return x[None]                                       # (1,6,h,w)
 
     def refine(self, rgb, D0, disp, anchor_depth, anchor_mask, a, b):
+        out = self._engine.run(self._pack(rgb, D0, anchor_depth, anchor_mask))
+        # Upsample the 3 fields to full res + apply the affine over the whole 2 MP.
+        # On GPU when CUDA is present (was ~70 ms on the CPU -> halved the pipeline
+        # rate); numpy fallback keeps off-robot behaviour identical.
+        if gpu_ops.available():
+            return gpu_ops.residual_apply(disp, out[0, 0], out[0, 1], out[0, 2], a, b)
         import cv2
         H, W = disp.shape
-        out = self._engine.run(self._pack(rgb, D0, anchor_depth, anchor_mask))
         da = cv2.resize(out[0, 0], (W, H), interpolation=cv2.INTER_LINEAR)
         db = cv2.resize(out[0, 1], (W, H), interpolation=cv2.INTER_LINEAR)
         log_tau2 = cv2.resize(out[0, 2], (W, H), interpolation=cv2.INTER_LINEAR)
         inv = (a + da) * disp + (b + db)
-        D = 1.0 / np.clip(inv, 1e-4, None)
-        return D.astype(np.float32), np.exp(log_tau2).astype(np.float32)
+        D = np.clip(1.0 / np.clip(inv, 1e-4, None), None, MAX_DEPTH_M)   # cap 10 km degenerates
+        return D.astype(np.float32), np.exp(np.clip(log_tau2, -8.0, 8.0)).astype(np.float32)

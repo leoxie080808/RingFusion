@@ -70,14 +70,16 @@ def split_output(out):
     return out[:, 0:1], out[:, 1:2], out[:, 2:3]
 
 
-def apply_residual(disp, a, b, out):
+def apply_residual(disp, a, b, out, max_depth=20.0):
     """Compose the residual with the closed-form fit.
     disp: (B,1,H,W); a,b: (B,1,1,1) or scalars; out: head output (B,3,H,W).
-    Returns metric depth D (B,1,H,W) and extra variance tau2 (B,1,H,W)."""
+    Returns metric depth D (B,1,H,W) and extra variance tau2 (B,1,H,W).
+    D is capped at max_depth and log_tau2 clamped so a degenerate pixel can't emit a
+    10 km depth or inf variance (matches the deployed gpu_ops.residual_apply)."""
     da, db, log_tau2 = split_output(out)
     inv = (a + da) * disp + (b + db)
-    D = 1.0 / inv.clamp(min=1e-4)
-    return D, log_tau2.exp()
+    D = (1.0 / inv.clamp(min=1e-4)).clamp(max=max_depth)
+    return D, log_tau2.clamp(-8.0, 8.0).exp()
 
 
 def count_parameters(model):

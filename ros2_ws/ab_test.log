@@ -1,0 +1,42 @@
+[INFO] [launch]: All log files can be found below /home/leroi-ultio/.ros/log/2026-07-23-23-54-08-195230-ubuntu-19483
+[INFO] [launch]: Default logging verbosity is set to INFO
+[INFO] [tof_driver-1]: process started with pid [19484]
+[INFO] [camera-2]: process started with pid [19486]
+[INFO] [perception-3]: process started with pid [19488]
+[INFO] [static_transform_publisher-4]: process started with pid [19490]
+[static_transform_publisher-4] [WARN] [1784865248.289393107] []: Old-style arguments are deprecated; see --help for new-style arguments
+[static_transform_publisher-4] [INFO] [1784865248.323886901] [cam_to_tof]: Spinning until stopped - publishing transform
+[static_transform_publisher-4] translation: ('0.000000', '0.020195', '0.001130')
+[static_transform_publisher-4] rotation: ('0.000000', '0.000000', '0.000000', '1.000000')
+[static_transform_publisher-4] from 'cam_0' to 'tof_0'
+[tof_driver-1] [INFO] [1784865249.868844580] [tof_driver]: ToF driver module 0 reading /dev/ttyACM1 -> /tof
+[tof_driver-1] [tof_source] detected BINARY frame stream
+[camera-2] GST_ARGUS: Creating output stream
+[camera-2] CONSUMER: Waiting until producer is connected...
+[camera-2] GST_ARGUS: Available Sensor modes :
+[camera-2] GST_ARGUS: 3280 x 2464 FR = 21.000000 fps Duration = 47619048 ; Analog Gain range min 1.000000, max 10.625000; Exposure Range min 13000, max 683709000;
+[camera-2] 
+[camera-2] GST_ARGUS: 3280 x 1848 FR = 28.000001 fps Duration = 35714284 ; Analog Gain range min 1.000000, max 10.625000; Exposure Range min 13000, max 683709000;
+[camera-2] 
+[camera-2] GST_ARGUS: 1920 x 1080 FR = 29.999999 fps Duration = 33333334 ; Analog Gain range min 1.000000, max 10.625000; Exposure Range min 13000, max 683709000;
+[camera-2] 
+[camera-2] GST_ARGUS: 1640 x 1232 FR = 29.999999 fps Duration = 33333334 ; Analog Gain range min 1.000000, max 10.625000; Exposure Range min 13000, max 683709000;
+[camera-2] 
+[camera-2] GST_ARGUS: 1280 x 720 FR = 59.999999 fps Duration = 16666667 ; Analog Gain range min 1.000000, max 10.625000; Exposure Range min 13000, max 683709000;
+[camera-2] 
+[camera-2] GST_ARGUS: Running with following settings:
+[camera-2]    Camera index = 0 
+[camera-2]    Camera mode  = 3 
+[camera-2]    Output Stream W = 1640 H = 1232 
+[camera-2]    seconds to Run    = 0 
+[camera-2]    Frame Rate = 29.999999 
+[camera-2] GST_ARGUS: Setup Complete, Starting captures for 0 seconds
+[camera-2] GST_ARGUS: Starting repeat capture requests.
+[camera-2] CONSUMER: Producer has connected; continuing.
+[camera-2] [ WARN:0] global ./modules/videoio/src/cap_gstreamer.cpp (1100) open OpenCV | GStreamer warning: Cannot query video position: status=0, value=-1, duration=-1
+[camera-2] [INFO] [1784865250.048353172] [camera]: Arducam CSI -> /image
+[perception-3] [INFO] [1784865250.831581674] [perception]: loading backbone engine: /home/leroi-ultio/RingFusion/student_fp16.engine
+[perception-3] [07/23/2026-23:54:10] [TRT] [W] Using an engine plan file across different models of devices is not recommended and is likely to affect performance or even cause errors.
+[perception-3] [INFO] [1784865251.014135829] [perception]: loading residual engine: /home/leroi-ultio/RingFusion/residual_fp16.engine
+[perception-3] [INFO] [1784865251.021131261] [perception]: rectify: fisheye->pinhole (1640, 1232)
+[perception-3] [INFO] [1784865251.029994442] [perception]: Perception up: backbone=tensorrt residual=residual_trt -> /cloud, /depth, /depth_var

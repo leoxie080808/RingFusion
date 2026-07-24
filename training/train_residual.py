@@ -173,6 +173,8 @@ def main():
     ap.add_argument('--dropout', type=float, default=0.05)
     ap.add_argument('--min-confidence', type=int, default=-1)
     ap.add_argument('--nll-weight', type=float, default=0.2)
+    ap.add_argument('--grad-clip', type=float, default=1.0,
+                    help='max global grad norm; 0 disables. Tames NLL gradient blowups.')
     ap.add_argument('--workers', type=int, default=4)
     ap.add_argument('--val-frac', type=float, default=0.05)
     ap.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
@@ -228,6 +230,12 @@ def main():
             loss, cov = res
             opt.zero_grad(set_to_none=True)
             loss.backward()
+            # Gradient clipping: the Gaussian NLL can explode when predicted variance
+            # goes tiny on a large-error (far/degenerate) pixel -> huge gradients that
+            # knock the net into a bad basin (observed as loss diverging to 1000s).
+            # Clipping the global norm keeps a single bad batch from wrecking training.
+            if args.grad_clip > 0:
+                torch.nn.utils.clip_grad_norm_(residual.parameters(), args.grad_clip)
             opt.step()
             sched.step()
             run += loss.item(); cov_run += cov.item(); n += 1

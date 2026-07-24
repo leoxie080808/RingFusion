@@ -78,7 +78,8 @@ def calib_from_yaml(yaml_path, train_size=(288, 384)):
 
 
 def build_real_supervision(disp, tof_dist_m, tof_valid, calib, holdout_frac=0.25,
-                           rng=None, confidence=None, min_confidence=-1, min_anchors=16):
+                           rng=None, confidence=None, min_confidence=-1, min_anchors=16,
+                           min_range=0.15, max_range=5.0):
     """Held-out-anchor supervision from ONE real (disp, ToF) sample.
 
     A sparse sensor can't be a dense GT: its zones coincide with the anchors the
@@ -108,6 +109,11 @@ def build_real_supervision(disp, tof_dist_m, tof_valid, calib, holdout_frac=0.25
     u = np.round(np.where(finite, uv[:, 0], -1)).astype(int)
     v = np.round(np.where(finite, uv[:, 1], -1)).astype(int)
     inb = ok & finite & (u >= 0) & (u < w) & (v >= 0) & (v < h) & (z > 0)
+    # Range gate: drop near-noise (< min_range) and far-unreliable (> max_range) ToF
+    # zones -- both from anchoring AND supervision, so bad far/near readings can't be
+    # spurious ground truth. TMF8829 accuracy degrades with range.
+    inb = inb & (z >= min_range) & (z <= max_range)
+    # Confidence gate: reject weak/low-SNR zones (multipath, glancing surfaces).
     if confidence is not None and min_confidence >= 0:
         inb = inb & (np.asarray(confidence, np.float32).reshape(-1) >= min_confidence)
 
