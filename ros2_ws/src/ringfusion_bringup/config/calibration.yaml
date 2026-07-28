@@ -28,10 +28,18 @@ rectify:
   fov_scale: 1.0      # >1 zooms in (narrower FOV, less extreme edge stretch)
 
 tof:
-  fov_h_deg: 61.0             # TMF8829 ~80 deg diagonal -> ~61 h at 4:3
-  fov_v_deg: 45.0
-  # cols/rows come from the live packet; these are defaults for offline tests
-  cols: 48
+  # Measured 2026-07-28, NOT the datasheet 4:3 assumption. The old 61 h / 45 v was a
+  # guess ("~80 deg diagonal -> ~61 h at 4:3") and had the axes backwards: the module
+  # sees TALLER than it is wide. Found by sweeping the projection and scoring each
+  # candidate by how well backbone disparity tracks true inverse depth at the projected
+  # anchors -- rho 0.879 at 61x45 vs 0.914 at 45x61 (both with the column mirror fixed
+  # in tof_source.MIRROR_COLUMNS). Anchor MAE 0.319 -> 0.252 m overall.
+  fov_h_deg: 45.0
+  fov_v_deg: 61.0
+  # cols/rows come from the live packet; these are defaults for offline tests.
+  # The flashed focal-plane mode is 32x32 (CMD_LOAD_CFG_32X32), so cols is 32 -- the
+  # old 48 was stale and only ever showed up in offline tests.
+  cols: 32
   rows: 32
 
 # Rigid transform: point in ToF frame -> point in camera frame.

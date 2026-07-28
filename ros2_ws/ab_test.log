@@ -40,3 +40,54 @@
 [perception-3] [INFO] [1784865251.014135829] [perception]: loading residual engine: /home/leroi-ultio/RingFusion/residual_fp16.engine
 [perception-3] [INFO] [1784865251.021131261] [perception]: rectify: fisheye->pinhole (1640, 1232)
 [perception-3] [INFO] [1784865251.029994442] [perception]: Perception up: backbone=tensorrt residual=residual_trt -> /cloud, /depth, /depth_var
+[WARNING] [launch]: user interrupted with ctrl-c (SIGINT)
+[INFO] [static_transform_publisher-4]: sending signal 'SIGINT' to process[static_transform_publisher-4]
+[INFO] [perception-3]: sending signal 'SIGINT' to process[perception-3]
+[INFO] [camera-2]: sending signal 'SIGINT' to process[camera-2]
+[INFO] [tof_driver-1]: sending signal 'SIGINT' to process[tof_driver-1]
+[static_transform_publisher-4] [INFO] [1784867231.876854896] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[perception-3] Traceback (most recent call last):
+[perception-3]   File "/home/leroi-ultio/RingFusion/ros2_ws/install/ringfusion_perception/lib/ringfusion_perception/perception", line 33, in <module>
+[perception-3]     sys.exit(load_entry_point('ringfusion-perception', 'console_scripts', 'perception')())
+[perception-3]   File "/home/leroi-ultio/RingFusion/ros2_ws/build/ringfusion_perception/ringfusion_perception/perception_node.py", line 186, in main
+[perception-3]     rclpy.shutdown()
+[perception-3]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/__init__.py", line 130, in shutdown
+[perception-3]     _shutdown(context=context)
+[perception-3]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/utilities.py", line 58, in shutdown
+[perception-3]     return context.shutdown()
+[perception-3]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/context.py", line 102, in shutdown
+[perception-3]     self.__context.shutdown()
+[perception-3] rclpy._rclpy_pybind11.RCLError: failed to shutdown: rcl_shutdown already called on the given context, at ./src/rcl/init.c:241
+[tof_driver-1] Traceback (most recent call last):
+[tof_driver-1]   File "/home/leroi-ultio/RingFusion/ros2_ws/install/ringfusion_drivers/lib/ringfusion_drivers/tof_driver", line 33, in <module>
+[tof_driver-1]     sys.exit(load_entry_point('ringfusion-drivers', 'console_scripts', 'tof_driver')())
+[tof_driver-1]   File "/home/leroi-ultio/RingFusion/ros2_ws/build/ringfusion_drivers/ringfusion_drivers/tof_driver_node.py", line 85, in main
+[tof_driver-1]     rclpy.shutdown()
+[tof_driver-1]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/__init__.py", line 130, in shutdown
+[tof_driver-1]     _shutdown(context=context)
+[tof_driver-1]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/utilities.py", line 58, in shutdown
+[tof_driver-1]     return context.shutdown()
+[tof_driver-1]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/context.py", line 102, in shutdown
+[tof_driver-1]     self.__context.shutdown()
+[tof_driver-1] rclpy._rclpy_pybind11.RCLError: failed to shutdown: rcl_shutdown already called on the given context, at ./src/rcl/init.c:241
+[INFO] [static_transform_publisher-4]: process has finished cleanly [pid 19490]
+[ERROR] [tof_driver-1]: process has died [pid 19484, exit code 1, cmd '/home/leroi-ultio/RingFusion/ros2_ws/install/ringfusion_drivers/lib/ringfusion_drivers/tof_driver --ros-args -r __node:=tof_driver --params-file /tmp/launch_params_45szbs17'].
+[ERROR] [perception-3]: process has died [pid 19488, exit code 1, cmd '/home/leroi-ultio/RingFusion/ros2_ws/install/ringfusion_perception/lib/ringfusion_perception/perception --ros-args -r __node:=perception --params-file /tmp/launch_params_1el1_23m'].
+[camera-2] GST_ARGUS: Cleaning up
+[ERROR] [camera-2]: process[camera-2] failed to terminate '5' seconds after receiving 'SIGINT', escalating to 'SIGTERM'
+[INFO] [camera-2]: sending signal 'SIGTERM' to process[camera-2]
+[camera-2] CONSUMER: Done Success
+[camera-2] GST_ARGUS: Done Success
+[camera-2] Traceback (most recent call last):
+[camera-2]   File "/home/leroi-ultio/RingFusion/ros2_ws/install/ringfusion_drivers/lib/ringfusion_drivers/camera", line 33, in <module>
+[camera-2]     sys.exit(load_entry_point('ringfusion-drivers', 'console_scripts', 'camera')())
+[camera-2]   File "/home/leroi-ultio/RingFusion/ros2_ws/build/ringfusion_drivers/ringfusion_drivers/camera_node.py", line 91, in main
+[camera-2]     rclpy.shutdown()
+[camera-2]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/__init__.py", line 130, in shutdown
+[camera-2]     _shutdown(context=context)
+[camera-2]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/utilities.py", line 58, in shutdown
+[camera-2]     return context.shutdown()
+[camera-2]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/context.py", line 102, in shutdown
+[camera-2]     self.__context.shutdown()
+[camera-2] rclpy._rclpy_pybind11.RCLError: failed to shutdown: rcl_shutdown already called on the given context, at ./src/rcl/init.c:241
+[ERROR] [camera-2]: process has died [pid 19486, exit code 1, cmd '/home/leroi-ultio/RingFusion/ros2_ws/install/ringfusion_drivers/lib/ringfusion_drivers/camera --ros-args -r __node:=camera --params-file /tmp/launch_params_h4ned86_'].

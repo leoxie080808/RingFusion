@@ -29,6 +29,17 @@ import time
 import numpy as np
 
 ROWS, COLS = 32, 32
+
+# The TMF8829's column order runs OPPOSITE to the camera's +x, so the raw map is a
+# mirror image of what the lens sees: pan the robot right and the un-flipped heatmap
+# slides left. Measured 2026-07-28 by sweeping projections and scoring each by how well
+# backbone disparity tracks true inverse depth at the projected anchors --
+# rho 0.737 un-flipped vs 0.879 flipped (0.914 once fov_h/fov_v are also un-swapped in
+# calibration.yaml). Flipping HERE, not in perception, keeps /tof correct for every
+# consumer (tof_heatmap, perception, paired_logger) instead of one of them.
+# NOTE: paired logs recorded before this date are un-mirrored -- migrate them with
+# tools/migrate_tof_logs.py before training on them.
+MIRROR_COLUMNS = True
 SUBFRAME_ROWS = ROWS // 2
 BYTES_PER_PIXEL = 3
 PIXELS_PER_SUBFRAME = COLS * SUBFRAME_ROWS
@@ -223,6 +234,9 @@ class _Assembler:
                 r = slice(h, ROWS, 2)
                 D[r, :] = np.nan
                 C[r, :] = 0
+        if MIRROR_COLUMNS:
+            D = np.ascontiguousarray(np.fliplr(D))
+            C = np.ascontiguousarray(np.fliplr(C))
         return ToFFrame(D, C, now)
 
 

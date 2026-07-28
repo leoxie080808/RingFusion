@@ -38,3 +38,7 @@ calib_imgs/
 *.ply
 *.bag
 *.db3
+# raw per-frame captures: tens of MB and fully regenerable from the mp4s next to them.
+# The clips, GIFs, stills and the analytics page ARE tracked -- only these archives are not.
+docs/demo/**/*_frames_raw.tar.gz
+docs/demo/pipeline_clip_frames.tar.gz

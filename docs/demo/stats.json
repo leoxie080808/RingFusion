@@ -1,0 +1,39 @@
+{
+  "anchors": 991,
+  "affine_a": 0.19674984098055834,
+  "affine_b": 0.14224834382741072,
+  "infer_ms": 74.4,
+  "A_center_m": 0.502,
+  "B_center_m": 0.7002,
+  "tof_center_m": 1.1892,
+  "A_range_m": [
+    0.067,
+    2.247
+  ],
+  "B_range_m": [
+    0.097,
+    3.032
+  ],
+  "AB_mean_abs_delta_m": 0.2637,
+  "AB_max_abs_delta_m": 14.3656,
+  "tof_grid": [
+    32,
+    32
+  ],
+  "tof_valid_zones": 991,
+  "anchor_retention": 0.968,
+  "hz_image": 33.28,
+  "hz_tof": 26.53,
+  "hz_depth_pipeline": 14.14,
+  "n_depth_msgs": 62,
+  "img_size": [
+    1640,
+    1232
+  ],
+  "pipeline_depth_center_m": 0.7017,
+  "pipeline_depth_size": [
+    1640,
+    1232
+  ],
+  "pipeline_sigma_median_m": 0.9473
+}

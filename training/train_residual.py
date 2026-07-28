@@ -123,7 +123,11 @@ def _step(residual, packed, disp, args, device):
     out = residual(x)
     D_pred, _ = apply_residual(disp_keep, a, b, out)
     log_tau2 = out[:, 2:3]
-    loss = residual_loss(D_pred, gt, var, log_tau2, valid_k, nll_weight=args.nll_weight)
+    # Network A's closed-form depth: the same apply with a zero residual, i.e. the
+    # net's own step-0 output. Used as the structure reference off-target.
+    D_base = (1.0 / (a * disp_keep + b).clamp(min=1e-4)).clamp(max=20.0).detach()
+    loss = residual_loss(D_pred, gt, var, log_tau2, valid_k, nll_weight=args.nll_weight,
+                         D_base=D_base, struct_weight=args.struct_weight)
     cov = coverage(D_pred, gt, var, log_tau2, valid_k)
     return loss, cov
 
@@ -173,6 +177,10 @@ def main():
     ap.add_argument('--dropout', type=float, default=0.05)
     ap.add_argument('--min-confidence', type=int, default=-1)
     ap.add_argument('--nll-weight', type=float, default=0.2)
+    ap.add_argument('--struct-weight', type=float, default=0.3,
+                    help='weight on the structure term tying the residual to Network A '
+                         'where there is no ToF target (see losses.structure_loss). '
+                         '0 reproduces the pre-2026-07-25 objective exactly.')
     ap.add_argument('--grad-clip', type=float, default=1.0,
                     help='max global grad norm; 0 disables. Tames NLL gradient blowups.')
     ap.add_argument('--workers', type=int, default=4)

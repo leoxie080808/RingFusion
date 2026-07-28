@@ -1,0 +1,47 @@
+{
+  "label": "scene 2",
+  "anchors": 703,
+  "tof_grid": [
+    32,
+    32
+  ],
+  "tof_valid_zones": 703,
+  "anchor_retention": 0.687,
+  "affine_a": 0.1627333433633959,
+  "affine_b": 0.4876673295569792,
+  "anchor_box": [
+    616,
+    395,
+    1063,
+    735
+  ],
+  "anchor_box_pct_frame": 7.52,
+  "A_center_m": 0.7223,
+  "B_center_m": 0.6517,
+  "tof_center_m": 1.195,
+  "A_median_m": 0.3636,
+  "B_median_m": 0.4949,
+  "tof_median_m": 0.7837,
+  "tof_max_m": 4.5782,
+  "A_range_m": [
+    0.077,
+    1.759
+  ],
+  "B_range_m": [
+    0.098,
+    2.346
+  ],
+  "A_max_m": 2.05,
+  "B_max_m": 6.293,
+  "B_frac_gt_3m": 0.8,
+  "B_frac_gt_5m": 0.016,
+  "A_frac_gt_3m": 0.0,
+  "AB_mean_abs_delta_m": 0.1571,
+  "AB_max_abs_delta_m": 5.3888,
+  "sigma_median_m": 0.9772,
+  "sigma_p95_m": 1.0495,
+  "img_size": [
+    1640,
+    1232
+  ]
+}

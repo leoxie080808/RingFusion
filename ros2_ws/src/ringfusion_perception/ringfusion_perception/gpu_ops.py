@@ -84,6 +84,29 @@ def residual_apply(disp, da_s, db_s, logtau_s, a, b, min_disp=1e-4, max_depth=20
     return D, tau2
 
 
+def resplat_anchors(anchor_depth, anchor_mask, out_h, out_w):
+    """Move sparse anchors from full res to engine res WITHOUT resizing.
+
+    A nearest/bilinear resize of the sparse anchor maps drops ~95% of the ~1024 ToF
+    anchors (2 MP -> 288x384 keeps only ~5%). But Network B was TRAINED with anchors
+    splatted directly at engine res (build_residual_inputs uses disp.shape == 288x384,
+    so ~all 1024 survive) -- so resizing here is a train/deploy domain shift that
+    starves the net's anchor channels and leaves it under-confident + jittery on-robot.
+    Re-project each nonzero pixel's coords onto the engine grid instead, keeping them
+    all. Returns (anchor_depth, anchor_mask) at (out_h, out_w), numpy float32."""
+    am = np.asarray(anchor_mask, np.float32)
+    ad = np.asarray(anchor_depth, np.float32)
+    h, w = am.shape
+    ys, xs = np.nonzero(am > 0)
+    oy = np.minimum((ys.astype(np.float32) * out_h / h).astype(np.int64), out_h - 1)
+    ox = np.minimum((xs.astype(np.float32) * out_w / w).astype(np.int64), out_w - 1)
+    od = np.zeros((out_h, out_w), np.float32)
+    om = np.zeros((out_h, out_w), np.float32)
+    od[oy, ox] = ad[ys, xs]
+    om[oy, ox] = 1.0
+    return od, om
+
+
 def pack_residual_input(rgb, D0, anchor_depth, anchor_mask, out_h, out_w):
     """Build Network B's 6-channel engine input on GPU: resize rgb + logD0 to the engine
     resolution, ImageNet-normalize the rgb, nearest-resize the sparse anchor channels.
@@ -101,6 +124,9 @@ def pack_residual_input(rgb, D0, anchor_depth, anchor_mask, out_h, out_w):
     med = pos.median() if pos.numel() else torch.tensor(1.0, device="cuda")
     logD0 = torch.log(torch.clamp(d, min=1e-3) / torch.clamp(med, min=1e-3))
     logD0 = F.interpolate(logD0[None, None], size=(out_h, out_w), mode="bilinear", align_corners=False)[0, 0]
-    ad = F.interpolate(_to_cuda(anchor_depth, np.float32)[None, None], size=(out_h, out_w), mode="nearest")[0, 0]
-    am = F.interpolate(_to_cuda(anchor_mask, np.float32)[None, None], size=(out_h, out_w), mode="nearest")[0, 0]
+    # Sparse anchors: re-splat at engine res (a resize would drop ~95% of them and
+    # is a train/deploy domain shift -- see resplat_anchors).
+    ad_np, am_np = resplat_anchors(anchor_depth, anchor_mask, out_h, out_w)
+    ad = _to_cuda(ad_np, np.float32)
+    am = _to_cuda(am_np, np.float32)
     return torch.stack([rgb_s[0], rgb_s[1], rgb_s[2], logD0, ad, am], 0)[None].cpu().numpy().astype(np.float32)

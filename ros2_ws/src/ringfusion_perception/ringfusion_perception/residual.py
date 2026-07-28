@@ -79,12 +79,10 @@ class ResidualRefiner:
         logD0 = np.log(np.clip(D0, 1e-3, None) / max(med, 1e-3))
         logD0 = cv2.resize(logD0, (self.w, self.h), interpolation=cv2.INTER_AREA)
 
-        # Anchors are sparse: nearest-neighbour keeps the few non-zero pixels
-        # instead of averaging them away.
-        ad = cv2.resize(np.asarray(anchor_depth, np.float32), (self.w, self.h),
-                        interpolation=cv2.INTER_NEAREST)
-        am = cv2.resize(np.asarray(anchor_mask, np.float32), (self.w, self.h),
-                        interpolation=cv2.INTER_NEAREST)
+        # Anchors are sparse: even nearest-neighbour resize drops ~95% of them going
+        # from 2 MP to engine res. Re-splat at engine res instead so the net gets the
+        # same anchor density it trained on (see gpu_ops.resplat_anchors).
+        ad, am = gpu_ops.resplat_anchors(anchor_depth, anchor_mask, self.h, self.w)
 
         x = np.stack([rgb_c[0], rgb_c[1], rgb_c[2], logD0, ad, am], axis=0)
         return x[None]                                       # (1,6,h,w)

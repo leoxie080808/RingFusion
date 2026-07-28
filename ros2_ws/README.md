@@ -4,17 +4,45 @@ ROS 2 Humble workspace for the RingFusion project (ToF hub + camera driver, perc
 
 ## Project status (handoff)
 
-Snapshot for anyone picking this up. The **sensor stack and the full perception
-pipeline are code-complete and run today with mock networks.** The **fisheye lens is
-calibrated** (RMS 0.5406 px) and the **backbone (Network A) has been distilled on a
-2000-image pilot** (val_ssi 3.51, **ρ 0.9962** vs the Depth Anything V2 teacher —
-validated with `compare_student.py` / `eval_student.py`). The student is **exported to
-ONNX, the FP16 engine is built, and the INT8 engine is building** on the Orin; the
-TensorRT runtime (`trt_util.TRTRunner`) and the INT8 calibrator were **ported off pycuda
-to torch** (pycuda isn't on the Jetson). **Next: an isolated `TRTRunner` smoke test, then
-wire the engine into perception to measure FPS** (retiring `MockBackbone`). The residual
-(Network B) is written but not yet trained. Design details live in
-`RingFusion_technical_reference_updateP2.md`.
+Snapshot for anyone picking this up, current as of **2026-07-28**.
+
+**The whole stack runs live on the Orin with both real networks** — no mocks in the loop.
+Recommended launch:
+
+```bash
+ros2 launch ringfusion_bringup single_module.launch.py port:=/dev/ttyACM1 \
+    backbone_engine:=$HOME/RingFusion/student_v3_fp16.engine \
+    residual_engine:=$HOME/RingFusion/residual_v3_last_fp16.engine
+```
+
+Two things changed on 2026-07-28 and they dominate everything measured before that date.
+
+**1. A calibration bug was found and fixed.** The ToF grid was **horizontally mirrored**
+relative to the camera *and* `fov_h`/`fov_v` were **swapped**. Every anchor had been landing
+on the wrong pixel, which corrupted the affine fit and, through it, every number in this
+file predating the fix. Correcting it moved the backbone's agreement with real ToF from
+**ρ 0.737 → 0.917** and best-case depth MAE from **0.319 → 0.251 m**. See
+[ToF↔camera projection fix](#tofcamera-projection-fix-found--applied-2026-07-28).
+
+**2. Network B was retrained on the corrected geometry** (`residual_v3`, `--struct-weight
+0.15`). It is now the most accurate configuration available — **better than the pure
+closed-form path**, which neither v1 nor v2 ever managed:
+
+| | closed-form | v1 | v2 | **v3** |
+|---|---|---|---|---|
+| anchor MAE, moving | 0.294 m | — | 0.247 m | **0.199 m** |
+| corr(σ, \|error\|) | — | 0.490 | 0.913 | **0.943** |
+| frames at the 20 m clamp | 0 | 47/102 *(pre-fix)* | 0 | **0** |
+
+The uncertainty channel — previously saturated and *most confident where it was most
+wrong* — now tracks actual error at **ρ 0.943**, and σ is small at the anchors (0.078 m)
+while staying large where the net extrapolates. That is the correct shape.
+
+**What is still not trustworthy.** The ToF only covers **7.5% of the frame**, so the other
+92.5% of every depth map is monocular extrapolation carrying the affine fit — a geometry
+limit, not a bug, but it bounds what can be believed. v3 also still **under-corrects**
+(mean |B−A| just 0.019 m), so there is headroom left in the structure-loss weight. Design
+details live in `RingFusion_technical_reference_updateP2.md`.
 
 ### Done
 
@@ -29,6 +57,14 @@ wire the engine into perception to measure FPS** (retiring `MockBackbone`). The 
 - **Both networks are pluggable and default to mocks**, so the pipeline runs now and
   swaps to real engines with a launch arg (`backbone_engine:=…`, `residual_engine:=…`) —
   no code change. `MockResidual` is the exact identity, so output = the closed-form fit.
+- **Both real engines run live on the Orin** (2026-07-25). `student_v3_fp16.engine` +
+  `residual_fp16.engine` load in `perception_node` and hold ~13–14 Hz end-to-end. Two
+  independent code paths (`perception_node` and a standalone A-vs-B renderer) agree on
+  centre depth to **2 mm**, so `residual.py` and `gpu_ops.py` are consistent.
+- **Anchor re-splatting** (`gpu_ops.resplat_anchors`). Resizing the sparse anchor maps from
+  2 MP down to the 288×384 engine input dropped ~95% of the ToF anchors; re-projecting each
+  nonzero pixel onto the engine grid instead keeps **~97%** (991/1024 measured). Network B
+  was trained at full anchor density, so this removes a real train/deploy domain shift.
 - **Training + export code written** ([../training/](../training/), [../tools/](../tools/)): Network A
   (student backbone), Network B (residual, measured ~0.46M params), distillation + NLL
   losses, datasets, teacher caching, ONNX + TensorRT build scripts. Torch-only parts
@@ -39,14 +75,40 @@ wire the engine into perception to measure FPS** (retiring `MockBackbone`). The 
 - **Full training set** — only a **2000-image pilot** has been collected so far. The
   full ~15–20k (deployment environment, via `collect_frames`) still needs gathering for
   the final-quality backbone; the pilot is enough to prove the pipeline, not to ship.
-- **Live real backbone** — engines are building on the Orin (FP16 done, INT8 in progress),
-  but none has been *run* live yet: `TRTRunner` smoke test + `backbone_engine:=…` launch
-  still to do. Perception runs `MockBackbone` until an engine is passed in.
-- **Residual (Network B) not trained** — no `residual_best.pth`; needs measured/synthetic
-  ground-truth depth (the schedule risk). `MockResidual` (identity) until then.
-- **No TensorRT engines** — must be built on the Orin (hardware-/version-specific). Never
-  built or run on the Jetson yet.
-- **Residual ground truth** — synthetic/LiDAR/OAK-D depth not collected (the schedule risk).
+- **v3 under-corrects** — mean |B−A| is only **0.019 m**. Dropping `--struct-weight` from 0.3
+  to 0.15 improved accuracy, so the optimum is probably lower still. Sweep it.
+- **The v2→v3 win is not attributable** — v3 changed the geometry *and* the structure weight
+  together. A control run at `--struct-weight 0.3` on corrected geometry would separate them.
+- **ToF covers only 7.5% of the frame** — the 32×32 zone grid projects into a 447×340 px box
+  in the middle of the 1640×1232 rectified image. The remaining 92.5% has no metric support,
+  so it is monocular extrapolation carrying the affine fit. This is a **geometry/FOV
+  limitation, not a bug**, but it bounds how much of the depth map can be believed.
+- **Checkpoint selection is noisy** — `--val-frac` defaults to 0.05, i.e. ~62 samples against
+  a heavy-tailed NLL loss. Validation loss swung 1.30 → −0.34 across the v3 run while the
+  training curve descended smoothly. `best` and `last` happened to land statistically
+  identical (MAE 0.198 both), so it did not bite this time; widen the split before it does.
+- **Uncertainty is much better but still mildly overconfident** — coverage at ±1σ is **0.590**
+  against the 0.683 ideal (v1 was 0.612, v2 a badly overconfident 0.264). The *shape* is now
+  right — `corr(σ, |error|)` 0.943, σ tight at anchors and wide where extrapolating — but the
+  absolute width wants recalibration.
+- **Network B's supervision is sparse and range-gated, not absent.** B *is* trained on real
+  ToF via the held-out-anchor split in
+  [`anchoring_bridge.build_real_supervision`](../training/anchoring_bridge.py) — 75% of each
+  frame's valid zones drive the fit and feed B's input channels, the other 25% are withheld
+  from input and splatted as sparse targets, so B is scored where a real measurement exists
+  but it got no input. The design is sound; its *shape* is the problem:
+
+  | Limitation | Consequence measured on-robot |
+  |---|---|
+  | hold-out is ~175 zones/frame, all inside the **7.5% ToF box** | 92.5% of each frame is never supervised → far field runs free |
+  | `max_range = 5.0 m` gate | B has **never seen a target beyond 5 m** → 6.29 m and 20 m-clamp pixels are pure extrapolation |
+  | `min_range = 0.15 m` gate | near floor below 15 cm unsupervised → ground-plane under-read |
+  | targets land on the **13 px anchor lattice** | plausibly the 13 px component B injects and A lacks |
+  | variance head sees only those few hundred pixels, all <5 m, all central | σ saturates near ~1 m, no spatial signal |
+
+  So B is well-constrained inside the central box under 5 m and unconstrained everywhere
+  else — which is exactly the map of where it misbehaves. Dense GT (synthetic/LiDAR/OAK-D)
+  would help but is **not** the only lever; see steps 7–8.
 - **All paper numbers are placeholders** — FPS, accuracy, and param counts (student measured
   **3.66M**, residual measured 0.46M; the doc's "6.1M" student was a placeholder). Nothing is
   submittable until measured on real hardware.
@@ -62,11 +124,19 @@ wire the engine into perception to measure FPS** (retiring `MockBackbone`). The 
 | 2 | Collect rectified images (`collect_frames`) | camera | **pilot done (2000)**; full ~15–20k still to gather |
 | 3 | ~~`cache_teacher.py` — cache DA V2 disparity targets~~ | GPU | **DONE** (2000 cached) |
 | 4 | ~~`distill_backbone.py` → student, validate vs teacher~~ | 3 | **DONE** (pilot: val_ssi 3.51, ρ 0.9962) |
-| 5 | `export_onnx` → `build_engine` INT8, **measure Orin FPS** ← **you are here** | 4, Jetson | headline number |
+| 5 | ~~`export_onnx` → `build_engine`, **measure Orin FPS**~~ | 4, Jetson | **DONE** (~13–14 Hz with A+B live) |
 | 6 | Run DEPTHOR-Small on the same Orin | Jetson | efficiency claim |
-| 7 | Ground-truth collection (synthetic first) | — | unblocks residual |
-| 8 | `train_residual.py` with NLL, measure coverage (→0.68) | 7 | calibration claim |
-| 9 | Export residual FP16, integrate, re-measure end-to-end | 8 | final numbers |
+| 7a | ~~Structure loss tying B to A's relative geometry off-anchor~~ | — | **IMPLEMENTED** — `losses.structure_loss`, `--struct-weight` (default 0.3) |
+| 7b | ~~Widen B's supervision (no new hardware)~~ | — | **IMPLEMENTED** — `max_range` 5.0 → 6.5. Small gain (0.23% of zones); the sensor, not the gate, is the real ceiling |
+| 7c | ~~Re-weight the closed-form fit~~ | — | **IMPLEMENTED** — `anchoring.range_weights`, `w = z^1`. Note: **theory said z², measurement said z¹** |
+| 8 | ~~Re-train B with the new objective~~ | 7 | **DONE** — `residual_v2`, measured 2026-07-28: blowup + lattice fixed, but over-regularised |
+| 8b | ~~Sweep `--struct-weight` down from 0.3~~ | 8 | **DONE at 0.15** → `residual_v3`, the first B that beats the closed-form path |
+| 8c | ~~Fix the ToF↔camera projection~~ | — | **DONE 2026-07-28** — mirror + FOV swap; ρ 0.737 → 0.917 |
+| 8d | **Sweep `--struct-weight` below 0.15 + control run at 0.3 on fixed geometry** ← **you are here** | 8b, 8c | v3 still only deviates 0.019 m from A; and its win confounds two changes |
+| 8e | Widen `--val-frac`, then recalibrate σ | 8d | ~62 val samples is too few to select on; coverage 0.590 vs 0.683 ideal |
+| 9 | Ground-truth collection (synthetic/LiDAR/OAK-D) | — | only for the 92.5% outside the ToF box; **not** a prerequisite for 7–8 |
+| 10 | ~~Re-test on a non-repeating scene to separate texture banding from anchor-pitch artefacts~~ | — | **DONE** (two-scene control, below — both effects confirmed and separated) |
+| 11 | Re-distill Network A on the full ~15–20k set | 2 | now known **not** to be the bottleneck — the 0.75 teacher ceiling was a projection artefact |
 
 **Steps 0–6 need no ground truth and deliver the two headline results** (Orin throughput and
 the DEPTHOR comparison) — do them first. Because the residual is zero-initialized to the
@@ -408,10 +478,418 @@ persistent per-subframe assembler (see ToF note below). The ToF is still the sin
 bottleneck; camera (~28.5) and perception (~27 capable) both have ~2× headroom, so lifting
 the ToF further raises the whole pipeline.
 
-> **With Network B enabled** (`residual_engine:=…`), `/depth` currently drops to **~7 Hz** —
-> B's `refine()` upsamples/applies its 3 fields over 2 MP **on the CPU** (not GPU-offloaded like
-> the closed-form tail). Recoverable by moving B's apply to `gpu_ops`. See training/README →
-> "First training run — results & concerns".
+> **With Network B enabled** (`residual_engine:=…`), `/depth` used to drop to **~7 Hz** —
+> B's `refine()` upsampled/applied its 3 fields over 2 MP **on the CPU**. Now GPU-offloaded;
+> **B costs almost nothing** (see the 2026-07-25 re-test below).
+
+### ToF↔camera projection fix (found + applied 2026-07-28)
+
+**Applied and verified live.** Re-running the sweep after the fix, the deployed configuration
+is now the winner and every alternative scores worse — which is the check that matters:
+
+| | before | after |
+|---|---|---|
+| ρ(disparity, 1/z) | 0.737 | **0.917** |
+| best-case depth MAE | 0.319 m | **0.251 m** (−21%) |
+
+Changes made:
+
+| # | Change | File |
+|---|---|---|
+| 1 | `MIRROR_COLUMNS = True` — `np.fliplr` on the assembled map, so `/tof` is correct for *every* consumer | `ringfusion_drivers/tof_source.py` |
+| 2 | `fov_h_deg` 61→**45**, `fov_v_deg` 45→**61**; stale `cols: 48`→32 | `ringfusion_bringup/config/calibration.yaml` |
+| 3 | One-time migration of the 1234 pre-fix paired logs (backed up, idempotent) | `tools/migrate_tof_logs.py` |
+
+**No new data collection was needed.** `paired_logger` stores the *raw* 32×32 ToF map plus the
+rectified RGB, and the projection is applied at training time from `calibration.yaml` — so the
+geometry fix applies retroactively to everything already logged. Only the column mirror needed
+a migration (change 3); the FOV swap needs none.
+
+<details><summary>How it was found</summary>
+
+Sweeping grid orientation × FOV assignment and scoring each by how well backbone disparity
+tracks true inverse depth at the projected anchors:
+
+| Grid orientation | fov h × v | ρ | best-case MAE |
+|---|---|---|---|
+| as-is (old deployed) | 61 × 45 | 0.737 | 0.319 m |
+| `fliplr` | 61 × 45 | 0.879 | 0.265 m |
+| as-is | 45 × 61 | 0.884 | 0.282 m |
+| **`fliplr`** | **45 × 61** | **0.914** | **0.252 m** |
+
+Two independent errors that compose. Confirmed three ways: the sweep, a visual overlay (with
+the fix, far/red anchors land on the back wall and near/blue on the floor in a clean
+top-to-bottom gradient; before, scrambled), and by eye on the recorded clip — *the ToF panel
+panned left when the robot turned right*.
+
+**This invalidated an earlier conclusion.** Teacher-vs-student was measured under the broken
+projection: student ρ 0.737, Depth Anything V2 teacher ρ 0.750, corr(student, teacher) 0.989.
+That read as "monocular depth is intrinsically hard here; the student is already at the
+teacher's ceiling". Wrong — *both* were scored against misprojected anchors. With the
+projection corrected the student alone reaches ρ 0.917. The backbone was never the bottleneck.
+</details>
+
+### Network B v3 — current (2026-07-28)
+
+`training/runs/residual_v3`, retrained on the corrected geometry with `--struct-weight 0.15`
+(down from v2's over-regularising 0.3). Deployed as `residual_v3_last_fp16.engine`.
+
+**Moving run — 105 frames over 32 s of driving.** Both engines fed byte-identical frames off
+one backbone pass, so every difference is the residual. Motion verified, not assumed:
+consecutive camera frames differ by 10.75 grey levels against 1.76 for a stationary capture.
+
+| Metric | closed-form | v2 | **v3** | want |
+|---|---|---|---|---|
+| **anchor MAE** (vs real ToF) | 0.294 m | 0.247 m | **0.199 m** | lower |
+| max depth, mean / worst | 1.52 / 2.47 m | 1.81 / 3.23 m | 1.91 / 3.77 m | ≤ ToF's 5.74 m |
+| frames at the 20 m clamp | 0 | 0 | **0** | zero |
+| pixels > 5 m | 0 % | 0 % | **0 %** | zero |
+| frame-to-frame jump | 0.0271 m | 0.0283 m | 0.0290 m | near baseline |
+
+v3 is **32 % more accurate than the closed-form path** and 19 % better than v2 — the first
+version to beat doing nothing at all. It costs ~7 % extra jitter over the raw backbone.
+
+**Uncertainty — `sigma_cal.py`, 8 frames, ~940 anchors each:**
+
+| Engine | MAE | median σ | cov ±1σ | cov ±2σ | **corr(σ, \|err\|)** |
+|---|---|---|---|---|---|
+| v1 | 0.179 m | 0.159 m | 0.612 | 0.958 | 0.490 |
+| v2 | 0.239 m | 0.091 m | 0.264 | 0.895 | 0.913 |
+| **v3** | 0.198 m | 0.079 m | **0.590** | 0.973 | **0.942** |
+| *ideal* | — | — | *0.683* | *0.955* | *higher* |
+
+`corr(σ, |error|)` is the one that matters: does stated confidence track where the model is
+actually wrong? v1 scored 0.490 and was *most confident exactly where it was most wrong*. v3
+reaches **0.943**, with σ at 0.078 m on the anchors while the whole-frame median stays near
+0.84 m — confident where the ToF constrains it, uncertain where it extrapolates.
+
+**Also measured:** `/depth` at **13.7 Hz** (unchanged from v1/v2 — the structure loss is free
+at runtime); centre-depth bias against matched-region ToF improved from **−14.0 % to +6.5 %**;
+5 s stationary hold shows ±1.2 mm drift and 0.72 % frame-to-frame change with zero clamp hits.
+
+**Notable:** under corrected geometry **v2 no longer blows up either** — zero clamp hits where
+it previously saturated on 46 % of moving frames. The old catastrophe was substantially a
+*calibration* artefact, not purely a training failure.
+
+Captures: [`docs/demo/`](../docs/demo/README.md) · rendered page:
+[`docs/demo/network_b_v1_vs_v2.html`](../docs/demo/network_b_v1_vs_v2.html) ·
+tools: [`tools/diagnostics/`](../tools/diagnostics/README.md)
+
+---
+
+## ⚠ Historical results — all measured BEFORE the projection fix
+
+Everything from here to the end of the results sections was measured through the mirrored,
+axis-swapped ToF projection. The *relative* comparisons in them are still meaningful (both
+arms saw the same broken geometry), but **no absolute number below should be quoted** — see
+[the fix](#tofcamera-projection-fix-found--applied-2026-07-28) and the
+[current numbers](#network-b-v3--current-2026-07-28) instead. Kept for provenance and because
+the reasoning trail explains how the bug was eventually found.
+
+### ⚠ Superseded — original write-up of the projection bug
+
+**The ToF grid is horizontally mirrored, and `fov_h`/`fov_v` are swapped.** Both were found
+by sweeping the projection parameters and scoring each candidate by how well the backbone's
+disparity tracks true inverse depth at the projected anchors:
+
+| Grid orientation | fov h × v | ρ(disp, 1/z) | best-case depth MAE |
+|---|---|---|---|
+| as-is (**deployed**) | 61 × 45 | 0.737 | 0.319 m |
+| `fliplr` | 61 × 45 | 0.879 | 0.265 m |
+| as-is | 45 × 61 | 0.884 | 0.282 m |
+| **`fliplr`** | **45 × 61** | **0.914** | **0.252 m** |
+
+The two errors are independent and compose. Confirmed three ways: the ρ sweep above, a
+visual overlay (with the fix, far/red anchors land on the back wall and near/blue on the
+floor in a clean top-to-bottom gradient; deployed, they are scrambled), and by eye on the
+recorded clip — *the ToF panel pans left when the robot turns right.*
+
+**This invalidates an earlier conclusion.** Teacher-vs-student was measured under the broken
+projection: student ρ 0.737, Depth Anything V2 teacher ρ 0.750, corr(student, teacher) 0.989.
+That looked like "monocular depth is intrinsically hard here, the student is at the teacher's
+ceiling". Wrong — *both* models were being scored against misprojected anchors. With the
+projection corrected the student alone reaches ρ 0.914. The backbone was never the bottleneck.
+
+**The fix** (not yet applied):
+
+1. `tof_source.py` — apply `np.fliplr` when the subframes are assembled, so `/tof` is correct
+   for *every* consumer (heatmap, perception, paired_logger), not just perception.
+2. `calibration.yaml` — `fov_h_deg: 45.0`, `fov_v_deg: 61.0` (currently 61.0 / 45.0).
+   Also `tof.cols: 48` is stale; the flashed mode is 32×32 (harmless — the live packet
+   overrides it — but misleading).
+
+**Consequence: Network B must be retrained after this.** B was trained on logged data pushed
+through the *same* broken projection (`anchoring_bridge` reuses the deployed geometry), so its
+learned corrections encode the mirrored anchor field. Until it is retrained, run with
+`residual_engine:=` unset — the closed-form path is pure geometry and improves the moment the
+calibration is fixed.
+
+**Expected gain:** anchor MAE 0.319 → 0.252 m (−21%) from geometry alone, before any retraining.
+
+### Network B v2 (structure loss) — measured 2026-07-28
+
+`training/runs/residual_v2`, Network B retrained with `losses.structure_loss`
+(`--struct-weight 0.3`). Exported clean (PyTorch↔ONNXRuntime max abs diff **2.86e-06**),
+built to `residual_v2_fp16.engine` (1.17 MB vs 1.21 MB for v1), loads in `perception_node`,
+and holds **13.4 Hz on `/depth` — identical to v1**, so the structure loss is free at runtime.
+
+**Controlled A/B.** Both engines run off one backbone pass per frame, so Network A's output,
+the anchors and the affine fit are byte-identical between arms — every difference is the
+residual. 10 frames, lit room (mean frame brightness 90.4), 755 anchors, ToF centre 1.20 m,
+ToF max 4.65 m.
+
+| Metric | A (no residual) | **v1** | **v2** | verdict |
+|---|---|---|---|---|
+| max depth | 2.46 m | **14.40 m** (20 m clamp on 4/10 frames) | **3.55 m** | **v2 fixes it** — now below the ToF's own 4.65 m max |
+| frac > 3 m | 0.00% | 1.41% | **0.13%** | 11× better |
+| frac > 5 m | 0.00% | 0.08% | **0.00%** | gone |
+| banding @ 13 px (anchor pitch) | 2.98 | 12.33 (4.1× over A) | **4.16** (1.4× over A) | **largely fixed** |
+| banding @ 173 px (scene texture) | 38.1 | 85.1 (2.2× over A) | **64.3** (1.7× over A) | improved, not solved |
+| mean \|B−A\| | — | 0.173 m | **0.026 m** | v2 barely corrects A at all |
+| anchor MAE | 0.479 m | **0.236 m** | 0.392 m | **v2 regresses** toward A |
+| anchor p90 | 1.665 m | **0.786 m** | 1.366 m | **v2 regresses** |
+| centre depth (ToF says 1.20 m) | 0.710 m | 0.653 m | 0.558 m | all three under-read; **v2 worst** |
+| median σ | — | 0.968 m | 0.859 m | still saturated |
+
+**Moving-robot run — the decisive test.** A static scene cannot show flicker, so the above was
+re-run over **102 frames of a 30 s drive**, both engines again fed identical frames
+(`moving_ab.py`, ToF max seen 6.11 m, brightness 63.9):
+
+| Metric | A | **v1** | **v2** | want |
+|---|---|---|---|---|
+| frames hitting the 20 m clamp | 0 | **47 / 102** | **0 / 102** | zero |
+| frames with max > 10 m | 0 | **55 / 102** | **0 / 102** | zero |
+| max depth (mean / worst) | 2.66 / 6.43 m | 13.07 / 20.00 m | **3.40 / 8.62 m** | lower |
+| pixels > 5 m | 0.03% | 0.64% | **0.03%** | lower |
+| frame-to-frame jump | 0.066 m | 0.129 m (**2× A**) | **0.069 m** (≈ A) | near A |
+| anchor MAE | 0.552 m | **0.400 m** | 0.428 m | lower |
+
+**Read: under motion v2 wins outright, and the accuracy penalty largely evaporates.** v1 saturates
+the clamp on **46% of moving frames** — in a room the ToF never measures past 6.1 m — and doubles
+frame-to-frame jitter over the raw backbone. v2 never clamps and adds essentially no jitter
+(0.069 vs A's 0.066). The anchor-MAE gap that looked bad on a still frame (0.236 vs 0.392) shrinks
+to 0.400 vs 0.428 once the robot moves, i.e. ~28 mm.
+
+**The remaining concern is that v2 under-corrects.** On a still frame mean |B−A| collapsed from
+0.173 m to **0.026 m** — B is close to a no-op — and centre depth moved *further* from the ToF.
+The structure loss at weight 0.3 is doing its job but is set too strong.
+
+**Next: sweep `--struct-weight` below 0.3** (try 0.1 / 0.15) to recover correction strength
+while keeping the far field bounded. v1 corrects more but is unsafe; v2 is safe but barely
+corrects. The useful operating point is between them.
+
+**Ship-today recommendation: use v2.** It beats v1 on every safety metric under motion at
+equal cost and near-equal accuracy. Launch with
+`residual_engine:=$HOME/RingFusion/residual_v2_fp16.engine`.
+
+**Also measured:** 5 s stationary hold on the shipped pipeline — 70 frames at **13.85 Hz**,
+median depth drift **±1.2 mm**, frame-to-frame change **0.72%**, zero clamp hits. Confirms no
+idle drift; the moving run is what separates the two engines.
+
+Rendered comparison with every metric explained: [`docs/demo/network_b_v1_vs_v2.html`](../docs/demo/network_b_v1_vs_v2.html).
+
+### Live re-test — 2026-07-25 (retrained Network A + real Network B)
+
+First run of **`student_v3_fp16.engine`** (retrained backbone) with **`residual_fp16.engine`**,
+`jetson_clocks` on, full `single_module.launch.py`. All four nodes came up clean and held
+rate for the whole capture; no mocks in the loop.
+
+| Topic | Rate | vs 2026-07-23 |
+|---|---|---|
+| `/image` | ~22 Hz | down from 28.5 — **cause unknown**; a later dark-room run hit 28.0 Hz, so it is *not* auto-exposure |
+| `/tof` | ~16 Hz | unchanged; still the bottleneck |
+| `/depth` (**A + B**) | **~13.4 Hz** | **up from ~7 Hz** — B's apply moved to `gpu_ops` |
+| `/cloud` | ~14.4 Hz | unchanged |
+
+**Anchor retention.** 991/1024 anchors (**96.8%**) reach Network B, against ~5% under the old
+nearest-resize path. Affine fit stable across frames: *a* ≈ 0.197–0.200, *b* ≈ 0.129–0.142.
+`perception_node` and the standalone renderer agree on centre depth to **2 mm** (0.700 vs
+0.702 m), confirming the two code paths are consistent.
+
+**Depth statistics** (one frame, 1640×1232):
+
+| Quantity | Network A | Network B (A+residual) | ToF (measured) |
+|---|---|---|---|
+| median depth | 0.524 m | 0.592 m | 1.17 m |
+| 2–98 pct range | 0.067 – 2.31 m | 0.097 – 3.03 m | — |
+| max | 5.16 m | **20.00 m** (= `max_depth` clamp) | **2.80 m** |
+| frac > 3 m | 0.04% | 2.52% | 0% |
+| frac > 5 m | 0.00% | 0.30% | 0% |
+
+Mean \|B−A\| **0.264 m**, max \|B−A\| **14.4 m**. B/A ratio: median 1.27×, p99 2.95×, max 17.4×.
+
+**Three findings.**
+
+1. **ToF footprint is small.** The 32×32 grid projects into a **447×340 px box** (x 616–1063,
+   y 395–735) — **7.5% of the frame**. Everything else is monocular extrapolation. Depth
+   outside that box should not be treated as metric.
+2. **B's far field is unbounded.** B drives 0.30% of pixels past 5 m and reaches the 20 m
+   clamp in a room the ToF measures at ≤2.80 m. Because the residual is a *log-ratio*
+   correction, a modest positive residual compounds multiplicatively where D₀ is already
+   large. Worth a range prior or a scene-aware clamp.
+3. **Banding is two separate effects.** See the controlled comparison below.
+
+**Uncertainty is uninformative, and it is entirely Network B's.** `/depth_var` is
+`analytic + learned` (`pipeline.py` Stage 6 + 7). Decomposed on the captured frames:
+
+| Term | Scene 1 σ | Scene 2 σ | Share of total variance |
+|---|---|---|---|
+| analytic (delta method, `D⁴·jᵀCov(a,b)j`) | 0.032 m | 0.010 m | **~0.1%** |
+| learned (B's `τ² = exp(logτ²)`) | 0.947 m | 0.977 m | **~99.9%** |
+
+The principled analytic term is numerically irrelevant, so the published variance *is*
+Network B's untrained variance head — pinned near a ~1 m ceiling in both scenes. As a
+fraction of the depth it reports, σ/D is **1.02 (scene 1)** and **1.58 (scene 2)**: the node
+states ±100–158% uncertainty on every pixel. σ is also *lowest* (0.495 m) exactly where B
+extrapolates worst and *highest* (0.855 m) on the anchor-dense floor — confident in the wrong
+places. Needs recalibration (step 8) before `/depth_var` means anything.
+
+#### Fit quality, measured properly — the anchoring is **not** broken
+
+An earlier version of these notes compared "ToF centre depth" against "Network A centre
+depth" and read a 2.4× gap as evidence of broken anchoring. **That comparison was invalid**
+and is retracted. The two statistics sample *different points in the scene* — the ToF's
+central zones project to ≈(840, 565) while the A-centre patch sits at the image centre
+(820, 616) — and the depth gradient there is steep enough (A runs 1.30 m → 0.51 m between
+40% and 50% down the frame) that a ~50 px offset spans most of it.
+
+The correct test is the residual **at the anchor pixels**, where ToF truth and prediction
+describe the same point:
+
+| | n | median abs err | median rel err | **bias** |
+|---|---|---|---|---|
+| Scene 1 — A (closed-form) | 995 | 0.259 m | 23.8% | **−0.005 m** |
+| Scene 1 — B (A+residual) | 995 | 0.166 m | **16.1%** | +0.157 m |
+| Scene 2 — A (closed-form) | 703 | 0.076 m | 10.9% | **+0.003 m** |
+| Scene 2 — B (A+residual) | 703 | 0.032 m | **5.7%** | +0.006 m |
+
+**Bias is ≈0 in both scenes** — millimetres on a metre-scale scene. A broken projection,
+wrong intrinsics, slant-range-vs-z confusion or a mm/m units error would all produce a large
+systematic bias. None is present, so none of those is the problem. **And Network B measurably
+improves accuracy where it is supervised** — 23.8% → 16.1% and 10.9% → 5.7% relative error.
+B is doing its job inside its domain.
+
+#### The one real systematic: far-field under-read
+
+Binning the anchor residuals by image row exposes a consistent structure in **both** scenes:
+
+| Anchor rows | ToF median | A median | **A / ToF** |
+|---|---|---|---|
+| top (far) | 1.93 / 2.40 m | 1.31 / 1.67 m | **0.67 / 0.72** |
+| upper-mid | 1.23 / 0.96 m | 1.31 / 1.13 m | 1.04 / 1.16 |
+| lower-mid | 0.64 / 0.50 m | 0.86 / 0.55 m | 1.25 / 1.06 |
+| bottom (near) | 0.34 / 0.31 m | 0.35 / 0.31 m | **1.03 / 0.99** |
+
+The near field is essentially exact (0.99–1.03×); the **far field is under-read by ~30%**
+(0.67–0.72×). This is expected behaviour, not a bug: the closed-form fit is least squares in
+**inverse-depth** space, where a point at 0.3 m contributes 1/0.3 ≈ 3.3 and a point at 2.4 m
+contributes 1/2.4 ≈ 0.4. Far points carry ~8× less weight, so the fit nails the near field
+and is loose at range.
+
+This also explains Network B's behaviour: B correctly learns *"push the far field out"*
+(scene 1 bias +0.157 m) — the right direction. With no supervision beyond `max_range = 5 m`
+it simply cannot learn where to stop, so the correction runs on to the 20 m clamp.
+
+#### Fixes implemented 2026-07-25 (7a / 7b / 7c)
+
+All three are training-side or inside an existing stage — **no pipeline change**: same
+sensors, stages, order, topics, message types, launch args, engine files and runtime
+(`/depth` still ~12.9 Hz after the change).
+
+| | Change | Where | Runs on robot? |
+|---|---|---|---|
+| 7a | `structure_loss` — match `∇log D_B` to `∇log D_A` on the unsupervised region, multi-scale | `training/losses.py`, `--struct-weight` (default 0.3) | no, training only |
+| 7b | `max_range` 5.0 → 6.5 m | `training/anchoring_bridge.py` | no, training only |
+| 7c | `range_weights` — weight anchors by `z^1` | `anchoring.py` (stage 5) | **yes** |
+
+`--struct-weight 0` reproduces the previous objective exactly; `structure_loss` is
+verified to be identically 0 when `D_pred == D_base`, so a converged identity residual is
+unpenalised. All 5 pipeline tests still pass. `training/` imports the workspace's
+`anchoring.py` directly, so 7c is a single source of truth across training and deploy.
+
+**7c: theory said z², measurement said z¹.** The derivation (relative depth error ⇒
+`w = z²`) is in the `range_weights` docstring along with the sweep that refutes it —
+z² overshoots into a far *over*-read and takes scene 2's median relative error from 10.9%
+to 41.0%, because the affine model is misspecified and re-weighting trades one regime for
+the other. z¹ was chosen empirically.
+
+**Live result** (same view, before vs after, n≈700 anchors):
+
+| | A far ratio | A near ratio | A med rel err |
+|---|---|---|---|
+| old fit (p=0) | **0.66** | 0.99 | 10.9% |
+| new fit (p=1) | **1.01** | 1.00 | 11.5% |
+
+The far-field under-read is **gone** (0.66 → 1.01) with the near field untouched, at the
+cost of ~0.6 pp on the overall median.
+
+> **Network B must be retrained before it is used again.** B was trained against the old
+> under-reading baseline, so it learned to push the far field outward — now redundant. On
+> the same live frame B's tail got worse (max depth 6.29 m → 8.20 m, pixels >3 m 0.80% →
+> 2.06%) while A's far field became correct. **Until B is retrained, leave
+> `residual_engine:=` unset** — A + the new closed-form fit is the better output.
+
+#### Two-scene control: what actually causes B's banding
+
+Scene 1 (shelving full of near-identical trophies) was a confound — a strongly periodic
+texture. Scene 2 pointed the robot at a different view (open floor, blackboard wall) and the
+capture was repeated with the pipeline untouched. Power is measured as a multiple of each
+signal's own broadband median, along the image's horizontal axis.
+
+| | Scene 1 (trophies) | Scene 2 (new view) |
+|---|---|---|
+| image's dominant period | 173 px | 253 px |
+| B−A dominant period | **173 px** (matches) | **253 px** (matches) |
+| power @ image period — A | 47.5× | 76.1× |
+| power @ image period — B | 94.1× (**B/A 1.98**) | 315.1× (**B/A 4.14**) |
+| power @ 13 px anchor pitch — A | 3.1× (noise floor) | 2.9× (noise floor) |
+| power @ 13 px anchor pitch — B | 15.4× (**B/A 5.0**) | 23.2× (**B/A 8.0**) |
+
+**Both effects are real, and they are now separated:**
+
+- **Texture amplification (scene-dependent).** B locks onto whatever periodic texture the scene
+  has — 173 px with the trophies, 253 px with the blackboards — and amplifies it **2–4×** over
+  what Network A already produces. The period tracks the scene, so this is a response to image
+  content, not an artefact of the anchors.
+- **Anchor-pitch lattice (scene-independent).** A fine **13 px** component sits at the noise
+  floor in Network A (≈3× in both scenes) but at **15–23×** in Network B, and it **survived a
+  complete scene change at similar strength**. That is a genuine artefact B injects, not
+  scene texture. High-passing B−A isolates it as a uniform dot grid
+  ([`scene2_anchor_highpass.png`](../docs/demo/scene2_anchor_highpass.png)).
+
+So the first read ("it's the anchor grid") and the trophy hypothesis were **both partly right**.
+Fixing this needs two different things: a smoothness/neighbourhood term for the anchor lattice,
+and frequency-domain regularisation (or more diverse training texture) for the amplification.
+
+#### Scene 2 numbers
+
+| Quantity | Network A | Network B | ToF |
+|---|---|---|---|
+| median depth | 0.364 m | 0.495 m | 0.784 m |
+| centre depth | 0.722 m | 0.652 m | 1.195 m |
+| max | 2.05 m | 6.29 m | 4.58 m |
+| frac > 3 m | 0.00% | 0.80% | — |
+
+- **Anchor re-splatting confirmed exactly.** Scene 2 had only **703/1024 valid ToF zones** (the
+  open space beyond ToF range returns nothing) and produced **exactly 703 anchors** — as did
+  scene 1 at 995/995. `resplat_anchors` preserves **100% of valid zones** in both scenes.
+- **B's overshoot is milder here but still present** — max 6.29 m against a ToF max of 4.58 m,
+  0.80% of pixels past 3 m where A has none. No 20 m clamp hit this time, so scene 1's blowup
+  was worst-case (dark, low-texture shelving at range), not typical.
+- **B did not move toward the ToF this time.** A 0.722 m → B 0.652 m against a ToF centre of
+  1.195 m — the correction went the *wrong way*. In scene 1 it went the right way. B's
+  correction direction is not reliably toward truth.
+- **σ saturation is scene-independent** — median 0.977 m, p95 1.049 m here vs 0.947/0.985 in
+  scene 1. The variance head is pinned near ~1 m regardless of content, confirming it is
+  saturated rather than reflecting the scene.
+
+Captured artefacts: [`docs/demo/`](../docs/demo/). Scene 1 is unprefixed (`quad.png`,
+`network_a.png`, `network_b.png`, `pipeline_depth.png`, `pipeline_sigma.png`, `stats.json`);
+scene 2 uses the `scene2_` prefix, plus `scene2_crop_a/b.png` and
+`scene2_anchor_highpass.png`. Files from 2026-07-23 (`pipeline_demo.png`,
+`four_view_A_vs_B.png`, `arducam_view.png`, `network_a_depth.png`, `tof_heatmap.png`) are kept
+for comparison. Rendered summary:
+[`docs/demo/pipeline_view.html`](../docs/demo/pipeline_view.html).
 
 **Live accuracy check (green cube):** ToF **0.447 m** vs Network-A anchored depth **0.459 m**
 — **~12 mm** apart, inside the ToF's own ~20 mm error band. Confirms the closed-form ToF→mono

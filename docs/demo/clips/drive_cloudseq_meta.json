@@ -1,0 +1,15 @@
+{
+  "w": 420,
+  "h": 314,
+  "frames": 256,
+  "fps": 7.5,
+  "zmin": 0.15,
+  "zmax": 4.0,
+  "fx": 97.20567641920144,
+  "fy": 97.0366180407907,
+  "cx": 214.91940070117172,
+  "cy": 140.33692459970752,
+  "source": "retrofit from rendered clip (TURBO inverse, ~8 mm)",
+  "qmin": 16,
+  "qspan": 239
+}

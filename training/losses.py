@@ -16,8 +16,17 @@ import torch
 
 # --- backbone distillation --------------------------------------------------
 
-def align_ssi(pred, target):
-    """Least-squares scale+shift aligning pred to target. Same math as Stage 5."""
+def align_ssi(pred, target, lock_positive=True):
+    """Least-squares scale+shift aligning pred to target. Same math as Stage 5.
+
+    lock_positive clamps the alignment scale a >= 0. Teacher and student both emit
+    NON-NEGATIVE disparity (the student head ends in ReLU), so the physically correct
+    scale is positive. Left free, a<0 gives a mirror-image minimum: a SIGN-FLIPPED
+    student (large where the teacher is small) aligns just as well and scores an
+    equally low SSI loss, so distillation can silently converge inverted -- which is
+    exactly what a from-scratch re-distill did (rho -0.998). Clamping a>=0 removes that
+    basin so the loss only rewards the correct sign. b is then the LS-optimal shift for
+    the clamped a: b = mean(t - a*p)  (identical to the old b whenever a is unclamped)."""
     p = pred.flatten(1)
     t = target.flatten(1)
     ones = torch.ones_like(p)
@@ -25,7 +34,9 @@ def align_ssi(pred, target):
     s_pt = (p * t).sum(1); s_t = t.sum(1)
     det = s_pp * s_1 - s_p * s_p
     a = torch.where(det.abs() > 1e-8, (s_pt * s_1 - s_p * s_t) / det, torch.ones_like(det))
-    b = torch.where(det.abs() > 1e-8, (s_pp * s_t - s_p * s_pt) / det, torch.zeros_like(det))
+    if lock_positive:
+        a = a.clamp(min=0.0)
+    b = (s_t - a * s_p) / s_1
     return a.view(-1, 1, 1, 1) * pred + b.view(-1, 1, 1, 1)
 
 
@@ -69,8 +80,42 @@ VAR_FLOOR = 1e-6
 MAX_DEPTH_LOSS = 15.0
 
 
-def residual_loss(D_pred, D_gt, var_analytic, log_tau2, valid, nll_weight=0.2):
-    """Accuracy (log-depth L1) + Gaussian NLL over valid pixels."""
+def structure_loss(D_pred, D_base, valid, scales=3):
+    """Tie the residual to Network A's RELATIVE geometry where there is no ToF target.
+
+    The hold-out scheme can only supervise inside the ToF's footprint (measured: a
+    447x340 px box = 7.5% of the frame) and only inside its range gate (the logged
+    ToF never returns past 6.1 m). Outside that the net is unconstrained, and on-robot
+    it shows: it invents a 13 px lattice Network A does not have (anchor-pitch power
+    A ~3x vs B 15-23x over broadband) and runs the far field to the 20 m clamp in a
+    room measuring 2.8 m.
+
+    But A's depth is only missing SCALE -- its relative geometry is valid over the whole
+    frame. So off-target we match GRADIENTS of log-depth, not values: the net stays free
+    to rescale (its entire job, since log-scale differences vanish under d/dx) while
+    being penalised for inventing structure A never saw. Multi-scale so it constrains
+    broad drift as well as per-pixel speckle.
+
+    Same construction as gradient_loss() above, applied to (B, A) instead of
+    (student, teacher). valid is the supervised mask -- this acts on 1 - valid.
+    """
+    free = (1.0 - valid)
+    d = (D_pred.clamp(min=1e-3).log() - D_base.clamp(min=1e-3).log()) * free
+    total = 0.0
+    for _ in range(scales):
+        if d.shape[-1] < 2 or d.shape[-2] < 2:
+            break
+        total = total + d.diff(dim=-1).abs().mean() + d.diff(dim=-2).abs().mean()
+        d = d[:, :, ::2, ::2]
+    return total
+
+
+def residual_loss(D_pred, D_gt, var_analytic, log_tau2, valid, nll_weight=0.2,
+                  D_base=None, struct_weight=0.0):
+    """Accuracy (log-depth L1) + Gaussian NLL over valid pixels, plus an optional
+    structure term tying the net to Network A off-target (see structure_loss).
+
+    struct_weight=0 reproduces the original objective exactly."""
     tau2 = log_tau2.clamp(LOGVAR_MIN, LOGVAR_MAX).exp()
     var = (var_analytic + tau2).clamp(min=VAR_FLOOR)  # bounded, strictly positive
     D_pred = D_pred.clamp(max=MAX_DEPTH_LOSS)
@@ -80,7 +125,10 @@ def residual_loss(D_pred, D_gt, var_analytic, log_tau2, valid, nll_weight=0.2):
     l_depth = ((D_pred.clamp(min=1e-3).log() - D_gt.clamp(min=1e-3).log()).abs()
                * valid).sum() / denom
     l_nll = (0.5 * (err2 / var + var.log()) * valid).sum() / denom
-    return l_depth + nll_weight * l_nll
+    loss = l_depth + nll_weight * l_nll
+    if struct_weight > 0.0 and D_base is not None:
+        loss = loss + struct_weight * structure_loss(D_pred, D_base, valid)
+    return loss
 
 
 @torch.no_grad()

@@ -1,0 +1,19 @@
+{
+  "frames": 70,
+  "duration_s": 4.98,
+  "rate_hz": 13.85,
+  "median_depth_mean_m": 0.3641,
+  "median_depth_std_m": 0.0012,
+  "median_depth_range_m": [
+    0.361,
+    0.367
+  ],
+  "max_depth_mean_m": 3.472,
+  "max_depth_worst_m": 4.091,
+  "p99_depth_mean_m": 2.342,
+  "p99_depth_worst_m": 2.45,
+  "frame_to_frame_abs_m": 0.0074,
+  "frame_to_frame_abs_worst_m": 0.0128,
+  "frame_to_frame_rel_pct": 0.72,
+  "frames_hitting_clamp": 0
+}
