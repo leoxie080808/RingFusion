@@ -25,14 +25,29 @@ file predating the fix. Correcting it moved the backbone's agreement with real T
 [ToF↔camera projection fix](#tofcamera-projection-fix-found--applied-2026-07-28).
 
 **2. Network B was retrained on the corrected geometry** (`residual_v3`, `--struct-weight
-0.15`). It is now the most accurate configuration available — **better than the pure
-closed-form path**, which neither v1 nor v2 ever managed:
+0.15`):
 
 | | closed-form | v1 | v2 | **v3** |
 |---|---|---|---|---|
-| anchor MAE, moving | 0.294 m | — | 0.247 m | **0.199 m** |
+| anchor MAE, moving ***(in-sample — see below)*** | 0.294 m | — | 0.247 m | **0.199 m** |
 | corr(σ, \|error\|) | — | 0.490 | 0.913 | **0.943** |
 | frames at the 20 m clamp | 0 | 47/102 *(pre-fix)* | 0 | **0** |
+
+> ### ⚠ These numbers are IN-SAMPLE. Corrected 2026-07-28.
+>
+> `moving_ab.py` and `sigma_cal.py` both call `solve_robust` on the in-bounds anchor set
+> and then score at **that same set** (`ys, xs = np.nonzero(am > 0)` is the splat of the
+> anchors that determined the fit). So the row above measures how well the fit reproduces
+> the points it was fitted to — not generalisation. Training *does* hold out 25%
+> (`anchoring_bridge.build_real_supervision`); the on-robot harnesses never did.
+>
+> The tell: under that protocol a nearest-neighbour lookup scores **exactly 0.000 m**,
+> because it predicts each zone from itself. Any metric a trivial method aces is not
+> measuring depth estimation.
+>
+> The claim "better than the pure closed-form path" also does not survive: it compared an
+> **unclamped** closed-form output against a residual path that caps at `MAX_DEPTH_M = 20`.
+> See [Benchmarks](#benchmarks-vs-trivial-baselines).
 
 The uncertainty channel — previously saturated and *most confident where it was most
 wrong* — now tracks actual error at **ρ 0.943**, and σ is small at the anchors (0.078 m)
@@ -40,9 +55,138 @@ while staying large where the net extrapolates. That is the correct shape.
 
 **What is still not trustworthy.** The ToF only covers **7.5% of the frame**, so the other
 92.5% of every depth map is monocular extrapolation carrying the affine fit — a geometry
-limit, not a bug, but it bounds what can be believed. v3 also still **under-corrects**
-(mean |B−A| just 0.019 m), so there is headroom left in the structure-loss weight. Design
-details live in `RingFusion_technical_reference_updateP2.md`.
+limit, not a bug, but it bounds what can be believed. Every number in this file is also
+**scored against the ToF we anchor to**, a closed loop that cannot detect a ToF bias and
+says nothing about the 92.5%; independent tape ground truth is
+[planned](../docs/VALIDATION_PLAN.md) and not yet collected. Design details live in
+`RingFusion_technical_reference_updateP2.md`.
+
+## Benchmarks vs. trivial baselines
+
+Measured 2026-07-28 over all 1,234 logged pairs with
+[`tools/diagnostics/baselines.py`](../tools/diagnostics/baselines.py); raw numbers in
+[`docs/demo/baselines.json`](../docs/demo/baselines.json). Every method sees the **same
+anchors** and is scored at the **same held-out zones**.
+
+Two hold-out protocols, because the choice dominates the conclusion:
+
+- **`random`** — 25 % of zones held out at random. This is what training and every
+  published number above used. 99.6 % of the held-out zones have an anchor within one
+  zone, a **median of 1.7 cm away**, so it measures interpolation between adjacent
+  samples.
+- **`center`** — anchor on a central 16×16 island, predict everything outside it. Mirrors
+  the deployed geometry (ToF in the middle, extrapolate outward): median **8.4°** from the
+  nearest anchor, ~30 cm at 2 m.
+
+| | `random` MAE | `random` medAE | `center` MAE | `center` medAE |
+|---|---|---|---|---|
+| B0 constant (median of anchors) | 0.527 m | 0.254 m | 0.633 m | 0.441 m |
+| **B1 nearest zone** *(0 params, no camera)* | **0.056 m** | **0.010 m** | **0.232 m** | 0.108 m |
+| B2 bilinear upsample *(0 params)* | 0.058 m | 0.007 m | *coverage 0.00* | — |
+| B3 mono + median scale *(1 param)* | 35.488 m | 0.136 m | 33.468 m | 0.169 m |
+| B4 closed-form, as deployed *(2 params)* | 0.283 m | 0.068 m | **18.092 m** | **0.066 m** |
+| B4c closed-form + the 20 m clamp | 0.283 m | 0.068 m | 0.359 m | 0.066 m |
+| B5 RingFusion v3 *(~0.46 M params)* | **0.148 m** | **0.026 m** | 0.331 m | 0.067 m |
+
+### What this changes
+
+- **A zero-parameter lookup table beats the full pipeline on `random`** — 0.056 m vs
+  0.148 m. Unsurprising once you know the nearest real measurement is 1.7 cm away, but it
+  means the published protocol systematically *understates* the architecture.
+- **`B4` vs `B4c` is a clamping artefact, not a model difference.** `anc.to_metric_depth`
+  bounds inverse depth at `min_disp=1e-4`, so the closed-form path can emit **10 000 m**,
+  while `ResidualRefiner.refine` caps at 20 m. One `np.clip` moves it 18.092 → 0.359 m and
+  recovers ~98 % of what looked like Network B's contribution. **Deployment bug:** the
+  Network-B-off fallback path is genuinely unclamped and can publish absurd far-field
+  points into `/cloud`.
+- **Network B is a local refiner, not an extrapolator.** Against a fairly-clamped
+  baseline it wins big where anchors are near (`random`, −48 % MAE) and almost nothing
+  where they are not (`center`, −8 % MAE, medians tied at 0.066/0.067). Consistent with
+  its training: held-out zones were always ~1.7 cm from an anchor, so it never had to
+  learn extrapolation.
+- **Not contaminated.** `residual_v3` trained on these pairs, so B5 was re-scored on the
+  61 frames from `train_residual.py`'s `random_split(..., manual_seed(0))` validation
+  split: `center` MAE 0.296 m vs 0.331 m on the full set. No overfitting to these scenes.
+
+### The result that justifies the camera
+
+Median error by angular distance from the nearest anchor, `center` protocol:
+
+| medAE | 0–3° | 3–6° | 6–10° | 10–15° | 15–30° |
+|---|---|---|---|---|---|
+| *n* | 103 586 | 157 446 | 216 632 | 185 856 | 72 335 |
+| B1 nearest zone | **0.027** | 0.072 | 0.122 | 0.180 | 0.239 |
+| B4c closed-form | 0.073 | 0.071 | 0.078 | **0.061** | **0.047** |
+| B5 RingFusion v3 | 0.064 | 0.073 | 0.078 | 0.062 | 0.047 |
+
+Nearest-neighbour degrades **9×** across the range; the camera path is **flat**. They
+cross at 3–6°, and past 10° the camera wins 3–5×. Since the ToF covers 7.5 % of the frame
+and the rest is far outside 30°, the right-hand columns are the ones that predict
+deployment behaviour. This is the first direct measurement of that claim.
+
+## Network B v4 — the training protocol *was* the limitation
+
+`build_real_supervision` gained a `holdout=` mode. `random` (v1–v3) hides 25 % of zones at
+random, which leaves an anchor ~1.7 cm from 99.6 % of the supervision targets — the net was
+only ever graded on interpolation, so near-identity was the correct thing to learn.
+`island` anchors on a central 16×16 block and supervises everything outside it.
+
+`residual_v4_island`: identical architecture, hyperparameters, data and student backbone as
+v3. **One changed argument.** Scored on the 61 frames of `train_residual.py`'s
+`random_split(..., manual_seed(0))` validation split, which no version trained on:
+
+| `center` (extrapolation) | MAE | medAE | δ<1.25 |
+|---|---|---|---|
+| B4c closed-form + clamp | 0.316 m | 0.064 m | 0.616 |
+| v3 (random hold-out) | 0.296 m | 0.066 m | 0.628 |
+| **v4 (island hold-out)** | **0.206 m** | **0.045 m** | **0.746** |
+
+v3 was **statistically tied with having no network at all** (0.066 vs 0.064). v4 beats the
+closed-form by 30 %. A third run, `residual_v5_mixed` (alternating per sample), lands
+between the two on both protocols — a genuine compromise, not a free lunch.
+
+The cost is real: v4 gives up interpolation, `random` medAE 0.026 → 0.091. Which is what
+Stage 7c exists to recover.
+
+## Stage 7c — the ToF/network blend
+
+Neither source wins everywhere and the crossover is sharp, so
+[`blend.py`](src/ringfusion_perception/ringfusion_perception/blend.py) takes the ToF near
+the anchors and the network far from them, smoothstepping between (2°→5°, angle-driven so
+it follows the optics rather than the resolution).
+
+| medAE, `center` | 0–3° | 3–6° | 6–10° | 10–15° | 15–30° |
+|---|---|---|---|---|---|
+| nearest-zone ToF | **0.025** | 0.070 | 0.123 | 0.188 | 0.244 |
+| v4 network | 0.048 | 0.047 | 0.052 | 0.042 | 0.038 |
+| **blend** | **0.028** | **0.046** | **0.052** | **0.042** | **0.038** |
+
+It tracks whichever source is better in every bin. Headline, same 61-frame split:
+
+| | `random` MAE / medAE | `center` MAE / medAE |
+|---|---|---|
+| nearest-zone ToF | 0.056 / 0.010 | 0.240 / 0.108 |
+| v4 network alone | 0.261 / 0.091 | 0.206 / 0.045 |
+| **v4 + blend** | **0.045 / 0.009** | **0.194 / 0.042** |
+
+The blend beats **both** sources it mixes, including raw ToF on interpolation
+(δ<1.25 0.969 vs 0.956) — averaging two partly-independent estimates near the crossover
+cancels noise neither cancels alone. It also settles v4-vs-v5: with the blend, interpolation
+is *identical* between them (the ToF supplies it), and v4 wins extrapolation by 19 %.
+
+**Recommended configuration: `student_v3` + `residual_v4_last` + blend.**
+
+Enabled by default; `blend:=false`, `blend_near_deg`, `blend_far_deg` are `perception` node
+parameters for live A/B.
+
+> **Caveat.** Every evaluation point is a ToF **zone centre**, which is exactly where
+> nearest-neighbour looks best. Across a depth discontinuity *between* zones the nearest
+> anchor may sit on a different surface while the network reads the edge correctly. These
+> numbers are structurally blind to that, so the blend may smear object boundaries inside
+> the cone. Independent tape ground truth is the way to check.
+
+Raw results, both training logs and the val-split stem list:
+[`docs/demo/benchmarks/`](../docs/demo/benchmarks/).
 
 ### Done
 

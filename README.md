@@ -64,11 +64,19 @@ estimate, supervised on held-out ToF zones.
 
 | | value |
 |---|---|
-| `/depth`, `/depth_var`, `/cloud` | **13.7 Hz** (ToF-limited) |
-| Depth accuracy vs real ToF, driving | **0.199 m** mean absolute error |
+| `/depth`, `/depth_var`, `/cloud` | **13.7 Hz** |
+| Depth error, extrapolating away from the ToF | **0.042 m** median (`center` protocol) |
+| Depth error, interpolating between ToF zones | **0.009 m** median (`random` protocol) |
 | Uncertainty quality, `corr(σ, \|error\|)` | **0.943** |
 | Backbone agreement with truth, ρ | **0.917** |
-| Far-field blow-ups | **0** frames over 105 driving |
+
+*Configuration: `student_v3` + `residual_v4_last` + Stage 7c blend. Scored on 61 frames no
+version trained on.*
+
+> The previously headlined **0.199 m** was measured **in-sample** — the on-robot harnesses
+> fitted and scored on the same ToF zones. A nearest-neighbour lookup scores 0.000 m under
+> that protocol. Corrected 2026-07-28; see
+> [Benchmarks](ros2_ws/README.md#benchmarks-vs-trivial-baselines).
 
 ### A calibration bug dominated everything before this date
 
@@ -92,28 +100,64 @@ than the distilled student (ρ 0.750 vs 0.737), which read as "monocular depth i
 hard here". Both were simply being scored against misprojected anchors. **The backbone was
 never the bottleneck.**
 
-### Network B is now a clean win
+### Benchmarked against trivial baselines
 
-`residual_v3`, retrained on the corrected geometry, is the first version that beats **doing
-nothing** — v1 and v2 never did:
+Every method below sees the same anchors and is scored at the same held-out ToF zones, over
+all 1,234 logged pairs. Two protocols, because the choice changes the winner:
 
-| | closed-form only | v1 | v2 | **v3** |
-|---|---|---|---|---|
-| depth MAE, driving | 0.294 m | — | 0.247 m | **0.199 m** |
-| `corr(σ, \|error\|)` | — | 0.490 | 0.913 | **0.943** |
-| frames hitting the 20 m clamp | 0 | 47/102 *(pre-fix)* | 0 | **0** |
-| added frame-to-frame jitter | baseline | ~2× | +4 % | **+7 %** |
+| | `random` *(interpolate, anchors ~1.7 cm away)* | `center` *(extrapolate outward)* |
+|---|---|---|
+| nearest-zone lookup *(0 params, no camera)* | **0.056 m** | 0.232 m |
+| bilinear ToF upsample *(0 params)* | 0.058 m | *cannot extrapolate* |
+| closed-form + clamp *(2 params)* | 0.283 m | 0.359 m |
+| **RingFusion v3** *(~0.46 M params)* | **0.148 m** | **0.331 m** |
 
-The uncertainty channel used to be saturated and *most confident where it was most wrong*; it
-now tracks real error at ρ 0.943, staying tight at the anchors and widening where the network
-extrapolates.
+**A zero-parameter lookup table beats the full pipeline when the ToF is dense nearby** — and
+that is the honest reading of the protocol every earlier number used. The architecture earns
+its keep somewhere else entirely: median error vs. distance from the nearest real
+measurement,
+
+| medAE | 0–3° | 3–6° | 6–10° | 10–15° | 15–30° |
+|---|---|---|---|---|---|
+| nearest-zone lookup | **0.027** | 0.072 | 0.122 | 0.180 | 0.239 |
+| RingFusion v3 | 0.064 | 0.073 | 0.078 | **0.062** | **0.047** |
+
+Nearest-neighbour degrades **9×** as it leaves the measurements; the camera path stays flat
+and wins 3–5× past 10°. Since the ToF covers 7.5 % of the frame, that is the regime the
+robot actually runs in.
+
+### Two fixes this produced
+
+**Network B was being quizzed wrong.** Hiding 25 % of ToF zones at random leaves a real
+measurement ~1.7 cm from almost every supervision target, so the network only ever learned
+interpolation — and scored *tied with having no network at all* on extrapolation (0.066 vs
+0.064 m). Supervising on a held-out outer region instead (`--holdout island`, one changed
+argument, same architecture and data) took it to **0.045 m, a 30 % win over the closed-form**.
+
+**Neither source wins everywhere.** Raw ToF is ~2× better within 3° of an anchor; the
+network is ~6× better past 15°. Stage 7c blends them by angular distance and **beats both**:
+
+| medAE | 0–3° | 3–6° | 6–10° | 10–15° | 15–30° |
+|---|---|---|---|---|---|
+| nearest-zone ToF | **0.025** | 0.070 | 0.123 | 0.188 | 0.244 |
+| Network B v4 | 0.048 | 0.047 | 0.052 | 0.042 | 0.038 |
+| **blend** | **0.028** | **0.046** | **0.052** | **0.042** | **0.038** |
+
+Also fixed: the closed-form path was **missing the 20 m clamp** the residual path applies,
+so the Network-B-off fallback could publish 10,000 m into `/cloud` — worth 18.092 m →
+0.359 m. Full detail: [Benchmarks](ros2_ws/README.md#benchmarks-vs-trivial-baselines).
 
 ### Known limits
 
 - **ToF covers 7.5 % of the frame.** The other 92.5 % is monocular extrapolation carrying the
   affine fit. A geometry limit, not a bug, but it bounds what can be trusted.
-- **v3 still under-corrects** — mean |B−A| is only 0.019 m, so the structure-loss weight
-  (0.15) likely has room to come down further.
+- **Every number here is scored against the ToF we anchor to** — a closed loop. It cannot
+  detect a ToF bias and says nothing about the 92.5 % of frame the ToF never sees.
+  Independent tape ground truth is [planned](docs/VALIDATION_PLAN.md), not yet collected.
+- **v3 under-corrects** — mean |B−A| is only 0.019 m. The benchmarks suggest why: it was
+  supervised only on zones ~1.7 cm from an anchor, where the closed-form answer is already
+  right, so near-identity is the correct thing to learn. That points at the *training
+  protocol* rather than the structure-loss weight.
 - **Network A is pilot-quality** — 2,000 images; a full ~15–20 k re-distill is pending.
 - **Checkpoint selection is noisy** — the validation split is ~62 samples against a
   heavy-tailed NLL loss.
@@ -125,12 +169,15 @@ Full detail, per-run numbers and the task tracker:
 
 ## ▶ Do next
 
-1. **Sweep `--struct-weight` below 0.15** — v3 improved when it dropped from 0.3, and it is
-   still barely correcting, so the optimum is probably lower again.
-2. **Control run at 0.3 on corrected geometry** — v3 changed the weight *and* the geometry
-   together, so its win is not yet attributable to either.
-3. **Widen the validation split** before checkpoint selection bites.
-4. **Re-distill Network A** on the full set now that we know it was never the limiting factor.
+1. **Live-test the new configuration** — v4 + blend are validated offline only; the deployed
+   path has not run on the robot yet.
+2. **Collect independent tape ground truth** (~20 marked points, half outside the ToF box)
+   — the only item that breaks the closed loop, and the only way to check whether the blend
+   smears object boundaries. See [the plan](docs/VALIDATION_PLAN.md).
+3. **DEPTHOR-Small on the Orin**, then **ZJU-L5** — the two remaining external benchmarks.
+4. **Widen the validation split** — 61 frames is too noisy for checkpoint selection, and
+   `last` beat `best` on both v4 and v5 (validation NLL does not track medAE).
+5. **Re-distill Network A** on the full set now that we know it was never the limiting factor.
 
 ## Output: point cloud → LiDAR / SLAM layer (planned)
 

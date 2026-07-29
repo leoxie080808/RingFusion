@@ -99,6 +99,89 @@ def test_mock_residual_is_identity():
     assert np.array_equal(closed['var'], with_mock['var'])   # extra var is zero
 
 
+def test_blend_pulls_depth_toward_tof_at_anchors():
+    """Stage 7c must hand anchor pixels (nearly) the real ToF reading, and leave
+    pixels far from any anchor to the network. Measured 2026-07-28: nearest-zone ToF
+    beats the network ~2x under 3 deg and loses ~6x past 15 deg, so the blend has to
+    actually switch sources, not just perturb them."""
+    calib = make_calib()
+    dist, valid, _ = make_tof()
+    rgb = make_rgb()
+    bb = StubBackbone()
+
+    off = pipeline.run(rgb, dist, valid, calib, bb, residual=None, blend=False)
+    on = pipeline.run(rgb, dist, valid, calib, bb, residual=None, blend=True)
+
+    # Anchor pixels: recompute the splat the pipeline used, then compare both runs
+    # against the true ToF depth there. Blending must strictly reduce that error.
+    ad, am = _anchor_splat(rgb, dist, valid, calib)
+    ys, xs = np.nonzero(am > 0)
+    e_off = np.abs(off['metric'][ys, xs] - ad[ys, xs]).mean()
+    e_on = np.abs(on['metric'][ys, xs] - ad[ys, xs]).mean()
+    assert e_on < e_off, f"blend should cut anchor error, got {e_on:.4f} vs {e_off:.4f}"
+    assert e_on < 0.02, f"at anchors the blend should be ~the ToF value, got {e_on:.4f}"
+
+    # Far from every anchor the network must survive untouched.
+    from ringfusion_perception.blend import blend_depth
+    _, wgt = blend_depth(off['metric'], ad, am, fx=calib['K'][0])
+    far = wgt == 0.0
+    if far.any():
+        assert np.allclose(on['metric'][far], off['metric'][far]), \
+            "pixels with zero blend weight must be unchanged"
+
+
+def test_far_field_clamp_bounds_output():
+    """Invariant: whatever the fit produces, run() must not return depth above
+    MAX_DEPTH_M. anc.to_metric_depth bounds inverse depth at min_disp=1e-4, so a
+    near-singular fit emits up to 10 000 m; ResidualRefiner clamps its own output, which
+    left the Network-B-OFF fallback as the only unclamped path into /cloud.
+
+    Forced by patching the metric stage rather than by a crafted scene: with a monotonic
+    synthetic disparity ramp solve_robust simply rescales `a` to match the anchors and
+    the extrapolation stays bounded, so no synthetic input reproduces the runaway. The
+    real case (closed-form MAE 18.092 m, median 0.066) came from real backbone noise --
+    see docs/demo/benchmarks/baselines.json, 'center' protocol.
+    """
+    from ringfusion_perception.residual import MAX_DEPTH_M
+    calib = make_calib()
+    dist, valid, _ = make_tof()
+    rgb = make_rgb()
+
+    orig = anc.to_metric_depth
+
+    def runaway(disp, a, b, **kw):
+        D = np.array(orig(disp, a, b), copy=True)
+        D[:10, :] = 9999.0                      # a near-singular far field
+        return D
+
+    pipeline.anc.to_metric_depth = runaway
+    try:
+        res = pipeline.run(rgb, dist, valid, calib, StubBackbone(), residual=None,
+                           blend=False, use_gpu=False)
+    finally:
+        pipeline.anc.to_metric_depth = orig
+
+    assert res['ok'], "fit should still succeed"
+    assert res['metric'].max() <= MAX_DEPTH_M + 1e-3, \
+        f"unclamped far field: {res['metric'].max():.1f} m"
+    assert np.isfinite(res['metric']).all()
+
+
+def _anchor_splat(rgb, dist, valid, calib):
+    """Reproduce the pipeline's anchor splat for assertions."""
+    h, w = rgb.shape[:2]
+    rows, cols = dist.shape
+    p = geo.project_zone_to_pixel(dist, valid, cols, rows, calib['fov_h'],
+                                  calib['fov_v'], calib['T_cam_tof'], calib['K'],
+                                  calib['dist'], model=calib['model'])
+    uv, z, ok = p['uv'], p['z_cam'], p['valid']
+    fin = np.isfinite(uv[:, 0]) & np.isfinite(uv[:, 1]) & np.isfinite(z)
+    u = np.round(np.where(fin, uv[:, 0], -1)).astype(int)
+    v = np.round(np.where(fin, uv[:, 1], -1)).astype(int)
+    inb = ok & fin & (u >= 0) & (u < w) & (v >= 0) & (v < h) & (z > 0)
+    return pipeline.splat_anchors(u, v, z, inb, (h, w))
+
+
 def test_variance_grows_with_depth():
     """The delta-method variance carries a D^4 factor, so far pixels must be more
     uncertain than near ones. StubBackbone + this scene put far pixels at the top."""

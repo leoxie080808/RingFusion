@@ -20,6 +20,9 @@ import numpy as np
 from . import geometry as geo
 from . import anchoring as anc
 from . import gpu_ops
+from . import blend as blend_mod
+from .blend import blend_depth
+from .residual import MAX_DEPTH_M
 
 
 def splat_anchors(u, v, z, inb, shape):
@@ -38,7 +41,8 @@ def splat_anchors(u, v, z, inb, shape):
 
 
 def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
-        confidence=None, min_confidence=-1, cloud_stride=4, use_gpu=None):
+        confidence=None, min_confidence=-1, cloud_stride=4, use_gpu=None,
+        blend=True, blend_near=blend_mod.NEAR_DEG, blend_far=blend_mod.FAR_DEG):
     """One perception frame.
 
     Args:
@@ -121,14 +125,38 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
                     j1 * (cov[1, 0] * j0 + cov[1, 1] * j1))
             var = (metric.astype(np.float32) ** 4) * quad      # fp32 (was fp64)
 
+    # Anchors are needed by BOTH the residual and the blend, so splat once regardless.
+    anchor_depth, anchor_mask = splat_anchors(u, v, z, inb, (h, w))
+
     # Stage 7 -- residual refinement (identity if residual is None/mock). Stays numpy;
-    # gpu_ops returns numpy, so Network B sees exactly the types it did before.
+    # gpu_ops returns numpy, so Network B sees exactly the types it did before -- in
+    # particular an UNCLAMPED D0, which is what build_residual_inputs produced during
+    # training. Clamping before this point would be a train/deploy mismatch.
     if residual is not None:
-        anchor_depth, anchor_mask = splat_anchors(u, v, z, inb, (h, w))
         metric, var_extra = residual.refine(rgb, metric, disp,
                                              anchor_depth, anchor_mask, a, b)
         if var is not None and var_extra is not None:
             var = var + var_extra                  # total = analytic + learned
+
+    # Stage 7b -- far-field clamp. anc/gpu_ops.to_metric_depth bound inverse depth at
+    # min_disp=1e-4, so a near-singular fit emits up to 10 000 m. ResidualRefiner.refine
+    # already caps its own output, which meant the Network-B-OFF fallback was the only
+    # unclamped path -- and it publishes straight into /cloud. Measured 2026-07-28 on the
+    # island protocol: clamping moves closed-form MAE 18.092 -> 0.359 m with the median
+    # unchanged at 0.066, i.e. it removes a pure far-field tail and touches nothing else.
+    # Applied before the blend so no 10 000 m value can be averaged into a good one.
+    metric = np.clip(metric, None, MAX_DEPTH_M)
+
+    # Stage 7c -- distance-weighted blend of raw ToF against the network (see blend.py).
+    # Neither source wins everywhere: nearest-zone ToF is ~2x better under 3 deg from an
+    # anchor, the network ~6x better past 15 deg. Measured on the 61-frame clean split,
+    # blending beats BOTH (interpolation medAE 0.009 vs ToF 0.010 and network 0.091;
+    # extrapolation 0.042 vs 0.108 and 0.045).
+    if blend:
+        Kf = np.asarray(K, np.float64).ravel()
+        fx = Kf[0] if Kf.size == 4 else Kf.reshape(3, 3)[0, 0]
+        metric, _ = blend_depth(metric, anchor_depth, anchor_mask, fx=float(fx),
+                                near_deg=blend_near, far_deg=blend_far)
 
     # Stage 8 -- unproject metric depth to a camera-frame point cloud
     cloud = (gpu_ops.unproject_cloud(metric, K, cloud_stride) if gpu

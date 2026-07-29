@@ -34,6 +34,7 @@ from ringfusion_msgs.msg import ToFFrame
 
 from . import geometry as geo
 from . import pipeline
+from . import blend as blend_mod
 from .backbone import MockBackbone
 from .residual import MockResidual
 from .rectify import FisheyeRectifier
@@ -71,9 +72,17 @@ class PerceptionNode(Node):
         self.declare_parameter('backbone_engine', '')
         self.declare_parameter('residual_engine', '')
         self.declare_parameter('min_confidence', -1)
+        # Stage 7c blend (see blend.py). On by default: measured 2026-07-28 it beats both
+        # sources it mixes. Exposed so it can be A/B'd live without a rebuild.
+        self.declare_parameter('blend', True)
+        self.declare_parameter('blend_near_deg', blend_mod.NEAR_DEG)
+        self.declare_parameter('blend_far_deg', blend_mod.FAR_DEG)
         raw = load_calib(self.get_parameter('calib').value)
         self.frame_id = self.get_parameter('frame_id').value
         self.min_confidence = int(self.get_parameter('min_confidence').value)
+        self.blend = bool(self.get_parameter('blend').value)
+        self.blend_near = float(self.get_parameter('blend_near_deg').value)
+        self.blend_far = float(self.get_parameter('blend_far_deg').value)
 
         # Stage 1 rectifier: fisheye raw -> rectilinear. Identity until the lens
         # is calibrated (dist all zeros), so the pipeline runs unchanged today.
@@ -144,7 +153,9 @@ class PerceptionNode(Node):
 
         res = pipeline.run(self.last_image, dist_m, valid, self.calib,
                            self.backbone, self.residual,
-                           confidence=confidence, min_confidence=self.min_confidence)
+                           confidence=confidence, min_confidence=self.min_confidence,
+                           blend=self.blend, blend_near=self.blend_near,
+                           blend_far=self.blend_far)
         if not res['ok']:
             self.get_logger().warn(
                 f"anchoring failed ({res['n_anchors']} anchors this frame)")

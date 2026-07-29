@@ -85,7 +85,8 @@ def assemble_batch_real(disp, rgb_norm, tof_dist, tof_conf, calib, rng, args):
         conf = tof_conf[i].numpy()
         info = build_real_supervision(disp_np[i], td, tv, calib,
                                       holdout_frac=args.holdout_frac, rng=rng,
-                                      confidence=conf, min_confidence=args.min_confidence)
+                                      confidence=conf, min_confidence=args.min_confidence,
+                                      holdout=args.holdout, island=args.island)
         if info is None:
             continue
         D0 = info['D0']
@@ -161,6 +162,11 @@ def main():
                          '(needs --tof and --calib; no dense GT)')
     ap.add_argument('--tof', help='real ToF .npz dir (with --real)')
     ap.add_argument('--calib', help='calibration.yaml for the real calib (with --real)')
+    # 'random' reproduces v1-v3. 'island'/'mixed' add far-field supervision -- see the
+    # long note in anchoring_bridge.build_real_supervision for why it matters.
+    ap.add_argument('--holdout', choices=['random', 'island', 'mixed'], default='random')
+    ap.add_argument('--island', type=int, default=16,
+                    help='side of the central anchor block when --holdout is island/mixed')
     ap.add_argument('--holdout-frac', type=float, default=0.25,
                     help='fraction of each frame\'s ToF zones held out as supervision (real path)')
     ap.add_argument('--student-ckpt', required=True)

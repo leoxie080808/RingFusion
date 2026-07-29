@@ -79,7 +79,7 @@ def calib_from_yaml(yaml_path, train_size=(288, 384)):
 
 def build_real_supervision(disp, tof_dist_m, tof_valid, calib, holdout_frac=0.25,
                            rng=None, confidence=None, min_confidence=-1, min_anchors=16,
-                           min_range=0.15, max_range=6.5):
+                           min_range=0.15, max_range=6.5, holdout='random', island=16):
     """Held-out-anchor supervision from ONE real (disp, ToF) sample.
 
     A sparse sensor can't be a dense GT: its zones coincide with the anchors the
@@ -129,10 +129,41 @@ def build_real_supervision(disp, tof_dist_m, tof_valid, calib, holdout_frac=0.25
     idx = np.flatnonzero(inb)
     if idx.size < 2 * min_anchors:                    # need enough for both sets
         return None
-    rng.shuffle(idx)
-    n_hold = max(1, int(round(idx.size * holdout_frac)))
-    hold_idx, anchor_idx = idx[:n_hold], idx[n_hold:]
-    if anchor_idx.size < min_anchors:
+
+    # HOW the split is drawn decides what the net is able to learn.
+    #
+    # 'random' holds out 25% of zones at random. On a 32x32 grid that leaves an anchor
+    # within ONE zone of 99.6% of the held-out zones -- a median of 1.7 cm away in world
+    # space -- so the net is only ever asked to interpolate between adjacent samples. It
+    # learns near-identity because near an anchor the closed-form fit is already right,
+    # which is exactly what v3 does (mean |B-A| 0.019 m). Measured 2026-07-28: against a
+    # fairly-clamped closed-form baseline v3 wins 48% under 'random' and 8% under
+    # 'island' -- it is a local refiner that never had to learn extrapolation.
+    #
+    # 'island' anchors on a central 16x16 block and holds out everything outside it,
+    # mirroring the deployed geometry (ToF covers 7.5% of frame, extrapolate outward).
+    # Median 8.4 deg to the nearest anchor instead of ~1.5 deg.
+    #
+    # 'mixed' alternates per sample so the net keeps the near-anchor skill it already has
+    # while gaining far-field supervision. Prefer it over bare 'island' unless you are
+    # deliberately measuring the extrapolation-only regime.
+    mode = holdout
+    if mode == 'mixed':
+        mode = 'island' if rng.random() < 0.5 else 'random'
+
+    if mode == 'island':
+        rr, cc = np.mgrid[0:rows, 0:cols]
+        isl = ((np.abs(rr - (rows - 1) / 2.0) < island / 2.0) &
+               (np.abs(cc - (cols - 1) / 2.0) < island / 2.0)).ravel()
+        anchor_idx = np.flatnonzero(inb & isl)
+        hold_idx = np.flatnonzero(inb & ~isl)
+    elif mode == 'random':
+        rng.shuffle(idx)
+        n_hold = max(1, int(round(idx.size * holdout_frac)))
+        hold_idx, anchor_idx = idx[:n_hold], idx[n_hold:]
+    else:
+        raise ValueError(f"unknown holdout {holdout!r}")
+    if anchor_idx.size < min_anchors or hold_idx.size < 1:
         return None
 
     # Anchor-only validity mask fed back through the SAME inference math.
