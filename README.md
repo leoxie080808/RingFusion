@@ -3,12 +3,16 @@
 Real-time metric depth + point clouds from **one wide-angle camera and a sparse
 multizone ToF sensor**, on an NVIDIA Jetson AGX Orin. A monocular depth network
 supplies dense *structure*; the ToF supplies absolute *scale*; a closed-form
-least-squares fit joins them with **no learned parameters**. Full design in
-[`RingFusion_technical_reference_updateP2.md`](RingFusion_technical_reference_updateP2.md).
+least-squares fit joins them with **no learned parameters**. Design notes and the full task
+tracker live in [`ros2_ws/README.md`](ros2_ws/README.md).
+
+> `RingFusion_technical_reference_updateP2.md` is referenced in places as the design doc but
+> **is not in this repository** — it is kept outside version control. Those references are
+> pointers to an external document, not broken links to a tracked file.
 
 ![RingFusion pipeline running live](docs/demo/gifs/pipeline_4panel.gif)
 
-*Live on the Orin at 13.7 Hz. Left to right: rectified camera · 32×32 ToF (the only real
+*Live on the Orin at 13.7 Hz end-to-end. Left to right: rectified camera · 32×32 ToF (the only real
 distance measurement) · fused metric depth · top-down obstacle map. Full 34 s clip and an
 **interactive 3D flythrough** of the same drive:
 [`docs/demo/network_b_v1_vs_v2.html`](docs/demo/network_b_v1_vs_v2.html) — open it in a browser,
@@ -58,17 +62,20 @@ has no learned parameters, so the system produces valid metric depth even with N
 switched off. **Network B** then applies a learned per-pixel correction plus a variance
 estimate, supervised on held-out ToF zones.
 
-## Status — 2026-07-28
+## Status — 2026-07-30
 
-**Running live end-to-end on the Orin with both real networks at 13.7 Hz.**
+**Running live end-to-end on the Orin with both real networks at 13.7 Hz** — that figure is
+the full node including ROS transport and CPU rectification; `pipeline.run()` alone is 19.2 Hz.
+Perception, not the ToF, is the current constraint
+([reconciled here](ros2_ws/README.md#throughput-reconciled)).
 
 | | value |
 |---|---|
-| `/depth`, `/depth_var`, `/cloud` | **13.7 Hz** |
+| `/depth`, `/depth_var`, `/cloud` | **13.7 Hz** *(deployed node, incl. ROS + rectification)* |
 | Depth error, extrapolating away from the ToF | **0.042 m** median (`center` protocol) |
 | Depth error, interpolating between ToF zones | **0.009 m** median (`random` protocol) |
-| Uncertainty quality, `corr(σ, \|error\|)` | **0.943** |
-| Backbone agreement with truth, ρ | **0.917** |
+| Uncertainty quality, `corr(σ, \|error\|)` | **0.943** *(at ToF anchor pixels only — see limits)* |
+| Backbone agreement with truth, ρ | **0.917** *(deployed config; the projection sweep's best row was 0.914)* |
 
 *Configuration: `student_v3` + `residual_v4_last` + Stage 7c blend. Scored on 61 frames no
 version trained on.*
@@ -105,7 +112,11 @@ never the bottleneck.**
 Every method below sees the same anchors and is scored at the same held-out ToF zones, over
 all 1,234 logged pairs. Two protocols, because the choice changes the winner:
 
-| | `random` *(interpolate, anchors ~1.7 cm away)* | `center` *(extrapolate outward)* |
+**MAE**, all 1,234 frames (the `v4` + blend figures in the status block above are **medAE** on
+the 61-frame held-out split — different statistic, different sample, not comparable to this
+table):
+
+| MAE | `random` *(interpolate, anchors ~1.7 cm away)* | `center` *(extrapolate outward)* |
 |---|---|---|
 | nearest-zone lookup *(0 params, no camera)* | **0.056 m** | 0.232 m |
 | bilinear ToF upsample *(0 params)* | 0.058 m | *cannot extrapolate* |
@@ -157,12 +168,14 @@ own ToF. Against published results on it:
 |---|---|---|---|---|
 | CFPNet | — | 0.883 | 0.103 | **0.431** |
 | PENet | — | 0.889 | 0.093 | **0.447** |
-| **ours — zero learned fusion** | 335 M backbone | **0.908** | **0.086** | 0.984 |
-| DEPTHOR-Small | 30 M | 0.921 | 0.080 | 0.379 |
+| **ours — zero learned fusion** | 24.8 M backbone | **0.908** | **0.091** | 1.031 |
+| **ours — zero learned fusion** | 335 M backbone | **0.913** | **0.083** | 0.953 |
+| DEPTHOR-Small | 24.8 M + 6 M | 0.923 | 0.079 | 0.371 |
 | *ours — as deployed on the Jetson* | *4.1 M* | *0.716* | *0.185* | *1.174* |
 
-**Competitive with learned depth-completion on typical-pixel accuracy, using no learned fusion
-at all, on a benchmark we never trained on** — and 2.2× worse on RMSE, which is an unresolved
+Run on **DEPTHOR's own ViT-S backbone**, so the only difference is 6 M of learned completion
+versus none. **Competitive with learned depth-completion on typical-pixel accuracy, using no
+learned fusion at all, on a benchmark neither network ever trained on** — and 2.2× worse on RMSE, which is an unresolved
 far-field tail, not noise. The two rows are different configurations and the gap between them
 is the cost of distilling the backbone down for real-time use; see Known limits.
 
@@ -190,8 +203,9 @@ is the cost of distilling the backbone down for real-time use; see Known limits.
   caps the deepest expressible depth. On our sensor that ceiling is a median **1.43 m while
   the ToF reads to 4.16 m** — 14.4 % of anchors are not expressible, and anchors past 1.5 m
   are 16 % of data but **69 % of error**. A pooled MAE hid it because 51 % of anchors sit
-  under 0.5 m. **σ did not flag it either** — 150× too small at range and *decreasing*, since
-  `Var[D] ∝ D⁴` inherits the same cap. Both failures, one mechanism.
+  under 0.5 m. The **analytic** σ does not flag it either — 150× too small at range and *decreasing*, since
+  `Var[D] ∝ D⁴` inherits the same cap. But the analytic term is only ~0.1 % of deployed
+  `/depth_var` (the learned head is ~99.9 %), so **deployed far-field σ is still untested**.
   A clamp and a σ-filter were tested and **falsified**; removing the ceiling entirely
   (scale-only) **triples RMSE**, because `b` also regularises disparity noise at range. A
   small ridge on `b` buys ~8 % Rel at no near-field cost. σ now floors itself outside the ROI

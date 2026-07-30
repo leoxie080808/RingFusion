@@ -12,8 +12,13 @@ Recommended launch:
 ```bash
 ros2 launch ringfusion_bringup single_module.launch.py port:=/dev/ttyACM1 \
     backbone_engine:=$HOME/RingFusion/student_v3_fp16.engine \
-    residual_engine:=$HOME/RingFusion/residual_v3_last_fp16.engine
+    residual_engine:=$HOME/RingFusion/residual_v4_last_fp16.engine
 ```
+
+`residual_v4_last` is the recommended residual — see
+[Network B v4](#network-b-v4--the-training-protocol-was-the-limitation). Stage 7c blend is on
+by default but **not yet affordable** at full resolution; pass `blend:=false roi_enable:=false`
+until [the timing work](#-stage-7c4b7d-are-not-yet-affordable) lands.
 
 Two things changed on 2026-07-28 and they dominate everything measured before that date.
 
@@ -92,7 +97,7 @@ Both directions are failures.
 
 Measured 2026-07-28 over all 1,234 logged pairs with
 [`tools/diagnostics/baselines.py`](../tools/diagnostics/baselines.py); raw numbers in
-[`docs/demo/baselines.json`](../docs/demo/baselines.json). Every method sees the **same
+[`docs/demo/benchmarks/baselines.json`](../docs/demo/benchmarks/baselines.json). Every method sees the **same
 anchors** and is scored at the **same held-out zones**.
 
 Two hold-out protocols, because the choice dominates the conclusion:
@@ -378,8 +383,54 @@ gap they left open. Two caveats that must travel with it:
 - **Their 128 ms includes h5 dataloading** (it is tqdm over the dataloader), so it is not a
   pure network-forward figure.
 - **Both variants share the same DAv2 ViT-S backbone (24.8 M)**; only the completion head
-  differs (6 M vs 12 M). So a compute-fair comparison runs our analytic path on *the same*
-  ViT-S weights — that run is in progress.
+  differs (6 M vs 12 M).
+
+### Compute-fair comparison: our analytic path on DEPTHOR's own backbone
+
+Same DAv2 ViT-S weights DEPTHOR uses, so the only difference is 6 M of learned completion
+versus **zero learned fusion**. ZJU-L5 test, all valid GT pixels:
+
+| method | backbone | learned fusion | Rel ↓ | RMSE ↓ | δ₁ ↑ |
+|---|---|---|---|---|---|
+| CFPNet | — | yes | 0.103 | **0.431** | 0.883 |
+| PENet\* | — | yes | 0.093 | **0.447** | 0.889 |
+| ours, affine | ViT-S 24.8 M | **none** | 0.094 | 1.056 | 0.902 |
+| **ours, + `b_prior` 0.003** | **ViT-S 24.8 M** | **none** | **0.091** | 1.031 | **0.908** |
+| ours, affine | ViT-L 335 M | none | 0.086 | 0.984 | 0.908 |
+| ours, + `b_prior` 0.003 | ViT-L 335 M | none | **0.083** | 0.953 | **0.913** |
+| DEPTHOR-Small | ViT-S 24.8 M | 6 M | 0.079 | **0.371** | 0.923 |
+| DEPTHOR-Large | ViT-S 24.8 M | 12 M | 0.075 | **0.350** | 0.933 |
+
+**Dropping 335 M → 24.8 M costs almost nothing** (Rel 0.086 → 0.091, δ₁ unchanged at 0.908,
+ρ 0.867 → 0.873). So the earlier "competitive" row was not being carried by the large
+backbone, and the compute-fair version still beats CFPNet on both metrics and matches PENet on
+Rel while beating it on δ₁ — with no learned fusion at all.
+
+**`b_prior = 0.003`, chosen on the train split, generalises to test** on both backbones
+(Rel −3 %, RMSE −2 %, δ₁ +0.005, bias toward zero). Small, consistent, free — and *not* yet
+adopted as a deployed default, see the ceiling section.
+
+**What DEPTHOR's completion head buys**: Rel −13 %, δ₁ +0.015, and **RMSE 2.8× better**. The
+accuracy gap is modest; the **tail** gap is the real one, consistent with every other
+measurement here.
+
+### Speed, on the same hardware at the same resolution
+
+Network-only, batch 1, 480×640, CUDA-synced, nothing else on the GPU:
+
+| | latency | Hz |
+|---|---|---|
+| DEPTHOR-Small | 79.4 ms | 12.6 |
+| DEPTHOR-Large | 183.8 ms | 5.4 |
+| **ours, `pipeline.run()` full** | **21.3 ms** | **47.0** |
+
+**3.7× faster than DEPTHOR-Small — and that is our *entire* pipeline against their network
+alone.** At our deployed 1640×1232 (6.5× the pixels) `pipeline.run()` is 52.2 ms / 19.2 Hz.
+
+> Two integrity notes. Their `evaluate.py` tqdm rate (7.84 it/s = 128 ms) **includes h5
+> dataloading** — use the network-only figures for model-vs-model. And a background GPU job
+> silently inflated an earlier DEPTHOR-Small measurement to 166 ms, 2× the clean 79.4 ms;
+> network-only cannot exceed end-to-end, which is what exposed it. Check the GPU is idle.
 
 ## The far-field ceiling — mechanism, and what does and does not fix it
 
@@ -397,12 +448,25 @@ ground truth needed, the ceiling falls out of the fit**:
 | | ours | ZJU-L5 |
 |---|---|---|
 | ceiling `1/b`, median | **1.43 m** | 2.04 m |
-| furthest ToF anchor, median | 4.16 m | 1.59 m |
+| furthest ToF anchor, **median per frame** | 4.16 m | 1.59 m |
 | ratio ceiling / anchor_max | **0.40×** | 1.28× |
 | anchors above their frame's ceiling | **14.4 %** | — |
 
 **Our ceiling sits below the ToF's own furthest reading**, so the pipeline cannot express the
 depth of anchors it is being fitted to.
+
+> Three different ToF-range figures appear in this file and they are **not** interchangeable:
+> **4.16 m** is the median *per-frame* furthest anchor over 300 logs (`ceiling_diag.py`);
+> **5.74 m** is the max in one particular moving run; **6.11 m** is the farthest return in the
+> whole 1,234-log set. The ceiling-vs-range gap is therefore run-dependent and the 0.40× ratio
+> is a median, **not** a worst case.
+
+**A second, independent far-field constraint.** Network B's supervision carries a target range
+gate, raised 5.0 → 6.5 m (task 7b), so **the residual has never been trained against a target
+beyond 6.5 m** regardless of what the fit can express. That is separate from the `1/b` ceiling
+and compounds with it: even a lifted ceiling leaves Network B extrapolating past 6.5 m with no
+supervision it has ever seen. Widening the gate further is bounded by the sensor — only 0.23 %
+of zones sit beyond 5 m and the farthest return in the set is 6.11 m.
 
 ### What it costs, on our own sensor
 
@@ -426,10 +490,23 @@ by depth.
 > farthest quartile") and `roi.py` ("the far wall ... is not what the depth map is for").
 > What was *not* documented is everything below.
 
-### σ does not flag it — it is confident exactly where it is wrong
+### The ANALYTIC σ does not flag it — it is confident exactly where it is wrong
 
-[`sigma_zjul5.py`](../tools/diagnostics/sigma_zjul5.py), analytic variance only (Network B's
-learned head is out of domain on 8×8), against ZJU-L5's dense independent GT:
+> **⚠ Scope, and it is narrow.** [`sigma_zjul5.py`](../tools/diagnostics/sigma_zjul5.py)
+> measures the **analytic** variance alone, because Network B's learned head is out of domain
+> on an 8×8 grid (its depth scores Rel 1.819 there, so its σ would be meaningless).
+> But [the variance decomposition](#variance-decomposition) shows the analytic term is only
+> **~0.1 %** of deployed `/depth_var` — the learned head is **~99.9 %**. So the numbers below
+> describe the analytic term in the far field; they do **not** establish that deployed σ
+> behaves this way. **Deployed far-field σ remains untested**, and testing it needs either an
+> in-domain Network B or far-field ground truth on our own sensor.
+>
+> Likewise `corr(σ,|error|) = 0.943` from `sigma_cal.py` is the *deployed* (analytic+learned)
+> σ at *anchor pixels only* — near-range, in-cone. The two figures differ in **both** which
+> variance term and which regime, so they are not comparable. An earlier version of this
+> section presented them as if they were.
+
+Analytic variance against ZJU-L5's dense independent GT:
 
 | true depth | median \|error\| | median σ | σ / \|error\| | share of RMSE² |
 |---|---|---|---|---|
@@ -438,21 +515,18 @@ learned head is out of domain on 8×8), against ZJU-L5's dense independent GT:
 | 6–10 m | 5.517 m | 0.259 m | 0.05 | 28.6 % |
 | **10–20 m** | **11.845 m** | **0.079 m** | **0.01** | **50.1 %** |
 
-σ is **150× too small** at range and *decreases* past 4–6 m, because
+Analytic σ is **150× too small** at range and *decreases* past 4–6 m, because
 `Var[D] = D⁴ · jᵀ Cov j` and `D` is itself capped by the same `1/b` ceiling. **One mechanism,
 two failures.**
 
-| | measured | ideal |
+| analytic σ, ZJU-L5 far field | measured | ideal |
 |---|---|---|
-| `corr(σ, \|error\|)` | **0.196** | — *(0.943 claimed on our sensor)* |
+| `corr(σ, \|error\|)` | **0.196** | 1.0 |
 | coverage \|e\| ≤ 1σ | **0.229** | 0.683 |
 | coverage \|e\| ≤ 2σ | **0.429** | 0.955 |
 
-The `corr = 0.943` figure is not wrong — `sigma_cal.py` measures σ **only at ToF anchor
-pixels**, all in-cone and near-range, a regime that structurally excludes this failure.
-
-**σ is also useless as a filter**: dropping the top 1 % of pixels by σ removes only **2.0 %**
-of squared error; dropping 10 % removes 38.9 %.
+**Analytic σ is also useless as a filter here**: dropping the top 1 % of pixels by σ removes
+only **2.0 %** of squared error; dropping 10 % removes 38.9 %.
 
 ### Three candidate fixes, tested. Two falsified.
 
@@ -680,7 +754,8 @@ View the output point cloud in `rviz2`: add a `PointCloud2` display on `/cloud` 
 ## Perception
 
 `perception_node` caches the latest camera frame + ToF frame and runs the pure-numpy
-pipeline (`pipeline.run`) whenever a ToF frame arrives (~15 Hz; ToF-limited — see
+pipeline (`pipeline.run`) whenever a ToF frame arrives (~15 Hz; the limit is perception,
+not the ToF, since 2026-07-28 — see [Throughput, reconciled](#throughput-reconciled) and
 Performance notes). Heavy per-pixel math is GPU-offloaded via `gpu_ops.py`. It publishes:
 
 | Topic | Type | Contents |
@@ -934,20 +1009,68 @@ quality loss; drop to `30`-`40` if lag persists. Local viewing avoids this entir
 
 ### Performance notes (Jetson AGX Orin)
 
+> **⚠ Superseded on the question of what the bottleneck is.** The 2026-07-23 table below
+> reads the ToF as the limit and perception as having ~2× headroom. Re-profiled 2026-07-28/30
+> that is **no longer true** — see [Throughput, reconciled](#throughput-reconciled) directly
+> after it. The per-topic *rates* still stand; the *attribution* does not.
+
 **Measured live** (2026-07-23), full pipeline, MAXN + `jetson_clocks`, backbone on TensorRT
 FP16, **binary ToF firmware**:
 
 | Topic | Component | Rate | Limited by |
 |-------|-----------|------|------------|
 | `/image` | camera | **~28.5 Hz** | IMX219 sensor mode (30 fps cap on 1640×1232) |
-| `/tof` | ToF driver | **~16 Hz** ← pipeline bottleneck | ToF sensor + USB delivery |
-| `/depth` | perception (Network A + anchoring) | **~14.8 Hz** | runs at ToF rate (backbone ~27 Hz capable) |
-| `/cloud` | perception unprojection | **~15.6 Hz** | runs at ToF rate |
+| `/tof` | ToF driver | **~16 Hz** *(subframes; see below)* | ToF sensor + USB delivery |
+| `/depth` | perception (Network A + anchoring) | **~14.8 Hz** | *attribution superseded* |
+| `/cloud` | perception unprojection | **~15.6 Hz** | *attribution superseded* |
 
 **Fused pipeline: ~15 Hz** — up from ~8 Hz, roughly doubled by the binary ToF firmware +
-persistent per-subframe assembler (see ToF note below). The ToF is still the single
-bottleneck; camera (~28.5) and perception (~27 capable) both have ~2× headroom, so lifting
-the ToF further raises the whole pipeline.
+persistent per-subframe assembler (see ToF note below).
+
+### Throughput, reconciled
+
+Four different rate figures appear in this file and they had been used interchangeably. They
+measure different scopes, and the 2026-07-23 conclusion that "the ToF is the single
+bottleneck ... perception has ~2× headroom" **does not survive re-profiling**:
+
+| figure | what it actually measures | source |
+|---|---|---|
+| **~27 Hz** "backbone capable" | backbone **inference alone**, no anchoring, no residual, no rectification, no ROS | 2026-07-23 |
+| **19.2 Hz** (52.2 ms) | `pipeline.run()` offline: backbone + residual + anchoring + variance + cloud, at 1640×1232, **no ROS, no rectification, blend/ROI off** | `time_pipeline.py`, 2026-07-30 |
+| **13.7 Hz** (73 ms) | the deployed `perception` node end-to-end, **including** ROS transport and CPU rectification | 2026-07-28 |
+| **~16 Hz** `/tof` | ToF **subframe** arrivals. Complete 32×32 maps assemble at **8.3 Hz** (60.3 ms median inter-arrival, CV 0.142 = sensor-clocked, integration-bound) | `profile_stages.py` |
+
+So: **perception at 73 ms is the constraint, not the ToF at 60.3 ms.** The "~2× headroom"
+claim compared the backbone in isolation against the full ToF path — different scopes on
+either side of the comparison. Stage profile at 13.7 Hz: residual ~40 %, backbone ~20 %,
+rectify ~15 % (a CPU `cv2.remap` over 2 MP that should be GPU-offloaded).
+
+Consequence for the roadmap: **raising the ToF rate buys nothing until perception is faster**,
+and switching ToF I²C→SPI is bounded to ~+31 % anyway because integration time is ~77 % of the
+ToF frame period.
+
+### ⚠ Stage 7c/4b/7d are NOT yet affordable
+
+Measured with [`time_pipeline.py`](../tools/diagnostics/time_pipeline.py) on 2026-07-30 —
+`pipeline.run()`, 1640×1232, backbone + `residual_v4_last`:
+
+| blend | ROI | median | Hz |
+|---|---|---|---|
+| off | off | 52.2 ms | **19.2** |
+| **on** | off | 108.9 ms | 9.2 |
+| **on** | **on** | **379.9 ms** | **2.6** |
+
+Enabling both as written costs **7.4×** — unusable. Causes are implementation, not concept:
+the blend runs `distanceTransformWithLabels` over the full 2 MP on the CPU (+57 ms), and
+`roi.pixel_roi_mask` back-projects every one of 2 M pixels into float64 (+271 ms).
+
+`pixel_roi_mask` has a `stride` argument for exactly this, but it was **broken** — it wrote
+`out[::stride, ::stride] = m` and left the rest `False`, so the inside-fraction collapsed
+0.683 → 0.011 at stride 8 and would have marked nearly the whole frame out-of-ROI. Fixed to
+upsample (`np.repeat`). It was dead code until wired in, so the bug had never been exercised.
+**Both stages still need optimising and re-timing before any live run.**
+
+Found offline, on logged frames, which is the point of having the harness.
 
 > **With Network B enabled** (`residual_engine:=…`), `/depth` used to drop to **~7 Hz** —
 > B's `refine()` upsampled/applied its 3 fields over 2 MP **on the CPU**. Now GPU-offloaded;
@@ -997,7 +1120,10 @@ panned left when the robot turned right*.
 projection: student ρ 0.737, Depth Anything V2 teacher ρ 0.750, corr(student, teacher) 0.989.
 That read as "monocular depth is intrinsically hard here; the student is already at the
 teacher's ceiling". Wrong — *both* were scored against misprojected anchors. With the
-projection corrected the student alone reaches ρ 0.917. The backbone was never the bottleneck.
+projection corrected, the sweep's winning row reaches ρ 0.914 (table above) and the
+**deployed** configuration measures ρ 0.917 (`moving_ab.py`, separate run). Those are two
+different measurements — the sweep's best candidate versus what actually shipped — and an
+earlier version of this file conflated them. The backbone was never the bottleneck.
 </details>
 
 ### Network B v3 — current (2026-07-28)
@@ -1009,15 +1135,20 @@ projection corrected the student alone reaches ρ 0.917. The backbone was never 
 one backbone pass, so every difference is the residual. Motion verified, not assumed:
 consecutive camera frames differ by 10.75 grey levels against 1.76 for a stationary capture.
 
+> **In-sample.** `moving_ab.py` fits on the anchor set and scores at that same set, so the
+> anchor MAE row below is not a hold-out. A nearest-neighbour lookup scores 0.000 m under it.
+> Held-out equivalents are in [Benchmarks](#benchmarks-vs-trivial-baselines). The comparison
+> *between* columns is still valid — all three share byte-identical frames and anchors.
+
 | Metric | closed-form | v2 | **v3** | want |
 |---|---|---|---|---|
-| **anchor MAE** (vs real ToF) | 0.294 m | 0.247 m | **0.199 m** | lower |
-| max depth, mean / worst | 1.52 / 2.47 m | 1.81 / 3.23 m | 1.91 / 3.77 m | ≤ ToF's 5.74 m |
+| **anchor MAE** (vs real ToF, *in-sample*) | 0.294 m | 0.247 m | **0.199 m** | lower |
+| max depth, mean / worst | 1.52 / 2.47 m | 1.81 / 3.23 m | 1.91 / 3.77 m | ≤ this run's ToF max 5.74 m |
 | frames at the 20 m clamp | 0 | 0 | **0** | zero |
 | pixels > 5 m | 0 % | 0 % | **0 %** | zero |
 | frame-to-frame jump | 0.0271 m | 0.0283 m | 0.0290 m | near baseline |
 
-v3 is **32 % more accurate than the closed-form path** and 19 % better than v2 — the first
+v3 was **32 % more accurate than the closed-form path** *in-sample* and 19 % better than v2 — the first
 version to beat doing nothing at all. It costs ~7 % extra jitter over the raw backbone.
 
 **Uncertainty — `sigma_cal.py`, 8 frames, ~940 anchors each:**
@@ -1079,7 +1210,8 @@ recorded clip — *the ToF panel pans left when the robot turns right.*
 projection: student ρ 0.737, Depth Anything V2 teacher ρ 0.750, corr(student, teacher) 0.989.
 That looked like "monocular depth is intrinsically hard here, the student is at the teacher's
 ceiling". Wrong — *both* models were being scored against misprojected anchors. With the
-projection corrected the student alone reaches ρ 0.914. The backbone was never the bottleneck.
+projection corrected the sweep's winning row reaches ρ 0.914 — the deployed configuration
+separately measures ρ 0.917. The backbone was never the bottleneck.
 
 **The fix** (not yet applied):
 
@@ -1168,7 +1300,7 @@ rate for the whole capture; no mocks in the loop.
 | Topic | Rate | vs 2026-07-23 |
 |---|---|---|
 | `/image` | ~22 Hz | down from 28.5 — **cause unknown**; a later dark-room run hit 28.0 Hz, so it is *not* auto-exposure |
-| `/tof` | ~16 Hz | unchanged; still the bottleneck |
+| `/tof` | ~16 Hz | unchanged *(attribution superseded — see [Throughput, reconciled](#throughput-reconciled))* |
 | `/depth` (**A + B**) | **~13.4 Hz** | **up from ~7 Hz** — B's apply moved to `gpu_ops` |
 | `/cloud` | ~14.4 Hz | unchanged |
 
@@ -1199,6 +1331,8 @@ Mean \|B−A\| **0.264 m**, max \|B−A\| **14.4 m**. B/A ratio: median 1.27×, 
    correction, a modest positive residual compounds multiplicatively where D₀ is already
    large. Worth a range prior or a scene-aware clamp.
 3. **Banding is two separate effects.** See the controlled comparison below.
+
+#### Variance decomposition
 
 **Uncertainty is uninformative, and it is entirely Network B's.** `/depth_var` is
 `analytic + learned` (`pipeline.py` Stage 6 + 7). Decomposed on the captured frames:

@@ -45,19 +45,28 @@ def main():
     ap.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
     ap.add_argument('--no-pretrained', action='store_true')
     ap.add_argument('--resume', default='')
+    # Newline-separated stems to hold OUT of distillation, so benchmarks can be scored on
+    # frames Network A never trained on. See DistillDataset.exclude_stems.
+    ap.add_argument('--exclude-stems-file', default='')
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
     device = args.device
     amp = device.startswith('cuda')
 
-    full = DistillDataset(args.images, args.cache, size=tuple(args.size), augment=True)
+    _ex = None
+    if args.exclude_stems_file:
+        _ex = [l.strip() for l in open(args.exclude_stems_file) if l.strip()]
+        print(f'holding {len(_ex)} stems out of distillation')
+    full = DistillDataset(args.images, args.cache, size=tuple(args.size), augment=True,
+                          exclude_stems=_ex)
     n_val = max(1, int(len(full) * args.val_frac))
     n_train = len(full) - n_val
     train_set, val_set = random_split(full, [n_train, n_val],
                                       generator=torch.Generator().manual_seed(0))
     # val split should not be augmented; share the underlying arrays but disable aug
-    val_view = DistillDataset(args.images, args.cache, size=tuple(args.size), augment=False)
+    val_view = DistillDataset(args.images, args.cache, size=tuple(args.size), augment=False,
+                              exclude_stems=_ex)
     val_set.dataset = val_view
 
     train_loader = DataLoader(train_set, batch_size=args.batch, shuffle=True,

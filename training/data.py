@@ -56,8 +56,19 @@ class DistillDataset(Dataset):
     """Pairs each image with its cached teacher disparity (mirror path + .npy)."""
 
     def __init__(self, image_dir, cache_dir, size=(288, 384), augment=True,
-                 crop_scale=(0.6, 1.0), seed=0):
+                 crop_scale=(0.6, 1.0), seed=0, exclude_stems=None):
+        # exclude_stems holds out frames from DISTILLATION so the benchmarks have a set
+        # Network A never saw. Needed because list_images() globs '**' recursively, so
+        # distilling over data/rect swept up data/rect/paired -- 1228 frames byte-identical
+        # to ros2_ws/data/real/rgb, i.e. every frame the benchmarks score on. Rankings were
+        # unaffected (all methods share the backbone) and the inflation is bounded (the
+        # student scores BELOW its teacher on those frames, so it has not memorised them),
+        # but absolute numbers were optimistic by an unquantified amount.
         self.images = list_images(image_dir)
+        if exclude_stems:
+            ex = set(exclude_stems)
+            self.images = [p for p in self.images
+                           if os.path.splitext(os.path.basename(p))[0] not in ex]
         if not self.images:
             raise FileNotFoundError(f"no images under {image_dir}")
         self.image_dir = image_dir

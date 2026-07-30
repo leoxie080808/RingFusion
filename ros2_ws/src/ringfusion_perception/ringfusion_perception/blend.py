@@ -91,7 +91,7 @@ def apply_scene_cap(D, anchor_depth, anchor_mask, k=SCENE_CAP_K,
 
 
 def blend_depth(D_net, anchor_depth, anchor_mask, fx,
-                near_deg=NEAR_DEG, far_deg=FAR_DEG):
+                near_deg=NEAR_DEG, far_deg=FAR_DEG, scale=BLEND_SCALE):
     """Blend nearest-anchor ToF depth into D_net near the anchors.
 
     D_net         (H,W) float32 metric depth from the pipeline (closed-form or +residual)

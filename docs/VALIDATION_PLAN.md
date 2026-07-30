@@ -1,6 +1,18 @@
 # Validation plan — breaking the closed loop
 
-**Status: not started. Created 2026-07-28.**
+**Status: workstreams 1–4 EXECUTED 2026-07-28/30. Created 2026-07-28.**
+
+> This document is the plan as written *before* execution, kept for the reasoning. Several of
+> its premises were overturned by carrying it out, and it should be read against the results
+> rather than as current fact:
+> * `0.199 m` is used throughout as the reference number. It was later found to be
+>   **in-sample** — the on-robot harnesses fit and score on the same ToF zones.
+> * Baselines, ZJU-L5 and DEPTHOR are **done**; the tape-measure session is **not**.
+> * The checkerboard proposal in workstream 2 was **rejected** (too small at range).
+> * `B5` here refers to `residual_v3_last`; the recommended engine is now `residual_v4_last`.
+>
+> Current results live in
+> [`ros2_ws/README.md`](../ros2_ws/README.md#benchmarks-vs-trivial-baselines).
 
 Every depth number RingFusion currently reports is **scored against held-out ToF zones —
 the same sensor the pipeline anchors to**. That is a closed loop. It cannot detect a

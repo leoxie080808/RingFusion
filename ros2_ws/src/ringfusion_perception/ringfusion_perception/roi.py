@@ -201,6 +201,9 @@ def pixel_roi_mask(depth, K, plane, reach_max=REACH_MAX_M, height_max=HEIGHT_MAX
     m &= z > 0
     if stride == 1:
         return m
-    out = np.zeros((h, w), bool)
-    out[::stride, ::stride] = m
-    return out
+    # UPSAMPLE, do not scatter. The previous version wrote `out[::stride, ::stride] = m`
+    # and left every other pixel False, so the inside-fraction collapsed with stride
+    # (measured 0.683 at stride 1 -> 0.011 at stride 8). Any caller using stride for speed
+    # would have marked almost the whole frame as outside the ROI. The mask is a smooth
+    # geometric region, so nearest-neighbour upsampling is the right reconstruction.
+    return np.repeat(np.repeat(m, stride, axis=0), stride, axis=1)[:h, :w]
