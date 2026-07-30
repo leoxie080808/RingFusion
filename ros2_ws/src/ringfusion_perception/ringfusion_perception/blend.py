@@ -28,6 +28,67 @@ import numpy as np
 NEAR_DEG = 2.0     # fully trust ToF at or below this angular distance from an anchor
 FAR_DEG = 5.0      # fully trust the network at or above this
 
+# Scene-bounded far-field cap. See scene_cap() below.
+SCENE_CAP_K = 2.0
+SCENE_CAP_FLOOR_M = 1.0
+
+
+def scene_cap(anchor_depth, anchor_mask, k=SCENE_CAP_K, floor_m=SCENE_CAP_FLOOR_M,
+              hard_max=None):
+    """Per-frame far-field ceiling, derived from what the ToF actually measured.
+
+    D = 1/(a*disp + b), so wherever (a*disp + b) approaches zero the depth runs away. The
+    fixed MAX_DEPTH_M=20 ceiling bounds that but is unrelated to the scene: on a room whose
+    ToF sees 0.33-3.24 m, a pixel emitting 18 m is the fit extrapolating into a low-disparity
+    region, not a surface 18 m away. RMSE squares errors, so a handful of those dominate it --
+    on ZJU-L5 we match published methods on delta1/Rel and sit 2.2-2.8x worse on RMSE, and the
+    gap is concentrated OUTSIDE the ToF footprint (1.398 vs 0.418 inside).
+
+    This returns k * (furthest valid anchor this frame), floored so a frame that only sees
+    close surfaces cannot clamp everything to near-zero.
+
+    Uses ONLY sensor input -- never ground truth -- so applying it is not benchmark tuning.
+    But `k` IS a hyperparameter: choose it on our own logs or a train split, never on the
+    test set being reported.
+
+    HONEST TRADE, because this is not free. Two kinds of pixel get capped:
+      * fit blew up, truth is near   -> error shrinks a lot          (the win)
+      * genuinely far, e.g. a wall seen through a doorway at 15 m
+        while the ToF only reaches 3 m -> now wrongly pulled in      (the cost)
+    So it swaps UNBOUNDED errors for BOUNDED ones; it does not make anything more accurate.
+    Fine for navigation, where "further than the cap" is operationally just "far", and a real
+    limitation for general-purpose depth. Callers should mark capped pixels (see the returned
+    mask in apply_scene_cap) rather than pass them off as measurements.
+
+    Returns None if there are no usable anchors, meaning "no opinion -- leave depth alone".
+    """
+    m = np.asarray(anchor_mask) > 0
+    if not m.any():
+        return None
+    d = np.asarray(anchor_depth, np.float32)[m]
+    d = d[np.isfinite(d) & (d > 0)]
+    if d.size == 0:
+        return None
+    cap = max(float(k) * float(d.max()), float(floor_m))
+    if hard_max is not None:
+        cap = min(cap, float(hard_max))
+    return cap
+
+
+def apply_scene_cap(D, anchor_depth, anchor_mask, k=SCENE_CAP_K,
+                    floor_m=SCENE_CAP_FLOOR_M, hard_max=None):
+    """-> (D_capped, capped_mask, cap). capped_mask marks pixels whose value is now a LOWER
+    BOUND, not an estimate; feed it to the variance channel so consumers can tell the
+    difference. cap is None when no anchors were usable and D is returned unchanged."""
+    cap = scene_cap(anchor_depth, anchor_mask, k, floor_m, hard_max)
+    D = np.asarray(D, np.float32)
+    if cap is None:
+        return D, np.zeros(D.shape, bool), None
+    capped = D > cap
+    if not capped.any():
+        return D, capped, cap
+    return np.where(capped, np.float32(cap), D).astype(np.float32), capped, cap
+
 
 def blend_depth(D_net, anchor_depth, anchor_mask, fx,
                 near_deg=NEAR_DEG, far_deg=FAR_DEG):

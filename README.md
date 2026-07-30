@@ -147,13 +147,56 @@ Also fixed: the closed-form path was **missing the 20 m clamp** the residual pat
 so the Network-B-off fallback could publish 10,000 m into `/cloud` — worth 18.092 m →
 0.359 m. Full detail: [Benchmarks](ros2_ws/README.md#benchmarks-vs-trivial-baselines).
 
+### On a public benchmark, with independent ground truth
+
+[ZJU-L5](ros2_ws/README.md#zju-l5--the-first-open-loop-evaluation-and-what-it-exposed) ships
+dense RealSense ground truth, so it is the one evaluation here that is not scored against our
+own ToF. Against published results on it:
+
+| method | params | δ₁ ↑ | Rel ↓ | RMSE ↓ |
+|---|---|---|---|---|
+| CFPNet | — | 0.883 | 0.103 | **0.431** |
+| PENet | — | 0.889 | 0.093 | **0.447** |
+| **ours — zero learned fusion** | 335 M backbone | **0.908** | **0.086** | 0.984 |
+| DEPTHOR-Small | 30 M | 0.921 | 0.080 | 0.379 |
+| *ours — as deployed on the Jetson* | *4.1 M* | *0.716* | *0.185* | *1.174* |
+
+**Competitive with learned depth-completion on typical-pixel accuracy, using no learned fusion
+at all, on a benchmark we never trained on** — and 2.2× worse on RMSE, which is an unresolved
+far-field tail, not noise. The two rows are different configurations and the gap between them
+is the cost of distilling the backbone down for real-time use; see Known limits.
+
 ### Known limits
 
 - **ToF covers 7.5 % of the frame.** The other 92.5 % is monocular extrapolation carrying the
   affine fit. A geometry limit, not a bug, but it bounds what can be trusted.
-- **Every number here is scored against the ToF we anchor to** — a closed loop. It cannot
-  detect a ToF bias and says nothing about the 92.5 % of frame the ToF never sees.
-  Independent tape ground truth is [planned](docs/VALIDATION_PLAN.md), not yet collected.
+- **Every number in the tables above is scored against the ToF we anchor to** — a closed
+  loop. It cannot detect a ToF bias and says nothing about the 92.5 % of frame the ToF never
+  sees. Independent tape ground truth is [planned](docs/VALIDATION_PLAN.md), not yet
+  collected. The one open-loop result we do have is on
+  [ZJU-L5](ros2_ws/README.md#zju-l5--the-first-open-loop-evaluation-and-what-it-exposed).
+- **Network A does not transfer to another camera.** On ZJU-L5, `student_v3` scores
+  ρ 0.417 against 0.917 on our own sensor, and the pipeline then loses to every trivial
+  baseline. It was distilled on ~2,000 of our own fisheye frames, so it learned to be its
+  teacher *on one lens*. The analytic fit transfers; the learned backbone does not. Scoped
+  rather than fixed — the robot has one camera — but it bounds what can be claimed.
+- **Network A trained on the entire benchmark set.** `training/data.py` globs recursively, so
+  distillation swept up the 1,228 paired-log frames — byte-identical to every frame the
+  benchmarks score on. Rankings are unaffected (all methods share the backbone) and the
+  inflation is bounded (the student scores *below* its teacher on those very frames, so it has
+  not memorised them), but absolute numbers are optimistic by an unquantified amount. Fix is a
+  held-out re-distill.
+- **A far-field ceiling, now diagnosed.** `D = 1/(a·disp + b)` asymptotes to `1/b`, so `b`
+  caps the deepest expressible depth. On our sensor that ceiling is a median **1.43 m while
+  the ToF reads to 4.16 m** — 14.4 % of anchors are not expressible, and anchors past 1.5 m
+  are 16 % of data but **69 % of error**. A pooled MAE hid it because 51 % of anchors sit
+  under 0.5 m. **σ did not flag it either** — 150× too small at range and *decreasing*, since
+  `Var[D] ∝ D⁴` inherits the same cap. Both failures, one mechanism.
+  A clamp and a σ-filter were tested and **falsified**; removing the ceiling entirely
+  (scale-only) **triples RMSE**, because `b` also regularises disparity noise at range. A
+  small ridge on `b` buys ~8 % Rel at no near-field cost. σ now floors itself outside the ROI
+  rather than claiming ±8 cm on pixels metres wrong. Full detail:
+  [the ceiling section](ros2_ws/README.md#the-far-field-ceiling--mechanism-and-what-does-and-does-not-fix-it).
 - **v3 under-corrects** — mean |B−A| is only 0.019 m. The benchmarks suggest why: it was
   supervised only on zones ~1.7 cm from an anchor, where the closed-form answer is already
   right, so near-identity is the correct thing to learn. That points at the *training

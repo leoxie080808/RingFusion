@@ -61,6 +61,33 @@ says nothing about the 92.5%; independent tape ground truth is
 [planned](../docs/VALIDATION_PLAN.md) and not yet collected. Design details live in
 `RingFusion_technical_reference_updateP2.md`.
 
+## Metric reference
+
+One definition for all of it, in [`tools/diagnostics/metrics.py`](../tools/diagnostics/metrics.py).
+Before this existed the harnesses reported MAE only, which appears in no depth paper as a
+primary number — so nothing here could be placed beside a published result.
+
+| metric | direction | ideal | meaning | what it catches |
+|---|---|---|---|---|
+| `MAE` | ↓ lower | 0 | mean \|error\|, metres | overall error, skewed by outliers |
+| `medAE` | ↓ lower | 0 | *typical* miss; half beat it | everyday accuracy |
+| `p95` | ↓ lower | 0 | 95 % of pixels beat this | bad-but-not-worst case |
+| `RMSE` | ↓ lower | 0 | errors squared | **the tail** — rare catastrophic pixels |
+| `AbsRel`/`Rel` | ↓ lower | 0 | \|error\|/truth, a fraction | scale-free → **comparable across papers** |
+| `δ<1.25` | ↑ higher | 1.0 | fraction within 25 % of truth | **the literature standard** |
+| `δ<1.25²` | ↑ higher | 1.0 | fraction within 56 % | looser form of the same |
+| `coverage` | ↑ higher | 1.0 | fraction of pixels answered at all | methods that decline to predict |
+| `bias` | → toward 0 | 0 | mean *signed* error | systematic over/under-reading |
+| `ρ` | ↑ higher | 1.0 | does the backbone track real depth | a **gate**, not a score |
+
+**Always report `MAE`, `medAE` and `RMSE` together.** Depth error here is heavy-tailed and the
+gap between them is the diagnostic: medAE 0.066 with MAE 18.092 is a handful of pixels
+predicting absurd distances, and either number alone misleads.
+
+**σ coverage is a target, not a direction.** Coverage at ±1σ should hit **0.683**; below is
+overconfident (v3: 0.590), above means σ is inflated and carries no information (v4: 0.73–0.75).
+Both directions are failures.
+
 ## Benchmarks vs. trivial baselines
 
 Measured 2026-07-28 over all 1,234 logged pairs with
@@ -187,6 +214,306 @@ parameters for live A/B.
 
 Raw results, both training logs and the val-split stem list:
 [`docs/demo/benchmarks/`](../docs/demo/benchmarks/).
+
+## ZJU-L5 — the first open-loop evaluation, and what it exposed
+
+*Full 527-sample test split. Raw output:
+[`zjul5_teacher.json`](../docs/demo/benchmarks/zjul5_teacher.json),
+[`zjul5_student.json`](../docs/demo/benchmarks/zjul5_student.json).*
+
+Every other number in this project is scored against the ToF we anchor to. [ZJU-L5](https://zju3dv.github.io/deltar/)
+(from DELTAR, GPL-3.0) ships **dense ground truth from a RealSense 435i** rigged with a
+VL53L5CX, so the thing measured and the thing measuring are finally different devices.
+Harness: [`tools/diagnostics/zjul5_eval.py`](../tools/diagnostics/zjul5_eval.py).
+
+The dataset supplies each zone's pixel rectangle in `fr`, so **their** ToF→camera projection
+is used as-is. Nothing is re-derived — which matters, because a new rig is precisely where a
+mirrored or transposed grid would recur.
+
+| | ZJU-L5 | ours |
+|---|---|---|
+| zones | 8×8, median **41 valid**/frame | 32×32, ~830 valid |
+| frame coverage | **~50 %** (zones tile it) | 7.5 % |
+| depth range | 0.33–3.24 m | 0.15–6.5 m |
+| ground truth | dense, RealSense 435i | sparse, the same ToF we anchor to |
+
+### The finding: the *fit* transfers, the *backbone* does not
+
+`zjul5_eval.py` prints ρ(disparity, 1/z) at the anchors as a gate, and it fired at once:
+
+| backbone | params | ρ at anchors | Rel, all px | δ₁, all px |
+|---|---|---|---|---|
+| **`student_v3`** — deployed | 3.66 M | **0.417** | 0.185 | 0.716 |
+| **Depth Anything V2 Large** — its teacher | **335.3 M** | **0.867** | **0.086** | **0.908** |
+
+On our own sensor ρ is 0.917, so 0.417 is a serious domain failure — and with it the pipeline
+**loses to every trivial baseline on this dataset** (nearest-zone scores Rel 0.122).
+
+So "the closed-form path has no learned parameters, therefore it transfers" is **true of the
+affine fit and false of the pipeline**: the pipeline still contains Network A, which is
+learned. It was distilled on **~2 000 of our own rectified-fisheye frames**, so it learned to
+be the teacher *on one lens in one building*. Consistent with `teacher_vs_student.py` on our
+data — teacher ρ 0.750 vs student 0.737 at `corr 0.989`: the student matches the teacher
+exactly where it was trained, and collapses elsewhere. That is what distillation does, not a
+defect.
+
+**This is scoped, not fixed.** The robot has one camera and Network A only ever sees it;
+re-distilling on more of *our* images would not change this. ZJU-L5 is therefore reported
+with a domain-general MDE in place of the student — which is also architecturally what
+DEPTHOR does (24 M of its 30 M is a monocular model), so it is the like-for-like
+configuration rather than a dodge. Any speed comparison must state which backbone was timed.
+
+### Head-to-head against published ZJU-L5 results
+
+Their metrics are computed over all pixels with valid ground truth, which matches our `all`
+region exactly. Published figures from the [DEPTHOR paper](https://arxiv.org/abs/2504.01596),
+Table 2:
+
+| method | params | δ₁ ↑ | δ₂ ↑ | Rel ↓ | RMSE ↓ |
+|---|---|---|---|---|---|
+| CFPNet | — | 0.883 | 0.949 | 0.103 | **0.431** |
+| PENet\* | — | 0.889 | 0.949 | 0.093 | **0.447** |
+| **ours — closed-form, no learned fusion** | 335 M backbone | **0.908** | **0.954** | **0.086** | 0.984 |
+| **ours — + Stage 7c blend** | 335 M backbone | 0.907 | 0.952 | **0.085** | 0.986 |
+| DEPTHOR-Small | 30 M | 0.921 | 0.963 | 0.080 | 0.379 |
+| DEPTHOR-Large | 36 M | 0.933 | 0.972 | 0.075 | 0.350 |
+| *ours — deployed `student_v3`* | *4.1 M* | *0.716* | *0.875* | *0.185* | *1.174* |
+
+\* asterisk is the DEPTHOR authors' own — the PENet number is reported by them, not by
+PENet's authors. Check provenance before leaning on it.
+
+**Three of four metrics are competitive; the fourth says we have a tail problem.** δ₁, δ₂ and
+Rel all beat CFPNet and PENet and sit just under DEPTHOR-Small — with **zero learned fusion
+parameters**. RMSE is 2.2–2.8× worse than every published method.
+
+That combination has one explanation: δ₁ and Rel are dominated by *typical* pixels, RMSE
+squares errors and is dominated by *extreme* ones. Typical pixels are genuinely good; a small
+minority are catastrophically wrong. medAE 0.049 alone would have hidden this completely —
+the same signature that caught the missing clamp (MAE 18.092 vs medAE 0.066).
+
+> **The competitive row is not the robot.** It uses Depth Anything V2 **Large — 335.3 M
+> parameters, measured, not quoted** — which is 11× DEPTHOR-Small's *entire* model. The stack
+> that runs on the Jetson at 13.7 Hz is the 4.1 M configuration scoring δ₁ 0.716. Claiming
+> DEPTHOR-class accuracy from a 335 M backbone while claiming speed from a 4.1 M one, without
+> separating them, is exactly the sleight of hand a reviewer looks for. A DAv2-Small (~25 M)
+> run is the compute-fair comparison and is **not yet done**.
+
+### Where the error actually is
+
+| region | method | Rel ↓ | RMSE ↓ | δ₁ ↑ | medAE ↓ | cov ↑ |
+|---|---|---|---|---|---|---|
+| **inside** ToF footprint | nearest-zone | 0.058 | 0.445 | 0.949 | 0.033 | 1.00 |
+| | bilinear | 0.053 | **0.302** | 0.958 | 0.031 | 0.75 |
+| | closed-form | 0.052 | 0.418 | **0.968** | 0.035 | 1.00 |
+| | **+ blend** | **0.050** | 0.426 | 0.964 | **0.031** | 1.00 |
+| **outside** ToF footprint | nearest-zone | 0.201 | 1.642 | 0.696 | 0.123 | 1.00 |
+| | bilinear | 0.163 | **0.697** | 0.760 | 0.148 | **0.18** |
+| | closed-form | **0.128** | 1.398 | **0.835** | **0.079** | 1.00 |
+| | **+ blend** | **0.128** | 1.398 | **0.835** | **0.079** | 1.00 |
+
+Two things fall out of this:
+
+- **Inside the footprint we are already best on the literature metrics** — δ₁ 0.968 and
+  Rel 0.050 beat both trivial baselines, and the blend improves Rel and medAE over the raw
+  closed-form. Bilinear wins RMSE but only answers for 75 % of those pixels.
+- **The RMSE tail is an OUTSIDE problem**: 1.398 outside vs 0.418 inside. Inside, we are near
+  bilinear; outside, we are 2× worse than it. So the blow-ups are specifically far-field
+  extrapolation, which is what a scene-bounded far-field clamp would target.
+
+Caveats that must travel with these rows:
+
+- **Bilinear covers only 18 % of the outside region.** It cannot extrapolate past the convex
+  hull of ~41 points, so its RMSE 0.697 is measured on a favourable subset and is *not*
+  comparable to the 100 %-coverage rows.
+- **Network B is out of domain here** — trained on 32×32 anchors at our intrinsics, facing
+  8×8 over half a frame. Rel 1.819. Reported for completeness only. A Network B trained on
+  ZJU-L5's 483-frame train split would be the meaningful head-to-head, and is not built.
+- **Blending cannot repair a bad source.** Fed the out-of-domain residual instead of `D0`,
+  the blend scored Rel 1.252 — it mixes, it does not fix. `--blend-over` selects which.
+
+## DEPTHOR — reproduced on our hardware, and timed
+
+DEPTHOR (ICCV 2025) is the current state of the art on ZJU-L5 and the method we are most
+often compared against. We ran **their** released weights on **our** Orin so the comparison
+measures their model rather than our re-implementation of it.
+
+Setup lives outside this repo at `~/external/` — DEPTHOR ships **no LICENSE** (all rights
+reserved) and BP-Net/DELTAR are GPL-3.0, so none of it is vendored here. Four fixes were
+needed and are recorded in
+[`depthor_small_zjul5.json`](../docs/demo/benchmarks/depthor_small_zjul5.json):
+
+| problem | fix |
+|---|---|
+| `BpOps` CUDA extension (BP-Net) fails to compile on torch 2.11 | `tensor.type()` → `scalar_type()`, `.data<T>()` → `.data_ptr<T>()` |
+| `pip` build isolation hides torch from `setup.py` | `--no-build-isolation`, `TORCH_CUDA_ARCH_LIST=8.7` |
+| `src/utils/set_mde.py` hardcodes the author's home dir | redirected, `DAV2_CKPT_DIR` override |
+| variant selected by commenting imports in/out | `DEPTHOR_VARIANT=small\|large` |
+
+### Harness validation
+
+| DEPTHOR-Small | our run | their paper |
+|---|---|---|
+| δ₁ | **0.923** | 0.921 |
+| δ₂ | **0.968** | 0.963 |
+| Rel | **0.079** | 0.080 |
+| RMSE | **0.371 m** | 0.379 |
+| params | **30.2 M** (24.8 M MDE) | 30 M (24 M MDE) |
+
+Within 0.002–0.008 on every metric, parameter counts matching. **So the ZJU-L5 comparison is
+sound** — if we could not reproduce their number, any comparison would be measuring our bugs.
+
+> **Metric-name trap.** Their `compute_errors` returns a key called `mae` computed as
+> `mean(|pred-gt|/gt)` — that is **AbsRel, not MAE**. Their `rmse` *is* in metres. Comparing
+> our MAE against their `mae` would be comparing metres against a ratio.
+
+### The speed number the authors did not publish
+
+**7.84 it/s = 128 ms/frame on the Orin.** The paper states "not fast enough for real-time
+inference is the main limitation of our method" and reports no timing at all, so this fills a
+gap they left open. Two caveats that must travel with it:
+
+- **Resolution differs.** They run 480×640 (0.31 MP); our 13.7 Hz is at 1640×1232 (2.0 MP),
+  **6.5× the pixels**. We are faster *and* denser, but a fair claim needs our pipeline timed
+  at their resolution too.
+- **Their 128 ms includes h5 dataloading** (it is tqdm over the dataloader), so it is not a
+  pure network-forward figure.
+- **Both variants share the same DAv2 ViT-S backbone (24.8 M)**; only the completion head
+  differs (6 M vs 12 M). So a compute-fair comparison runs our analytic path on *the same*
+  ViT-S weights — that run is in progress.
+
+## The far-field ceiling — mechanism, and what does and does not fix it
+
+The single largest error source in the system, found 2026-07-29. Root cause of two separate
+failures that had looked unrelated.
+
+### Mechanism
+
+`D = 1/(a·disp + b)`, so as disparity → 0 the depth asymptotes to **`1/b`**. That is a hard
+ceiling on the deepest value the model can express, and `b` is fitted only from ToF anchors,
+which cover near range. Measured with
+[`ceiling_diag.py`](../tools/diagnostics/ceiling_diag.py) on 300 of our own logs — **no
+ground truth needed, the ceiling falls out of the fit**:
+
+| | ours | ZJU-L5 |
+|---|---|---|
+| ceiling `1/b`, median | **1.43 m** | 2.04 m |
+| furthest ToF anchor, median | 4.16 m | 1.59 m |
+| ratio ceiling / anchor_max | **0.40×** | 1.28× |
+| anchors above their frame's ceiling | **14.4 %** | — |
+
+**Our ceiling sits below the ToF's own furthest reading**, so the pipeline cannot express the
+depth of anchors it is being fitted to.
+
+### What it costs, on our own sensor
+
+Anchor error binned by true anchor depth (200 frames, 167,651 anchors) — the ToF is the
+reference here, so this is closed-loop, but it is enough to show the shape:
+
+| anchor depth | n | mean signed error | share of total error |
+|---|---|---|---|
+| 0–0.5 m | 85,974 *(51 %)* | +0.059 m | 12.5 % |
+| 0.5–1.0 m | 43,895 | +0.055 m | 12.7 % |
+| 1.5–2.0 m | 6,751 | −0.746 m | 9.3 % |
+| 2.0–3.0 m | 13,920 | −1.259 m | **31.9 %** |
+| 4.0–6.5 m | 2,397 | −3.264 m | 14.2 % |
+
+**69 % of the error comes from the 16 % of anchors beyond 1.5 m.** The anchor distribution is
+median **0.49 m** with 51 % under half a metre, which is precisely why a single pooled MAE
+looked healthy: it is diluted by tens of thousands of easy near anchors. We had never binned
+by depth.
+
+> This under-read is **documented and deliberate** — see `anchoring.py` ("A/ToF ~0.65 on the
+> farthest quartile") and `roi.py` ("the far wall ... is not what the depth map is for").
+> What was *not* documented is everything below.
+
+### σ does not flag it — it is confident exactly where it is wrong
+
+[`sigma_zjul5.py`](../tools/diagnostics/sigma_zjul5.py), analytic variance only (Network B's
+learned head is out of domain on 8×8), against ZJU-L5's dense independent GT:
+
+| true depth | median \|error\| | median σ | σ / \|error\| | share of RMSE² |
+|---|---|---|---|---|
+| 0–1 m | 0.029 m | 0.011 m | 0.40 | 0.5 % |
+| 4–6 m | 2.402 m | 0.401 m | 0.17 | 12.8 % |
+| 6–10 m | 5.517 m | 0.259 m | 0.05 | 28.6 % |
+| **10–20 m** | **11.845 m** | **0.079 m** | **0.01** | **50.1 %** |
+
+σ is **150× too small** at range and *decreases* past 4–6 m, because
+`Var[D] = D⁴ · jᵀ Cov j` and `D` is itself capped by the same `1/b` ceiling. **One mechanism,
+two failures.**
+
+| | measured | ideal |
+|---|---|---|
+| `corr(σ, \|error\|)` | **0.196** | — *(0.943 claimed on our sensor)* |
+| coverage \|e\| ≤ 1σ | **0.229** | 0.683 |
+| coverage \|e\| ≤ 2σ | **0.429** | 0.955 |
+
+The `corr = 0.943` figure is not wrong — `sigma_cal.py` measures σ **only at ToF anchor
+pixels**, all in-cone and near-range, a regime that structurally excludes this failure.
+
+**σ is also useless as a filter**: dropping the top 1 % of pixels by σ removes only **2.0 %**
+of squared error; dropping 10 % removes 38.9 %.
+
+### Three candidate fixes, tested. Two falsified.
+
+**Scene-bounded clamp** (cap depth at `k × max anchor depth`) — **falsified.** Swept on
+ZJU-L5 train: tighter `k` is monotonically *worse* (MAE 0.231 → 0.261 at k=1.25) and bias
+grows more negative. Capping only reduces depth, and the system already under-reads. Kept in
+[`blend.py`](src/ringfusion_perception/ringfusion_perception/blend.py) as
+`apply_scene_cap()`, documented as a dead end so it is not retried.
+
+**σ as a filter** — falsified above.
+
+**A ridge on `b`** (`solve_scale_shift(..., b_prior=)`; `lam = b_prior · Σw`, so 0 reproduces
+the plain affine fit and ∞ is exact scale-only) — **a real but modest win.** Bracketed on
+ZJU-L5 train, all pixels:
+
+| `b_prior` | RMSE ↓ | MAE ↓ | Rel ↓ | δ₁ ↑ | bias → 0 |
+|---|---|---|---|---|---|
+| 0 *(current default)* | 1.012 | 0.261 | 0.105 | 0.886 | −0.135 |
+| **0.003** | **0.962** | **0.246** | **0.097** | 0.890 | −0.091 |
+| 0.01 | 1.085 | 0.278 | 0.103 | **0.896** | **−0.014** |
+| 0.03 | 1.302 | 0.362 | 0.139 | 0.858 | +0.105 |
+| ∞ *(scale-only)* | **3.006** | 1.155 | 0.529 | 0.569 | +0.927 |
+
+At `b_prior = 0.003`, Rel improves 8 % and RMSE 5 % **with no near-field cost** (inside-ROI
+medAE 0.031 → 0.030). Expected a trade; there isn't one at that strength, which says the
+unridged fit was mildly mis-fitting `b` rather than that near and far are in tension.
+Past 0.01 the trade appears and it is bad.
+
+### The ceiling is partly PROTECTIVE — do not remove it
+
+**Scale-only triples RMSE** (1.012 → 3.006) and flips bias to **+0.927 m**, a large
+over-read. At far range disparity → small, so `D = 1/(a·disp)` becomes extremely sensitive to
+disparity noise: **the `b` term regularises against that noise.** Removing it swaps a bounded
+bias for unbounded variance.
+
+So "remove the pathology structurally" (log-depth reparameterisation, unconstrained `b`) is
+refuted by measurement, not just untested. **`1/b` is a bias/variance knob, not a bug.**
+
+### What actually shipped
+
+- **`roi.py` is wired into `pipeline.py`** — it had been written, measured, and then imported
+  by *nothing*, while range weighting was disabled on the grounds that ROI replaced it. The
+  pipeline was running with **neither** mitigation.
+- **ROI fit weighting is OFF by default.** A/B'd on 200 logs: it moved the ceiling 1.33 →
+  1.11 m and degraded the far field, buying only 0.109 → 0.101 m at 0.5–1.5 m. It narrows
+  scope; it does not fix the under-read.
+- **Stage 7d floors σ outside the ROI** at 100 % relative uncertainty and returns `roi_mask`,
+  so `/depth_var` no longer reports ±8 cm on pixels that are metres wrong.
+- **`to_metric_depth_valid()`** marks pixels clipped at the `1e-4` singularity as invalid
+  rather than emitting an arbitrary 10,000 m the fit has no information about.
+- **`b_prior` is NOT changed from 0 in deployment.** It was chosen on ZJU-L5 train, whose
+  anchor distribution (median 1.59 m) differs sharply from ours (0.49 m). Adopting it on the
+  robot requires its own validation on our data.
+
+### The honest limitation to state in the paper
+
+None of these makes range extrapolation *work* — they make it degrade more gracefully. The
+affine form bounds expressible depth at `1/b`; we measured where that bites, on two sensors;
+the σ channel does not report it, and now floors itself outside the ROI instead. Wider ToF
+coverage addresses angular reach, **not** the range ceiling, so it is the wrong axis for this
+problem. Temporal fusion is the only candidate that acquires the missing information.
 
 ### Done
 

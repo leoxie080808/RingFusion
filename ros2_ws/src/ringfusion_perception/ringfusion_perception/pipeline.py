@@ -21,8 +21,14 @@ from . import geometry as geo
 from . import anchoring as anc
 from . import gpu_ops
 from . import blend as blend_mod
+from . import roi
 from .blend import blend_depth
 from .residual import MAX_DEPTH_M
+
+# Sigma floor outside the ROI, as a fraction of depth. 1.0 = "100% relative uncertainty",
+# i.e. no useful bound. Measured errors there exceed 100% of the predicted value, so this
+# is not conservative -- it is the minimum honest signal.
+ROI_OUTSIDE_SIGMA_FRAC = 1.0
 
 
 def splat_anchors(u, v, z, inb, shape):
@@ -42,7 +48,10 @@ def splat_anchors(u, v, z, inb, shape):
 
 def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
         confidence=None, min_confidence=-1, cloud_stride=4, use_gpu=None,
-        blend=True, blend_near=blend_mod.NEAR_DEG, blend_far=blend_mod.FAR_DEG):
+        blend=True, blend_near=blend_mod.NEAR_DEG, blend_far=blend_mod.FAR_DEG,
+        roi_enable=True, roi_weight_fit=False,
+        roi_reach_max=roi.REACH_MAX_M, roi_height_max=roi.HEIGHT_MAX_M,
+        plane_tracker=None):
     """One perception frame.
 
     Args:
@@ -96,6 +105,34 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
         weights = np.maximum(conf_flat[inb], 1.0)  # trust high-confidence zones more
     else:
         weights = np.ones_like(inv_depth)
+
+    # Stage 4b -- geometric ROI weighting (roi.py). The depth map exists to serve the
+    # local traversable area; the far wall and the shelving above it drag a 2-parameter
+    # global fit around. roi.py was written for exactly this, measured at 7.5% -> 6.0%
+    # median relative error on the anchors a robot can drive to, and then never imported
+    # by anything -- range weighting had already been disabled (RANGE_WEIGHT_P = 0.0) on
+    # the grounds that ROI "replaces it", so the pipeline shipped with NEITHER mitigation.
+    #
+    # Measured 2026-07-29 with neither active: the ceiling 1/b sits at a median 1.43 m
+    # while the ToF's furthest anchor is 4.16 m, so 14.4% of anchors are not even
+    # expressible, and anchors beyond 1.5 m carry 69% of total error while being 16% of
+    # anchors. Weights are SOFT (outside_w=0.1) so a frame aimed down a long open run is
+    # not left with too few points to fit.
+    # roi_weight_fit is OFF by default. A/B'd on 200 of our logs (plane found on 200/200):
+    # weighting the fit by ROI moved the ceiling 1.33 -> 1.11 m and degraded the far field
+    # (1.5-3 m median |e| 1.075 -> 1.200, 3-6.5 m 2.615 -> 2.842, pooled MAE 0.328 ->
+    # 0.344) while buying only 0.109 -> 0.101 at 0.5-1.5 m and nothing under 0.5 m.
+    # That is the documented trade working as designed -- roi.py narrows SCOPE, it does not
+    # fix the under-read -- but it is not a default worth paying for. The plane and mask
+    # are still computed, because Stage 7d needs them.
+    plane = None
+    if roi_enable:
+        pts_a = roi.backproject(u[inb], v[inb], z[inb], K)
+        plane = (plane_tracker.update(pts_a) if plane_tracker is not None
+                 else roi.fit_ground_plane(pts_a))
+        if plane is not None and roi_weight_fit:
+            weights = roi.roi_weights(pts_a, plane, weights,
+                                      reach_max=roi_reach_max, height_max=roi_height_max)
 
     # Stage 5 -- closed-form weighted least squares + one Huber pass
     fit = anc.solve_robust(disp_at, inv_depth, weights, iters=1)
@@ -158,6 +195,29 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
         metric, _ = blend_depth(metric, anchor_depth, anchor_mask, fx=float(fx),
                                 near_deg=blend_near, far_deg=blend_far)
 
+    # Stage 7d -- tell the truth about depth OUTSIDE the ROI.
+    #
+    # The far-field under-read is a documented, deliberate scope decision (see roi.py:
+    # the map serves the traversable area). What was NOT documented is that sigma does
+    # not say so. Measured on ZJU-L5 against dense independent GT: at 10-20 m true depth
+    # the error is ~12 m while sigma reports ~0.08 m -- 150x too small -- and sigma
+    # *decreases* with range, because Var[D] = D^4 * j^T Cov j and D is itself capped by
+    # the 1/b ceiling. corr(sigma,|error|) 0.196, coverage at 1-sigma 0.229 vs an ideal
+    # 0.683. So the system was most confident exactly where it was most wrong, and any
+    # consumer of /depth_var or /cloud would have believed it.
+    #
+    # Being out of scope is fine; publishing out-of-scope depth with a confident sigma is
+    # not. Outside the ROI we have no calibrated basis for sigma at all, so floor it at
+    # ROI_OUTSIDE_SIGMA_FRAC * D -- a "could be anywhere" signal rather than a number.
+    # The mask is returned so consumers can drop those points instead of trusting them.
+    roi_mask = None
+    if roi_enable and plane is not None:
+        roi_mask = roi.pixel_roi_mask(metric, K, plane, reach_max=roi_reach_max,
+                                      height_max=roi_height_max)
+        if var is not None:
+            floor_var = (ROI_OUTSIDE_SIGMA_FRAC * metric.astype(np.float32)) ** 2
+            var = np.where(roi_mask, var, np.maximum(var, floor_var)).astype(np.float32)
+
     # Stage 8 -- unproject metric depth to a camera-frame point cloud
     cloud = (gpu_ops.unproject_cloud(metric, K, cloud_stride) if gpu
              else geo.unproject_depth_to_cloud(metric, K, model='pinhole', stride=cloud_stride))
@@ -165,4 +225,5 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
     return {'ok': True, 'n_anchors': int(inb.sum()),
             'metric': metric.astype(np.float32),
             'var': None if var is None else var.astype(np.float32),
-            'cloud': cloud, 'a': a, 'b': b}
+            'cloud': cloud, 'a': a, 'b': b,
+            'roi_mask': roi_mask, 'plane': plane}

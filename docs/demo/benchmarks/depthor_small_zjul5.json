@@ -1,0 +1,16 @@
+{
+ "note": "DEPTHOR-Small run by us on the Orin, ZJU-L5 test split (527 samples).",
+ "harness_validation": "reproduces published Table 2 within 0.002-0.008 on every metric",
+ "metric_naming": "their compute_errors 'mae' is actually AbsRel: mean(|pred-gt|/gt). Their 'rmse' is metres.",
+ "measured":  {"d1": 0.923, "d2": 0.968, "d3": 0.984, "rel": 0.079, "rmse": 0.371, "log10": 0.036, "silog": 13.402, "sq_rel": 0.065},
+ "published": {"d1": 0.921, "d2": 0.963, "rel": 0.080, "rmse": 0.379, "log10": 0.038},
+ "params_measured": {"total_M": 30.2, "mde_vits_M": 24.8},
+ "throughput_orin": {"it_per_s": 7.84, "ms_per_frame": 128, "input_res": "480x640 (0.31 MP)",
+   "caveat": "includes h5 dataloading; not a pure network-forward number"},
+ "setup_fixes_required": [
+   "BpOps CUDA ext (BP-Net): tensor.type() -> scalar_type(), .data<T>() -> .data_ptr<T>() for torch 2.11",
+   "src/utils/set_mde.py hardcoded /home/xjj/... -> DAV2_CKPT_DIR env",
+   "evaluate.py selects variant by commented imports -> DEPTHOR_VARIANT env",
+   "both variants share encoder='vits' (DAv2 ViT-S, 24.8M)"
+ ]
+}

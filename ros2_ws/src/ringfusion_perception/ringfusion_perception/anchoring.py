@@ -56,7 +56,26 @@ def range_weights(inv_depth, weights, p=RANGE_WEIGHT_P):
     return w * (zp / m if m > 0 else 1.0)
 
 
-def solve_scale_shift(disp, inv_depth, weights, eps=1e-9):
+def solve_scale_shift(disp, inv_depth, weights, eps=1e-9, b_prior=0.0):
+    """Weighted least squares for inv_depth ~ a*disp + b, with an optional ridge on b.
+
+    WHY THE RIDGE. D = 1/(a*disp + b), so as disparity goes to zero D asymptotes to 1/b:
+    **b sets a hard ceiling on the deepest depth the model can express**, and b is fitted
+    entirely from anchors that only cover near range. Measured 2026-07-29 on our own logs:
+    ceiling median 1.43 m while the ToF's furthest anchor is 4.16 m, so 14.4% of anchors
+    are not expressible at all, and anchors past 1.5 m are 16% of the data but carry 69%
+    of the error. Var[D] = D^4 * j^T Cov j inherits the same cap, which is why sigma also
+    collapses out there (150x too small on ZJU-L5, and DECREASING with range).
+
+    Minimises  sum_i w_i (s_i - a d_i - b)^2 + lam * b^2  with lam = b_prior * sum(w),
+    so b_prior is scale-free: 0 reproduces the plain affine fit exactly, and b_prior ->
+    inf drives b -> 0 (scale-only, no ceiling: D = 1/(a*disp) grows without bound).
+    Pass b_prior=np.inf for exact scale-only.
+
+    This trades near-field accuracy for far-field headroom and does NOT make range
+    extrapolation correct -- it makes it degrade more gracefully. Sweep it, state the
+    near-field cost, and expect the tradeoff curve rather than a free win.
+    """
     w = np.asarray(weights, float)
     d = np.asarray(disp, float)
     s = np.asarray(inv_depth, float)
@@ -67,15 +86,25 @@ def solve_scale_shift(disp, inv_depth, weights, eps=1e-9):
     Sws = np.sum(w * s)
     Swdd = np.sum(w * d * d)
     Swds = np.sum(w * d * s)
-    den = Sw * Swdd - Swd * Swd
+
+    if not np.isfinite(b_prior):                  # exact scale-only: b == 0
+        if abs(Swdd) < eps:
+            return None
+        return float(Swds / Swdd), 0.0
+
+    lam = float(b_prior) * Sw
+    # [ Swdd  Swd      ] [a]   [Swds]
+    # [ Swd   Sw + lam ] [b] = [Sws ]
+    den = Swdd * (Sw + lam) - Swd * Swd
     if abs(den) < eps:
         return None
-    a = (Sw * Swds - Swd * Sws) / den
-    b = (Sws - a * Swd) / Sw
+    a = (Swds * (Sw + lam) - Swd * Sws) / den
+    b = (Swdd * Sws - Swd * Swds) / den
     return float(a), float(b)
 
 
-def solve_robust(disp, inv_depth, weights, iters=1, c=1.345, range_weight=True):
+def solve_robust(disp, inv_depth, weights, iters=1, c=1.345, range_weight=True,
+                 b_prior=0.0):
     """range_weight applies the z**p term (a no-op at the current p=0).
 
     The region-of-interest weighting is NOT applied here -- it is geometric (floor plane
@@ -85,7 +114,7 @@ def solve_robust(disp, inv_depth, weights, iters=1, c=1.345, range_weight=True):
     correspond to the fit that was actually solved."""
     if range_weight:
         weights = range_weights(inv_depth, weights)
-    res = solve_scale_shift(disp, inv_depth, weights)
+    res = solve_scale_shift(disp, inv_depth, weights, b_prior=b_prior)
     if res is None:
         return None
     d = np.asarray(disp, float); s = np.asarray(inv_depth, float)
@@ -96,14 +125,14 @@ def solve_robust(disp, inv_depth, weights, iters=1, c=1.345, range_weight=True):
         scale = 1.4826 * np.median(np.abs(r - np.median(r))) + 1e-9
         u = np.abs(r) / (c * scale)
         hub = np.where(u <= 1.0, 1.0, 1.0 / np.maximum(u, 1e-9))
-        r2 = solve_scale_shift(d, s, w * hub)
+        r2 = solve_scale_shift(d, s, w * hub, b_prior=b_prior)
         if r2 is None:
             break
         res = r2
     return res
 
 
-def covariance(disp, inv_depth, weights, a, b, range_weight=True):
+def covariance(disp, inv_depth, weights, a, b, range_weight=True, b_prior=0.0):
     """2x2 covariance of (a,b) from the same weighted sums.
 
     range_weight must match the value passed to solve_robust -- the covariance is only
@@ -117,11 +146,28 @@ def covariance(disp, inv_depth, weights, a, b, range_weight=True):
     r = s - (a * d + b)
     sigma2 = (n / (n - 2.0)) * np.sum(w * r * r) / np.sum(w)
     Sw = w.sum(); Swd = np.sum(w * d); Swdd = np.sum(w * d * d)
-    N = np.array([[Swdd, Swd], [Swd, Sw]])
+    # The ridge on b must appear here too, or the reported uncertainty is the covariance
+    # of a fit that was not the one solved. lam = b_prior * Sw, matching solve_scale_shift.
+    lam = 0.0 if not np.isfinite(b_prior) else float(b_prior) * Sw
+    N = np.array([[Swdd, Swd], [Swd, Sw + lam]])
     try:
         return sigma2 * np.linalg.inv(N)
     except np.linalg.LinAlgError:
         return None
+
+
+def to_metric_depth_valid(disp, a, b, min_disp=1e-4):
+    """-> (depth, valid). valid is False where the inverse depth was clipped at min_disp.
+
+    Those pixels sit at the singularity of D = 1/(a*disp + b): the fit has NO information
+    about them, and 1/min_disp = 10,000 m is an arbitrary large number, not an estimate.
+    Marking them invalid is more honest than emitting a finite value a consumer will
+    believe. The pipeline's far-field clamp bounds the magnitude; this reports which
+    pixels were never estimated at all.
+    """
+    inv = a * np.asarray(disp, float) + b
+    valid = inv > min_disp
+    return to_metric_depth(disp, a, b, min_disp=min_disp), valid
 
 
 def to_metric_depth(disp, a, b, min_disp=1e-4):

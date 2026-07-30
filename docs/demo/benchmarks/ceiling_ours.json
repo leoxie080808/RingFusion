@@ -1,0 +1,12 @@
+{
+ "n": 300,
+ "protocol": "insample",
+ "b_nonpos": 0,
+ "ceiling_median": 1.4291312039016604,
+ "ceiling_p10": 0.7229566724796148,
+ "ceiling_p90": 2.623957491858807,
+ "anchor_max_median": 4.159957014524224,
+ "ratio_median": 0.4019789441263155,
+ "emitted_p99_median": 1.356137346625328,
+ "saturating_pct_median": 1.0906071824516947
+}

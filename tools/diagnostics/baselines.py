@@ -49,7 +49,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from anchoring_bridge import build_residual_inputs, calib_from_yaml   # noqa: E402
 from ringfusion_perception import geometry as geo                     # noqa: E402
-from ringfusion_perception.blend import blend_depth                   # noqa: E402
+from ringfusion_perception.blend import blend_depth, apply_scene_cap                   # noqa: E402
 import metrics as M                                                   # noqa: E402
 
 MIN_RANGE, MAX_RANGE = 0.15, 6.5      # same gate as build_real_supervision
@@ -135,6 +135,12 @@ def main():
     # Crossover between nearest-zone ToF and the network sits near 3 deg; ramp around it.
     ap.add_argument('--blend-near', type=float, default=2.0)
     ap.add_argument('--blend-far', type=float, default=5.0)
+    # Scene-bounded far-field cap (blend.scene_cap). Sweep k HERE, on our own logs -- never
+    # on a test split we then report. Prediction to falsify: RMSE should fall sharply while
+    # Rel and delta1 barely move, because the cap should only touch extreme pixels. If
+    # delta1 drops materially, k is too tight and it is mangling normal pixels.
+    ap.add_argument('--sweep-k', type=float, nargs='*', default=[],
+                    help='e.g. --sweep-k 1.25 1.5 2 3 4')
     a = ap.parse_args()
 
     import cv2
@@ -165,7 +171,8 @@ def main():
         from ringfusion_perception.residual import ResidualRefiner
         residual = ResidualRefiner(a.residual_engine)
 
-    acc = {p: {m: {'pred': [], 'gt': [], 'ang': []} for m in METHODS} for p in a.protocol}
+    methods = list(METHODS) + [f'B4k{k:g}' for k in a.sweep_k]
+    acc = {p: {m: {'pred': [], 'gt': [], 'ang': []} for m in methods} for p in a.protocol}
     skipped = {p: {'nosplit': 0, 'nofit': 0, 'illcond': 0} for p in a.protocol}
     t0 = time.time()
 
@@ -232,6 +239,11 @@ def main():
                                   fx=float(Kv[0]), near_deg=a.blend_near,
                                   far_deg=a.blend_far)
             pred['B6_blend'] = D_bl[vh, uh]
+            # Scene-bounded cap applied to the closed-form output, one row per k.
+            for kk in a.sweep_k:
+                Dk, _, _ = apply_scene_cap(info['D0'], info['anchor_depth'],
+                                           info['anchor_mask'], k=kk)
+                pred[f'B4k{kk:g}'] = Dk[vh, uh]
 
             for m, p in pred.items():
                 acc[proto][m]['pred'].append(np.asarray(p, np.float64))
@@ -247,7 +259,7 @@ def main():
         print(f'\n{"="*len(M.HEADER)}\nPROTOCOL: {proto}'
               f'   (skipped: {skipped[proto]})\n{"="*len(M.HEADER)}')
         per_method = {}
-        for m in METHODS:
+        for m in methods:
             if not acc[proto][m]['pred']:
                 continue
             p = np.concatenate(acc[proto][m]['pred'])
@@ -267,9 +279,9 @@ def main():
               f'   [bins with n<{MIN_BIN_N} suppressed]:')
         hdr = ''.join(f'{lo:.0f}-{hi:.0f}deg'.rjust(11)
                       for lo, hi in zip(ANG_EDGES[:-1], ANG_EDGES[1:]))
-        counts = ''.join(str(b['n']).rjust(11) for b in per_method[METHODS[0]]['by_angle'])
+        counts = ''.join(str(b['n']).rjust(11) for b in per_method[methods[0]]['by_angle'])
         print(f'  {"method":<14}{hdr}\n  {"n =":<14}{counts}')
-        for m in METHODS:
+        for m in methods:
             if m not in per_method:
                 continue
             cells = ''
