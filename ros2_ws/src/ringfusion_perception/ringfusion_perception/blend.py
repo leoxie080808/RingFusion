@@ -28,6 +28,13 @@ import numpy as np
 NEAR_DEG = 2.0     # fully trust ToF at or below this angular distance from an anchor
 FAR_DEG = 5.0      # fully trust the network at or above this
 
+# Downsample factor for the distance transform. cv2.distanceTransformWithLabels over a full
+# 2 MP frame costs ~57 ms on the Orin CPU, which alone took pipeline.run from 19.2 to 9.2 Hz.
+# The blend weight is a smoothstep over ~20 px and the nearest-anchor depth is piecewise
+# constant (a Voronoi diagram), so both survive being computed at 1/scale resolution and
+# upsampled. 4 quantises distance to 4 px against a ~20 px ramp.
+BLEND_SCALE = 4
+
 # Scene-bounded far-field cap. See scene_cap() below.
 SCENE_CAP_K = 2.0
 SCENE_CAP_FLOOR_M = 1.0
@@ -112,17 +119,46 @@ def blend_depth(D_net, anchor_depth, anchor_mask, fx,
     # zeros here. DIST_LABEL_PIXEL additionally returns, per pixel, the label of the
     # nearest zero pixel -- labels numbered from 1 in raster order over those zeros,
     # which is the same order np.nonzero yields, so a plain LUT maps label -> depth.
-    src = np.where(m, 0, 255).astype(np.uint8)
-    dist, labels = cv2.distanceTransformWithLabels(
-        src, cv2.DIST_L2, 3, labelType=cv2.DIST_LABEL_PIXEL)
-
+    h, w = m.shape
+    S = max(1, int(scale))
     ys, xs = np.nonzero(m)
-    lut = np.zeros(int(labels.max()) + 1, np.float32)
-    lut[1:ys.size + 1] = np.asarray(anchor_depth, np.float32)[ys, xs]
-    D_tof = lut[labels]
+    ad = np.asarray(anchor_depth, np.float32)
+
+    if S == 1:
+        src = np.where(m, 0, 255).astype(np.uint8)
+        dist, labels = cv2.distanceTransformWithLabels(
+            src, cv2.DIST_L2, 3, labelType=cv2.DIST_LABEL_PIXEL)
+        lut = np.zeros(int(labels.max()) + 1, np.float32)
+        lut[1:ys.size + 1] = ad[ys, xs]
+        D_tof = lut[labels]
+    else:
+        # Scatter anchors into a 1/S grid rather than resizing the sparse mask -- resizing
+        # would drop most single-pixel anchors. Collisions within a cell keep one anchor,
+        # which is fine: they are within S px of each other.
+        hs, ws = (h + S - 1) // S, (w + S - 1) // S
+        red_m = np.zeros((hs, ws), bool)
+        red_d = np.zeros((hs, ws), np.float32)
+        red_m[ys // S, xs // S] = True
+        red_d[ys // S, xs // S] = ad[ys, xs]
+        src = np.where(red_m, 0, 255).astype(np.uint8)
+        dist_r, labels_r = cv2.distanceTransformWithLabels(
+            src, cv2.DIST_L2, 3, labelType=cv2.DIST_LABEL_PIXEL)
+        rys, rxs = np.nonzero(red_m)
+        lut = np.zeros(int(labels_r.max()) + 1, np.float32)
+        lut[1:rys.size + 1] = red_d[rys, rxs]
+        # dist_r is in reduced pixels -> scale back to full-res pixel units
+        dist = np.repeat(np.repeat(dist_r * S, S, axis=0), S, axis=1)[:h, :w]
+        D_tof = np.repeat(np.repeat(lut[labels_r], S, axis=0), S, axis=1)[:h, :w]
 
     near_px = float(fx) * np.tan(np.deg2rad(near_deg))
     far_px = float(fx) * np.tan(np.deg2rad(far_deg))
+
+    # The tail (ramp + guard + mix) is ~8 full-frame float passes. Offload it, exactly as
+    # ResidualRefiner.refine's apply step was; numpy fallback keeps off-robot behaviour.
+    from . import gpu_ops
+    if gpu_ops.available():
+        return gpu_ops.blend_apply(D_net, dist, D_tof, near_px, far_px)
+
     t = np.clip((dist - near_px) / max(far_px - near_px, 1e-6), 0.0, 1.0)
     w = (1.0 - t * t * (3.0 - 2.0 * t)).astype(np.float32)   # smoothstep, 1 near -> 0 far
 

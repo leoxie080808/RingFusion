@@ -130,3 +130,39 @@ def pack_residual_input(rgb, D0, anchor_depth, anchor_mask, out_h, out_w):
     ad = _to_cuda(ad_np, np.float32)
     am = _to_cuda(am_np, np.float32)
     return torch.stack([rgb_s[0], rgb_s[1], rgb_s[2], logD0, ad, am], 0)[None].cpu().numpy().astype(np.float32)
+
+
+def blend_apply(D_net, dist_px, D_tof, near_px, far_px):
+    """GPU tail for blend.blend_depth -- the smoothstep and the mix, over the full frame.
+
+    The distance transform itself stays on the CPU (cv2, and it is cheap once computed at
+    1/BLEND_SCALE resolution). What was expensive is everything after it: ~8 full-frame
+    2 MP float passes for the ramp, the guard and the two-way mix. Measured on the Orin at
+    1640x1232 the whole CPU blend cost 56 ms, 33 ms after the scale fix -- against a 51.8 ms
+    pipeline budget. Same situation, and same remedy, as ResidualRefiner.refine (~70 ms on
+    the CPU before it was offloaded here).
+
+    dist_px and D_tof arrive already upsampled to full resolution. Returns numpy so the
+    caller's types are unchanged.
+    """
+    d = _to_cuda(dist_px, np.float32)
+    tof = _to_cuda(D_tof, np.float32)
+    net = _to_cuda(D_net, np.float32)
+    span = max(float(far_px) - float(near_px), 1e-6)
+    t = torch.clamp((d - float(near_px)) / span, 0.0, 1.0)
+    w = 1.0 - t * t * (3.0 - 2.0 * t)                    # smoothstep, 1 near -> 0 far
+    w = torch.where(tof > 0, w, torch.zeros_like(w))     # no opinion where the splat is empty
+    out = w * tof + (1.0 - w) * net
+    return out.cpu().numpy(), w.cpu().numpy()
+
+
+def roi_sigma_floor(var, metric, roi_mask, frac):
+    """GPU tail for Stage 7d: floor sigma outside the ROI at frac*D.
+
+    Three 2 MP passes (square, maximum, where) that cost ~20 ms of the ROI stage's 41 ms.
+    """
+    v = _to_cuda(var, np.float32)
+    m = _to_cuda(metric, np.float32)
+    inside = torch.from_numpy(np.ascontiguousarray(roi_mask)).cuda(non_blocking=True)
+    floor = (float(frac) * m) ** 2
+    return torch.where(inside, v, torch.maximum(v, floor)).cpu().numpy()

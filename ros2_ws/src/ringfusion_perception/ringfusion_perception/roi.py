@@ -142,13 +142,24 @@ class PlaneTracker:
     update() returns the plane to use, or None if none has ever been established.
     """
 
-    def __init__(self, alpha=0.2, max_tilt=0.35, max_height_jump=0.10):
+    def __init__(self, alpha=0.2, max_tilt=0.35, max_height_jump=0.10, refit_every=10):
         self.plane = None
         self.alpha = alpha
         self.max_tilt = max_tilt                  # reject a fit this far off the cached normal
         self.max_height_jump = max_height_jump
+        # RANSAC here is a 200-iteration Python loop and cost 20.9 ms/frame measured on the
+        # Orin -- the single largest component of the ROI stage. But the camera is rigidly
+        # mounted and the plane is near-constant (see above: normal stable to 0.05, height to
+        # 0.02 m across three captures), so refitting every frame buys nothing. Refit every
+        # Nth frame and serve the cached, EMA-smoothed plane in between; that is already the
+        # documented behaviour when a frame cannot fit one at all.
+        self.refit_every = max(1, int(refit_every))
+        self._n = 0
 
     def update(self, pts, **kw):
+        self._n += 1
+        if self.plane is not None and (self._n % self.refit_every) != 1:
+            return self.plane
         fit = fit_ground_plane(pts, **kw)
         if fit is None:
             return self.plane                     # keep the last good one

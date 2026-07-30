@@ -45,6 +45,11 @@ def main():
                     help='insample = all valid zones anchor the fit, as deployed')
     ap.add_argument('--limit', type=int, default=300)
     ap.add_argument('--out', default='')
+    # Ridge on b (anchoring.solve_scale_shift). Chosen as 0.003 on the ZJU-L5 TRAIN split,
+    # but that sensor's anchors run to a median 1.59 m against our 0.49 m, so it must be
+    # re-validated here before any deployed default changes. Error is binned by TRUE anchor
+    # depth because that is the axis the ceiling acts on.
+    ap.add_argument('--sweep-bprior', type=float, nargs='*', default=[])
     a = ap.parse_args()
 
     import cv2
@@ -58,6 +63,7 @@ def main():
     bb = TensorRTBackbone(a.backbone_engine)
 
     ceil, amax, p99, pmax, satur, bs = [], [], [], [], [], []
+    sweep = {bp: {'e': [], 'z': [], 'c': []} for bp in a.sweep_bprior}
     for n, stem in enumerate(stems):
         img = cv2.imread(os.path.join(a.rgb_dir, stem + '.png'))
         if img is None:
@@ -83,6 +89,21 @@ def main():
         p99.append(float(np.percentile(D, 99))); pmax.append(float(D.max()))
         # "saturating" = within 5% of the ceiling, i.e. actively pinned against it
         satur.append(float(np.mean(D > 0.95 * c)) if np.isfinite(c) else 0.0)
+        for bp in a.sweep_bprior:
+            fp = anc.solve_robust(disp[v, u].astype(np.float64), 1.0 / z,
+                                  np.ones_like(z), iters=1, b_prior=bp)
+            if fp is None:
+                continue
+            Dp = anc.to_metric_depth(disp, *fp)
+            sweep[bp]['e'].append(Dp[v, u] - z)
+            sweep[bp]['z'].append(z)
+            sweep[bp]['c'].append(1.0 / max(fp[1], 1e-9) if fp[1] > 0 else np.inf)
+        # baseline (b_prior = 0) arm, for the same frames
+        if a.sweep_bprior:
+            sweep.setdefault(0.0, {'e': [], 'z': [], 'c': []})
+            sweep[0.0]['e'].append(D[v, u] - z)
+            sweep[0.0]['z'].append(z)
+            sweep[0.0]['c'].append(c)
         if (n + 1) % 100 == 0:
             print(f'  {n+1}/{len(stems)}', flush=True)
 
@@ -113,6 +134,26 @@ def main():
     else:
         print('  -> ceiling is well beyond the ToF range; the far field is extrapolated\n'
               '     rather than structurally capped. Still unvalidated (no far GT).')
+
+    if a.sweep_bprior:
+        BINS = ((0, 0.5), (0.5, 1.5), (1.5, 3.0), (3.0, 6.5))
+        print(f'\n b_prior sweep -- median |error| by TRUE anchor depth')
+        hdr = f'{"b_prior":>9}{"ceiling":>10}' + ''.join(
+            f'{f"{lo}-{hi}m":>11}' for lo, hi in BINS) + f'{"MAE":>10}{"medAE":>9}{"bias":>9}'
+        print(hdr); print('-' * len(hdr))
+        for bp in sorted(sweep, key=lambda x: (x != 0.0, x)):
+            d = sweep[bp]
+            if not d['e']:
+                continue
+            E = np.concatenate(d['e']); Z = np.concatenate(d['z'])
+            C = np.array([x for x in d['c'] if np.isfinite(x)])
+            row = f'{bp:>9g}{np.median(C) if C.size else float("inf"):>9.2f}m'
+            for lo, hi in BINS:
+                sel = (Z >= lo) & (Z < hi)
+                row += (f'{np.median(np.abs(E[sel])):>10.3f}m' if sel.sum() > 30
+                        else f'{"-":>11}')
+            print(row + f'{np.abs(E).mean():>9.3f}m{np.median(np.abs(E)):>8.3f}m'
+                        f'{E.mean():>+8.3f}m')
 
     if a.out:
         import json

@@ -16,9 +16,11 @@ ros2 launch ringfusion_bringup single_module.launch.py port:=/dev/ttyACM1 \
 ```
 
 `residual_v4_last` is the recommended residual — see
-[Network B v4](#network-b-v4--the-training-protocol-was-the-limitation). Stage 7c blend is on
-by default but **not yet affordable** at full resolution; pass `blend:=false roi_enable:=false`
-until [the timing work](#-stage-7c4b7d-are-not-yet-affordable) lands.
+[Network B v4](#network-b-v4--the-training-protocol-was-the-limitation). Stage 7c blend and the
+ROI/σ stages are on by default and now cost 28 ms together at full resolution, but their effect
+on the deployed rate is **estimated, not measured** — see
+[Stage 7c/4b/7d cost](#stage-7c4b7d-cost-and-the-four-fixes-that-made-them-affordable).
+`blend:=false roi_enable:=false` restores the pre-2026-07-30 behaviour.
 
 Two things changed on 2026-07-28 and they dominate everything measured before that date.
 
@@ -219,6 +221,85 @@ parameters for live A/B.
 
 Raw results, both training logs and the val-split stem list:
 [`docs/demo/benchmarks/`](../docs/demo/benchmarks/).
+
+## Train/test contamination, quantified
+
+`training/data.py:24` globs `**` with `recursive=True`, so distilling over `data/rect` swept up
+`data/rect/paired/` — **1,228 frames byte-identical to `ros2_ws/data/real/rgb`, i.e. every
+frame the benchmarks score on.** Network A had trained on the entire evaluation set. The
+61-frame split recovered from `train_residual.py` was clean for Network *B* only.
+
+`DistillDataset(exclude_stems=...)` and `distill_backbone.py --exclude-stems-file` now hold
+frames out. `student_v4_heldout` was re-distilled with **200 stems** held out (a superset of
+Network B's 61-frame validation split, so one set is unseen by both), reaching
+**val_ssi 3.3984** against v3's 3.51 on 6 % less data.
+
+### The effect was small and bounded — as predicted, now measured
+
+`center` protocol, median AE:
+
+| | contaminated *(v3, 61 frames)* | **clean** *(v4, 200 frames)* | change |
+|---|---|---|---|
+| B4c closed-form | 0.064 m | 0.067 m | +5 % |
+| B5 Network B v4 | 0.045 m | 0.048 m | +7 % |
+| **B6 + blend** | **0.042 m** | **0.044 m** | **+5 %** |
+
+**Rankings are unchanged and the correction is ~5 %.** That matches the a-priori bound: the
+distillation target is the *teacher's disparity*, not ToF depth, and the student scores *below*
+its teacher even on frames it trained on (ρ 0.737 vs 0.750), so it had not memorised them.
+
+Scored with `student_v4_heldout` + `residual_v4_last` + blend:
+
+| protocol | B1 nearest-zone | B4c closed-form | B5 Network B | **B6 + blend** |
+|---|---|---|---|---|
+| `random` MAE / medAE | **0.059 / 0.010** | 0.296 / 0.066 | 0.309 / 0.098 | 0.059 / 0.010 |
+| `center` MAE / medAE | 0.243 / 0.109 | 0.357 / 0.067 | 0.213 / 0.048 | **0.198 / 0.044** |
+
+medAE by angular distance from the nearest anchor, `center`:
+
+| | 0–3° | 3–6° | 6–10° | 10–15° | 15–30° |
+|---|---|---|---|---|---|
+| B1 nearest-zone | **0.026** | 0.071 | 0.126 | 0.183 | 0.239 |
+| B4c closed-form | 0.073 | 0.072 | 0.079 | 0.062 | 0.048 |
+| B5 Network B v4 | 0.057 | 0.051 | 0.054 | 0.045 | **0.035** |
+| **B6 + blend** | **0.030** | **0.049** | **0.054** | **0.045** | **0.035** |
+
+The blend tracks whichever source is better in every bin, and on `random` it now matches raw
+ToF exactly (0.059 / 0.010) — correctly deferring to the sensor where the sensor wins.
+
+> **Partial caveat on the B5/B6 rows.** Of the 200 stems, 139 were in `residual_v4`'s training
+> set (only the 61-frame intersection is clean for *both* networks). Re-scored on those 61:
+> B4c 0.063, B5 0.043, **B6 0.041** medAE — marginally *better* than the 200-frame figures, so
+> Network B's own overlap is not inflating anything here.
+>
+> **Why `residual_v4_last` is reused unchanged with the new backbone:** it was trained against
+> `student_v3` disparity, but corr(v3, v4) over the held-out frames is **0.99944** (min 0.98963).
+> There is a ~21 % relative magnitude shift, which the per-frame affine fit absorbs and which
+> `refine()` normalises away anyway (it feeds `log(D0/median)`). Retraining B on v4 was therefore
+> not required for these numbers. Raw output:
+> [`heldout_v4.json`](../docs/demo/benchmarks/heldout_v4.json),
+> [`heldout_v4_bothclean.json`](../docs/demo/benchmarks/heldout_v4_bothclean.json).
+
+### A dead-gradient trap in the distillation loss, found doing this
+
+The first re-distill attempt **froze for 39 epochs** at val_ssi 167.24 (v3's reference: 3.51),
+identically for AMP on/off and three learning rates — the giveaway that the loss had stopped
+depending on the prediction.
+
+`losses.align_ssi` clamped the SSI alignment scale to `a >= 0`. At exactly zero,
+`aligned = 0·pred + mean(target)` is a **constant**, so `∂ssi/∂pred` is identically zero and
+the model can never recover. A random init is mildly anti-correlated with the teacher
+(corr −0.12, chance), least squares asks for `a = −48`, the clamp sets 0, and training dies.
+Only `gradient_loss` retained a path, which is why the total moved briefly then locked.
+
+The clamp existed for a real reason — its docstring records a from-scratch re-distill
+converging *sign-inverted* at ρ −0.998 — but it makes ~half of random seeds unrecoverable, and
+it is in committed code (`936775f`), so it would break any re-distill, not just ours.
+
+Fixed by flooring `a` at `A_FLOOR_FRAC = 0.01` of the std-matching scale: the aligned output
+still depends on `pred`, so the gradient survives and still pushes toward positive correlation,
+while the sign-inverted basin stays excluded. Verified — ssi-only gradient **0 → 21,518**, and
+a single-batch overfit reaches **corr +0.9939** with the teacher.
 
 ## ZJU-L5 — the first open-loop evaluation, and what it exposed
 
@@ -432,6 +513,53 @@ alone.** At our deployed 1640×1232 (6.5× the pixels) `pipeline.run()` is 52.2 
 > silently inflated an earlier DEPTHOR-Small measurement to 166 ms, 2× the clean 79.4 ms;
 > network-only cannot exceed end-to-end, which is what exposed it. Check the GPU is idle.
 
+### Does restricting to the ToF region flatter us? No — the gap is uniform
+
+Our numbers are reported split by whether a pixel lies inside the ToF footprint; the published
+DEPTHOR numbers are whole-frame. Putting our inside-footprint row beside their whole-frame row
+compares **different evaluation sets** — and it makes us look far better than we are.
+
+Since their weights are public the objection can be removed rather than caveated.
+[`depthor_regions.py`](../tools/diagnostics/depthor_regions.py) drives their model and scores it
+through **our** `metrics.py`, with **our** coverage masks, GT gate and regions — identical code
+on both sides. (Their own `evaluate.py` cannot do this: its prediction-saving block is commented
+out, and its `compute_errors` key named `mae` is actually AbsRel.)
+
+Harness check first — our re-score of their model against their paper:
+
+| | our re-score | published |
+|---|---|---|
+| DEPTHOR-Small Rel | 0.081 | 0.079 |
+| DEPTHOR-Large Rel | 0.077 | 0.075 |
+| DEPTHOR-Large δ₁ | 0.929 | 0.933 |
+
+Within 0.002–0.004 despite a different GT gate, so the region numbers can be trusted:
+
+| region | ours *(DAv2-L, no learned fusion)* | DEPTHOR-Small | DEPTHOR-Large | our gap vs Small |
+|---|---|---|---|---|
+| all valid GT | Rel 0.086 / δ₁ 0.908 | 0.081 / 0.920 | 0.077 / 0.929 | −6 % |
+| **inside footprint** | Rel 0.052 / δ₁ 0.968 | 0.050 / 0.973 | 0.048 / 0.975 | −4 % |
+| **outside footprint** | Rel 0.128 / δ₁ 0.835 | 0.119 / 0.857 | 0.113 / 0.874 | −8 % |
+
+**The gap is nearly uniform across regions.** Restricting to the ToF footprint improves our
+absolute numbers a lot (Rel 0.086 → 0.052) but improves theirs by the same proportion. Earlier
+it looked as though we were close to DEPTHOR inside the footprint (0.052 against their *published*
+0.079) — that was **entirely the region mismatch**, not a real advantage.
+
+So the defensible claim is: consistently **4–8 % behind DEPTHOR-Small on Rel in every region,
+with zero learned fusion** against their 6 M completion head — and that this is *not*
+region-dependent, which the paper must not imply.
+
+One asymmetry that does **not** apply: their dataloader feeds `sparse_depth` as **64 single
+pixels** (nonzero fraction 1e-4), the same sparse-point form we splat — not filled zone
+rectangles. The ~50 %-of-frame footprint is purely an evaluation region derived from the
+dataset's `fr`, and it applies identically to both methods.
+
+RMSE remains the one metric where the gap is large rather than marginal — ours 0.984 against
+their 0.371 whole-frame, 2.7× — consistent with
+[the far-field ceiling](#the-far-field-ceiling--mechanism-and-what-does-and-does-not-fix-it)
+rather than with typical-pixel accuracy.
+
 ## The far-field ceiling — mechanism, and what does and does not fix it
 
 The single largest error source in the system, found 2026-07-29. Root cause of two separate
@@ -577,9 +705,22 @@ refuted by measurement, not just untested. **`1/b` is a bias/variance knob, not 
   so `/depth_var` no longer reports ±8 cm on pixels that are metres wrong.
 - **`to_metric_depth_valid()`** marks pixels clipped at the `1e-4` singularity as invalid
   rather than emitting an arbitrary 10,000 m the fit has no information about.
-- **`b_prior` is NOT changed from 0 in deployment.** It was chosen on ZJU-L5 train, whose
-  anchor distribution (median 1.59 m) differs sharply from ours (0.49 m). Adopting it on the
-  robot requires its own validation on our data.
+- **`b_prior` stays 0 in deployment — validated, and it does NOT transfer.** Swept on 300 of
+  our own logs with [`ceiling_diag.py`](../tools/diagnostics/ceiling_diag.py):
+
+  | `b_prior` | ceiling | 0.5–1.5 m | 3–6.5 m | MAE | medAE |
+  |---|---|---|---|---|---|
+  | **0** *(default)* | 1.43 m | **0.104 m** | 2.355 m | 0.301 m | **0.060 m** |
+  | 0.003 *(ZJU-L5's pick)* | 1.45 m | 0.105 m | 2.340 m | 0.301 m | 0.060 m |
+  | 0.01 | 1.50 m | 0.106 m | 2.308 m | 0.300 m | 0.061 m |
+  | 0.03 | 1.64 m | 0.112 m | **2.223 m** | **0.299 m** | 0.063 m |
+
+  At 0.003 the ceiling moves 1.43 → 1.45 m and nothing else changes. Even at 0.03 the −5.6 %
+  far-field gain is paid for in the near field and medAE gets worse. The cause is the anchor
+  distribution: ours is median **0.49 m** with 51 % under half a metre, so `b` is dominated by
+  near anchors and the same ridge strength barely registers, where ZJU-L5's median 1.59 m
+  anchors let it bite. A hyperparameter tuned on one sensor's range distribution does not
+  carry to another's — which is why it was swept here before being adopted.
 
 ### The honest limitation to state in the paper
 
@@ -1049,28 +1190,63 @@ Consequence for the roadmap: **raising the ToF rate buys nothing until perceptio
 and switching ToF I²C→SPI is bounded to ~+31 % anyway because integration time is ~77 % of the
 ToF frame period.
 
-### ⚠ Stage 7c/4b/7d are NOT yet affordable
+### Stage 7c/4b/7d cost, and the four fixes that made them affordable
 
-Measured with [`time_pipeline.py`](../tools/diagnostics/time_pipeline.py) on 2026-07-30 —
-`pipeline.run()`, 1640×1232, backbone + `residual_v4_last`:
+Measured with [`time_pipeline.py`](../tools/diagnostics/time_pipeline.py), `pipeline.run()`,
+backbone + `residual_v4_last`, nothing else on the GPU.
 
-| blend | ROI | median | Hz |
-|---|---|---|---|
-| off | off | 52.2 ms | **19.2** |
-| **on** | off | 108.9 ms | 9.2 |
-| **on** | **on** | **379.9 ms** | **2.6** |
+**As first written the two stages cost 7.4× — unusable:**
 
-Enabling both as written costs **7.4×** — unusable. Causes are implementation, not concept:
-the blend runs `distanceTransformWithLabels` over the full 2 MP on the CPU (+57 ms), and
-`roi.pixel_roi_mask` back-projects every one of 2 M pixels into float64 (+271 ms).
+| 1640×1232 | blend | ROI | median | Hz |
+|---|---|---|---|---|
+| before | off | off | 52.2 ms | 19.2 |
+| before | on | off | 108.9 ms | 9.2 |
+| before | **on** | **on** | **379.9 ms** | **2.6** |
 
-`pixel_roi_mask` has a `stride` argument for exactly this, but it was **broken** — it wrote
-`out[::stride, ::stride] = m` and left the rest `False`, so the inside-fraction collapsed
-0.683 → 0.011 at stride 8 and would have marked nearly the whole frame out-of-ROI. Fixed to
-upsample (`np.repeat`). It was dead code until wired in, so the bug had never been exercised.
-**Both stages still need optimising and re-timing before any live run.**
+Component profile located it: RANSAC plane fit **20.9 ms/frame**, `pixel_roi_mask` at full
+resolution **283 ms**, the blend's 2 MP CPU `distanceTransformWithLabels` **56 ms**.
 
-Found offline, on logged frames, which is the point of having the harness.
+**Four fixes:**
+
+1. **`roi.pixel_roi_mask(stride=)` was broken** — it wrote `out[::stride, ::stride] = m` and
+   left the rest `False`, collapsing the inside-fraction 0.683 → 0.011 at stride 8. So the
+   one knob intended for this was unusable. Fixed to upsample (`np.repeat`). Dead code until
+   wired in, so never exercised. At stride 8: **283 → 5.6 ms**.
+2. **Blend distance transform at 1/4 resolution** (`BLEND_SCALE`). The weight is a smoothstep
+   over ~20 px and the nearest-anchor depth is a Voronoi diagram, so both survive it.
+   Validated on real frames against full resolution: mean |diff| **0.0022 m**, p99 0.040 m.
+   **56 → 33 ms.**
+   *(A synthetic test with randomly scattered anchors suggested p99 1.7 m — misleading,
+   because real anchors are spatially coherent and confined to the ToF box. Validate on real
+   frames.)*
+3. **GPU offload of the full-frame tails** — `gpu_ops.blend_apply` and
+   `gpu_ops.roi_sigma_floor`. Those were ~8 and ~3 full-frame float passes respectively;
+   matches numpy to 1e-6. Same problem and same remedy as `ResidualRefiner.refine`, which was
+   ~70 ms on the CPU before it was offloaded.
+4. **`PlaneTracker(refit_every=10)`** — the camera is rigidly mounted and the plane is
+   near-constant (normal stable to 0.05, height to 0.02 m across three captures), so
+   re-RANSACing every frame bought nothing. Cached EMA plane in between, which is already the
+   documented behaviour for frames that cannot fit one. **20.9 → ~2 ms** amortised.
+
+**After:**
+
+| resolution | blend | ROI | median | Hz |
+|---|---|---|---|---|
+| 1640×1232 | off | off | 52.5 ms | 19.0 |
+| 1640×1232 | on | off | 70.0 ms | 14.3 |
+| **1640×1232** | **on** | **on** | **80.7 ms** | **12.4** |
+| 640×480 | off | off | 20.2 ms | 49.6 |
+| **640×480** | **on** | **on** | **26.3 ms** | **38.0** |
+
+Both stages now cost **28 ms** together at full resolution, down from 328 ms.
+
+> **Still a real cost, and still unconfirmed live.** `pipeline.run()` is 52.5 ms offline
+> against 73 ms for the deployed node, so ROS transport + CPU rectification add ~20 ms.
+> Extrapolating, the deployed rate with both stages on would be ~101 ms ≈ **10 Hz, down from
+> 13.7** — an estimate, not a measurement. Confirm on the robot before treating it as the
+> deployed configuration; `blend:=false roi_enable:=false` restores the old behaviour.
+
+All of it found and fixed offline on logged frames, which is the point of having the harness.
 
 > **With Network B enabled** (`residual_engine:=…`), `/depth` used to drop to **~7 Hz** —
 > B's `refine()` upsampled/applied its 3 fields over 2 MP **on the CPU**. Now GPU-offloaded;

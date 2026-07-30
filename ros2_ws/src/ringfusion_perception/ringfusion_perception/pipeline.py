@@ -30,6 +30,13 @@ from .residual import MAX_DEPTH_M
 # is not conservative -- it is the minimum honest signal.
 ROI_OUTSIDE_SIGMA_FRAC = 1.0
 
+# roi.pixel_roi_mask back-projects every pixel into float64 3D points: at 2 MP that is
+# ~271 ms, which alone took pipeline.run from 9.2 to 2.6 Hz. The mask only gates the sigma
+# floor, so an 8 px boundary quantisation is irrelevant to its purpose. NOTE this argument
+# was BROKEN until 2026-07-30 -- it scattered instead of upsampling, collapsing the
+# inside-fraction from 0.683 to 0.011 -- so it had never been usable.
+ROI_MASK_STRIDE = 8
+
 
 def splat_anchors(u, v, z, inb, shape):
     """Write each in-image ToF zone's camera-frame depth into an empty map at its
@@ -51,7 +58,7 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
         blend=True, blend_near=blend_mod.NEAR_DEG, blend_far=blend_mod.FAR_DEG,
         roi_enable=True, roi_weight_fit=False,
         roi_reach_max=roi.REACH_MAX_M, roi_height_max=roi.HEIGHT_MAX_M,
-        plane_tracker=None):
+        plane_tracker=None, roi_mask_stride=ROI_MASK_STRIDE):
     """One perception frame.
 
     Args:
@@ -213,10 +220,14 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
     roi_mask = None
     if roi_enable and plane is not None:
         roi_mask = roi.pixel_roi_mask(metric, K, plane, reach_max=roi_reach_max,
-                                      height_max=roi_height_max)
+                                      height_max=roi_height_max, stride=roi_mask_stride)
         if var is not None:
-            floor_var = (ROI_OUTSIDE_SIGMA_FRAC * metric.astype(np.float32)) ** 2
-            var = np.where(roi_mask, var, np.maximum(var, floor_var)).astype(np.float32)
+            if gpu:
+                var = gpu_ops.roi_sigma_floor(var, metric, roi_mask,
+                                              ROI_OUTSIDE_SIGMA_FRAC)
+            else:
+                floor_var = (ROI_OUTSIDE_SIGMA_FRAC * metric.astype(np.float32)) ** 2
+                var = np.where(roi_mask, var, np.maximum(var, floor_var)).astype(np.float32)
 
     # Stage 8 -- unproject metric depth to a camera-frame point cloud
     cloud = (gpu_ops.unproject_cloud(metric, K, cloud_stride) if gpu

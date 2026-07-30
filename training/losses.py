@@ -16,17 +16,25 @@ import torch
 
 # --- backbone distillation --------------------------------------------------
 
+# Lower bound on the SSI alignment scale, as a fraction of the std-matching scale. Must be
+# > 0: at exactly 0 the aligned output stops depending on `pred` and the gradient dies (see
+# align_ssi). 0.01 is small enough not to distort a healthy fit and large enough to keep a
+# usable gradient when the student starts anti-correlated.
+A_FLOOR_FRAC = 0.01
+
+
 def align_ssi(pred, target, lock_positive=True):
     """Least-squares scale+shift aligning pred to target. Same math as Stage 5.
 
-    lock_positive clamps the alignment scale a >= 0. Teacher and student both emit
+    lock_positive FLOORS the alignment scale at a small positive value (it used to clamp to
+    exactly 0, which killed the gradient -- see the note in the body). Teacher and student emit
     NON-NEGATIVE disparity (the student head ends in ReLU), so the physically correct
     scale is positive. Left free, a<0 gives a mirror-image minimum: a SIGN-FLIPPED
     student (large where the teacher is small) aligns just as well and scores an
     equally low SSI loss, so distillation can silently converge inverted -- which is
     exactly what a from-scratch re-distill did (rho -0.998). Clamping a>=0 removes that
     basin so the loss only rewards the correct sign. b is then the LS-optimal shift for
-    the clamped a: b = mean(t - a*p)  (identical to the old b whenever a is unclamped)."""
+    the floored a: b = mean(t - a*p)  (identical to the free-fit b whenever a is unfloored)."""
     p = pred.flatten(1)
     t = target.flatten(1)
     ones = torch.ones_like(p)
@@ -35,7 +43,23 @@ def align_ssi(pred, target, lock_positive=True):
     det = s_pp * s_1 - s_p * s_p
     a = torch.where(det.abs() > 1e-8, (s_pt * s_1 - s_p * s_t) / det, torch.ones_like(det))
     if lock_positive:
-        a = a.clamp(min=0.0)
+        # DO NOT clamp to exactly 0. That was a dead-gradient trap: at a>=0 boundary the
+        # aligned output becomes 0*pred + mean(target), a CONSTANT, so d(ssi)/d(pred) is
+        # identically zero and the model can never recover. Measured 2026-07-30 on a
+        # from-scratch re-distill: a random init is mildly anti-correlated with the teacher
+        # (corr -0.12, chance), least squares asks for a = -48, the clamp sets a = 0, and
+        # ssi_loss then reports 189.95 with EXACTLY zero gradient for every subsequent step.
+        # Training froze at val_ssi 167.24 for 39 epochs against v3's 3.51, identically for
+        # amp on/off and three learning rates -- the giveaway that the loss no longer
+        # depended on the prediction at all.
+        #
+        # Floor `a` at a small POSITIVE fraction of the scale that would match the two
+        # standard deviations instead. The aligned output still depends on pred, so the
+        # gradient survives and pushes the student toward positive correlation, which is
+        # what the clamp was for. The original sign-inversion basin (rho -0.998) stays
+        # excluded because a can never go negative.
+        scale_ref = (t.std(1) / p.std(1).clamp(min=1e-6)) * A_FLOOR_FRAC
+        a = torch.maximum(a, scale_ref)
     b = (s_t - a * s_p) / s_1
     return a.view(-1, 1, 1, 1) * pred + b.view(-1, 1, 1, 1)
 

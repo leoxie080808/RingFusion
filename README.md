@@ -72,13 +72,15 @@ Perception, not the ToF, is the current constraint
 | | value |
 |---|---|
 | `/depth`, `/depth_var`, `/cloud` | **13.7 Hz** *(deployed node, incl. ROS + rectification)* |
-| Depth error, extrapolating away from the ToF | **0.042 m** median (`center` protocol) |
-| Depth error, interpolating between ToF zones | **0.009 m** median (`random` protocol) |
+| Depth error, extrapolating away from the ToF | **0.044 m** median (`center` protocol) |
+| Depth error, interpolating between ToF zones | **0.010 m** median (`random` protocol) |
 | Uncertainty quality, `corr(σ, \|error\|)` | **0.943** *(at ToF anchor pixels only — see limits)* |
 | Backbone agreement with truth, ρ | **0.917** *(deployed config; the projection sweep's best row was 0.914)* |
 
-*Configuration: `student_v3` + `residual_v4_last` + Stage 7c blend. Scored on 61 frames no
-version trained on.*
+*Configuration: `student_v4_heldout` + `residual_v4_last` + Stage 7c blend. Scored on **200
+frames Network A never trained on** — the first uncontaminated absolute numbers in the project.
+Previously published 0.042 / 0.009 were inflated by train/test overlap; the correction is
+**+5 %**, see [contamination](ros2_ws/README.md#traintest-contamination-quantified).*
 
 > The previously headlined **0.199 m** was measured **in-sample** — the on-robot harnesses
 > fitted and scored on the same ToF zones. A nearest-neighbour lookup scores 0.000 m under
@@ -234,7 +236,10 @@ Full detail, per-run numbers and the task tracker:
 3. **DEPTHOR-Small on the Orin**, then **ZJU-L5** — the two remaining external benchmarks.
 4. **Widen the validation split** — 61 frames is too noisy for checkpoint selection, and
    `last` beat `best` on both v4 and v5 (validation NLL does not track medAE).
-5. **Re-distill Network A** on the full set now that we know it was never the limiting factor.
+5. **Retrain Network B on ZJU-L5's train split** — would give a directly comparable *learned*
+   row there instead of analytic-path-only. Not built.
+6. **Re-distill Network A on the full ~15–20 k set** — now known not to have been the limiting
+   factor, and `student_v4_heldout` shows the pipeline trains correctly again.
 
 ## Output: point cloud → LiDAR / SLAM layer (planned)
 
