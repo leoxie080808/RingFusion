@@ -238,7 +238,7 @@ def roi_weights(pts, plane, weights=None, reach_max=REACH_MAX_M, height_max=HEIG
 
 
 def pixel_roi_mask(depth, K, plane, reach_max=REACH_MAX_M, height_max=HEIGHT_MAX_M,
-                   stride=1):
+                   stride=1, expand=True):
     """Dense per-pixel ROI mask from a metric depth map -- the form Network B's loss and
     the evaluation metrics need. Covers the whole frame, including everywhere the ToF has
     no coverage, because it runs off Network A's dense depth rather than the anchors."""
@@ -250,6 +250,12 @@ def pixel_roi_mask(depth, K, plane, reach_max=REACH_MAX_M, height_max=HEIGHT_MAX
     m = inside_mask(pts, plane, reach_max, height_max).reshape(z.shape)
     m &= z > 0
     if stride == 1:
+        return m
+    if not expand:
+        # Hand back the STRIDED mask and let the caller expand it where the data already
+        # lives. gpu_ops.roi_sigma_floor_lowres does exactly that on the GPU: the expansion
+        # below allocates and writes a full 2 MP bool array on the CPU only for it to be
+        # copied straight to the GPU, which profiled at 23.5 ms/frame on the robot.
         return m
     # UPSAMPLE, do not scatter. The previous version wrote `out[::stride, ::stride] = m`
     # and left every other pixel False, so the inside-fraction collapsed with stride

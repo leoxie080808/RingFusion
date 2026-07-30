@@ -1,0 +1,40 @@
+{
+ "label": "MISLABELLED AT CAPTURE: intended blend+ROI ON, actually measured a stale blend+ROI OFF launch (node params later read blend=False, roi_enable=False). Kept as a duplicate of the stages-OFF arm; superseded by rate_live_on_verified.json.",
+ "secs": 20.0,
+ "expect_hz": 9.9,
+ "topics": {
+  "image": {
+   "n": 602,
+   "hz": 29.995423585154985,
+   "median_ms": 33.05840492248535,
+   "p90_ms": 44.43669319152832,
+   "max_ms": 66.38979911804199
+  },
+  "tof": {
+   "n": 320,
+   "hz": 15.962028309053185,
+   "median_ms": 60.78696250915527,
+   "p90_ms": 71.35519981384277,
+   "max_ms": 130.76090812683105
+  },
+  "depth": {
+   "n": 267,
+   "hz": 13.323772824405996,
+   "median_ms": 74.58817958831787,
+   "p90_ms": 84.47599411010742,
+   "max_ms": 107.36775398254395
+  },
+  "cloud": {
+   "n": 267,
+   "hz": 13.32443605144728,
+   "median_ms": 74.47075843811035,
+   "p90_ms": 94.65837478637695,
+   "max_ms": 108.28804969787598
+  }
+ },
+ "depth_latency": {
+  "median_ms": 359.44557189941406,
+  "p90_ms": 385.908842086792,
+  "max_ms": 436.04207038879395
+ }
+}

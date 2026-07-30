@@ -156,6 +156,63 @@ def blend_apply(D_net, dist_px, D_tof, near_px, far_px):
     return out.cpu().numpy(), w.cpu().numpy()
 
 
+def _upsample_nearest(t, scale, h, w):
+    """Block-replicate `t` by an integer factor and crop to (h, w).
+
+    Exactly equivalent to np.repeat(np.repeat(t, s, 0), s, 1)[:h, :w] -- for an integer
+    scale factor, 'nearest' interpolation IS block replication. Verified elementwise
+    against the numpy form in the unit tests.
+    """
+    up = torch.nn.functional.interpolate(t[None, None], scale_factor=float(scale),
+                                         mode='nearest')[0, 0]
+    return up[:h, :w]
+
+
+def blend_apply_lowres(D_net, dist_r, D_tof_r, scale, near_px, far_px):
+    """blend_apply, but taking the REDUCED-resolution distance/depth maps.
+
+    blend_depth used to expand both maps to full resolution with np.repeat ON THE CPU and
+    then hand two 2 MP arrays to blend_apply, which copied them to the GPU. Profiled on the
+    robot that stage cost 23.2 ms/frame. The expansion is pure block replication, so doing it
+    on the GPU instead means copying 1/scale^2 as much data (at scale 4: 126 k values instead
+    of 2 M, a 16x reduction) and skipping two 2 MP CPU allocations entirely.
+
+    Numerically identical to blend_apply on the expanded inputs -- see test_blend_lowres.
+    """
+    d_small = _to_cuda(dist_r, np.float32)
+    tof_small = _to_cuda(D_tof_r, np.float32)
+    net = _to_cuda(D_net, np.float32)
+    h, w = net.shape
+    s = int(scale)
+    # dist_r is in REDUCED pixel units; scale to full-res pixels (was `dist_r * S` on CPU)
+    d = _upsample_nearest(d_small * float(s), s, h, w)
+    tof = _upsample_nearest(tof_small, s, h, w)
+    span = max(float(far_px) - float(near_px), 1e-6)
+    t = torch.clamp((d - float(near_px)) / span, 0.0, 1.0)
+    wgt = 1.0 - t * t * (3.0 - 2.0 * t)                  # smoothstep, 1 near -> 0 far
+    wgt = torch.where(tof > 0, wgt, torch.zeros_like(wgt))
+    out = wgt * tof + (1.0 - wgt) * net
+    return out.cpu().numpy(), wgt.cpu().numpy()
+
+
+def roi_sigma_floor_lowres(var, metric, mask_small, stride, frac):
+    """roi_sigma_floor, but taking the STRIDED mask instead of the expanded one.
+
+    Same problem and same fix as blend_apply_lowres. roi.pixel_roi_mask computes the mask on
+    a stride-8 grid and then np.repeats it to a full 2 MP bool array on the CPU purely so it
+    can be copied to the GPU; profiled at 23.5 ms/frame on the robot. At stride 8 the strided
+    mask is 63x smaller (31 k values against 2 M).
+    """
+    v = _to_cuda(var, np.float32)
+    m = _to_cuda(metric, np.float32)
+    h, w = v.shape
+    small = torch.from_numpy(
+        np.ascontiguousarray(mask_small, np.float32)).cuda(non_blocking=True)
+    inside = _upsample_nearest(small, int(stride), h, w) > 0.5
+    floor = (float(frac) * m) ** 2
+    return torch.where(inside, v, torch.maximum(v, floor)).cpu().numpy()
+
+
 def roi_sigma_floor(var, metric, roi_mask, frac):
     """GPU tail for Stage 7d: floor sigma outside the ROI at frac*D.
 

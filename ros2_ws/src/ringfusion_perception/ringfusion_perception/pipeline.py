@@ -58,7 +58,7 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
         blend=True, blend_near=blend_mod.NEAR_DEG, blend_far=blend_mod.FAR_DEG,
         roi_enable=True, roi_weight_fit=False,
         roi_reach_max=roi.REACH_MAX_M, roi_height_max=roi.HEIGHT_MAX_M,
-        plane_tracker=None, roi_mask_stride=ROI_MASK_STRIDE):
+        plane_tracker=None, roi_mask_stride=ROI_MASK_STRIDE, timings=None):
     """One perception frame.
 
     Args:
@@ -72,6 +72,14 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
       min_confidence  if >= 0 and confidence given, reject zones below this and
                       weight the fit by confidence. Default -1 = ignore confidence
                       entirely (uniform weights -- the original tested behaviour).
+      timings      optional dict; if given, each stage records its wall-clock ms into it.
+                   None (the default) skips every timer, so the deployed path pays nothing.
+                   Needed because the deployed rate (7.2 Hz) disagreed sharply with the
+                   offline benchmark (12.3 Hz) and a per-stage breakdown is the only way to
+                   find out which stage costs more on the robot than it does on logged
+                   frames. GPU stages are safe to time here: every gpu_ops call ends in a
+                   .cpu() copy, which blocks until the GPU has finished, so the elapsed
+                   time is the true cost rather than just the launch time.
 
     Returns dict:
       ok         bool. False if too few anchors to fit (nothing else populated).
@@ -85,8 +93,22 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
     K = calib['K']
     rows, cols = tof_dist_m.shape
 
+    if timings is None:
+        def _t(_name):                    # no-op: deployed path pays nothing
+            return None
+    else:
+        import time as _time
+
+        _mark = [_time.perf_counter()]
+
+        def _t(name):
+            now = _time.perf_counter()
+            timings[name] = timings.get(name, 0.0) + (now - _mark[0]) * 1e3
+            _mark[0] = now
+
     # Stage 2 -- backbone relative disparity
     disp = backbone.infer(rgb)
+    _t('2_backbone')
 
     # Stage 3 -- project each ToF zone to a camera pixel (parallax-correct)
     proj = geo.project_zone_to_pixel(
@@ -112,6 +134,8 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
         weights = np.maximum(conf_flat[inb], 1.0)  # trust high-confidence zones more
     else:
         weights = np.ones_like(inv_depth)
+
+    _t('3_4_project_pair')
 
     # Stage 4b -- geometric ROI weighting (roi.py). The depth map exists to serve the
     # local traversable area; the far wall and the shelving above it drag a 2-parameter
@@ -141,6 +165,8 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
             weights = roi.roi_weights(pts_a, plane, weights,
                                       reach_max=roi_reach_max, height_max=roi_height_max)
 
+    _t('4b_roi_plane')
+
     # Stage 5 -- closed-form weighted least squares + one Huber pass
     fit = anc.solve_robust(disp_at, inv_depth, weights, iters=1)
     if fit is None:
@@ -154,6 +180,8 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
     # Stage 5 -- closed-form metric depth (D0)
     metric = (gpu_ops.to_metric_depth(disp, a, b) if gpu
               else anc.to_metric_depth(disp, a, b))
+
+    _t('5_fit_metric')
 
     # Stage 6 -- analytic per-pixel variance by the delta method.
     # Var[D](p) = D^4 * j^T Cov(a,b) j,  j = (disp, 1). The D^4 factor is why far
@@ -172,6 +200,8 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
     # Anchors are needed by BOTH the residual and the blend, so splat once regardless.
     anchor_depth, anchor_mask = splat_anchors(u, v, z, inb, (h, w))
 
+    _t('6_variance')
+
     # Stage 7 -- residual refinement (identity if residual is None/mock). Stays numpy;
     # gpu_ops returns numpy, so Network B sees exactly the types it did before -- in
     # particular an UNCLAMPED D0, which is what build_residual_inputs produced during
@@ -182,6 +212,8 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
         if var is not None and var_extra is not None:
             var = var + var_extra                  # total = analytic + learned
 
+    _t('7_residual')
+
     # Stage 7b -- far-field clamp. anc/gpu_ops.to_metric_depth bound inverse depth at
     # min_disp=1e-4, so a near-singular fit emits up to 10 000 m. ResidualRefiner.refine
     # already caps its own output, which meant the Network-B-OFF fallback was the only
@@ -190,6 +222,8 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
     # unchanged at 0.066, i.e. it removes a pure far-field tail and touches nothing else.
     # Applied before the blend so no 10 000 m value can be averaged into a good one.
     metric = np.clip(metric, None, MAX_DEPTH_M)
+
+    _t('7b_clamp')
 
     # Stage 7c -- distance-weighted blend of raw ToF against the network (see blend.py).
     # Neither source wins everywhere: nearest-zone ToF is ~2x better under 3 deg from an
@@ -201,6 +235,8 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
         fx = Kf[0] if Kf.size == 4 else Kf.reshape(3, 3)[0, 0]
         metric, _ = blend_depth(metric, anchor_depth, anchor_mask, fx=float(fx),
                                 near_deg=blend_near, far_deg=blend_far)
+
+    _t('7c_blend')
 
     # Stage 7d -- tell the truth about depth OUTSIDE the ROI.
     #
@@ -219,22 +255,40 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
     # The mask is returned so consumers can drop those points instead of trusting them.
     roi_mask = None
     if roi_enable and plane is not None:
+        # On GPU, keep the mask STRIDED and expand it device-side (see
+        # gpu_ops.roi_sigma_floor_lowres). Expanding on the CPU built a 2 MP bool array
+        # purely to copy it across, and profiled at 23.5 ms/frame on the robot.
         roi_mask = roi.pixel_roi_mask(metric, K, plane, reach_max=roi_reach_max,
-                                      height_max=roi_height_max, stride=roi_mask_stride)
+                                      height_max=roi_height_max, stride=roi_mask_stride,
+                                      expand=not gpu)
         if var is not None:
             if gpu:
-                var = gpu_ops.roi_sigma_floor(var, metric, roi_mask,
-                                              ROI_OUTSIDE_SIGMA_FRAC)
+                var = gpu_ops.roi_sigma_floor_lowres(var, metric, roi_mask,
+                                                     roi_mask_stride,
+                                                     ROI_OUTSIDE_SIGMA_FRAC)
             else:
                 floor_var = (ROI_OUTSIDE_SIGMA_FRAC * metric.astype(np.float32)) ** 2
                 var = np.where(roi_mask, var, np.maximum(var, floor_var)).astype(np.float32)
+
+    _t('7d_roi_sigma')
 
     # Stage 8 -- unproject metric depth to a camera-frame point cloud
     cloud = (gpu_ops.unproject_cloud(metric, K, cloud_stride) if gpu
              else geo.unproject_depth_to_cloud(metric, K, model='pinhole', stride=cloud_stride))
 
+    _t('8_cloud')
+
     return {'ok': True, 'n_anchors': int(inb.sum()),
             'metric': metric.astype(np.float32),
             'var': None if var is None else var.astype(np.float32),
             'cloud': cloud, 'a': a, 'b': b,
-            'roi_mask': roi_mask, 'plane': plane}
+            # roi_mask is STRIDED on the GPU path and full-resolution on the numpy one --
+            # expanding it CPU-side purely to return it would reintroduce the 2 MP
+            # allocation this stage was optimised to avoid. roi_mask_stride says which:
+            # 1 means full resolution, N means each mask cell covers an NxN pixel block, so
+            # a consumer wanting full resolution does
+            #     np.repeat(np.repeat(m, N, 0), N, 1)[:h, :w]
+            'roi_mask': roi_mask, 'roi_mask_stride': (roi_mask_stride if
+                                                      (roi_mask is not None and gpu and
+                                                       roi_mask_stride > 1) else 1),
+            'plane': plane}

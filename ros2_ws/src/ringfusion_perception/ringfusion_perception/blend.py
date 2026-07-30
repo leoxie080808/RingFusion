@@ -146,9 +146,17 @@ def blend_depth(D_net, anchor_depth, anchor_mask, fx,
         rys, rxs = np.nonzero(red_m)
         lut = np.zeros(int(labels_r.max()) + 1, np.float32)
         lut[1:rys.size + 1] = red_d[rys, rxs]
+        tof_r = lut[labels_r]
+        # Keep the reduced maps; they are expanded on the GPU below (or on the CPU in the
+        # numpy fallback). Expanding here would build two 2 MP arrays just to copy them.
+        near_px_e = float(fx) * np.tan(np.deg2rad(near_deg))
+        far_px_e = float(fx) * np.tan(np.deg2rad(far_deg))
+        from . import gpu_ops as _g
+        if _g.available():
+            return _g.blend_apply_lowres(D_net, dist_r, tof_r, S, near_px_e, far_px_e)
         # dist_r is in reduced pixels -> scale back to full-res pixel units
         dist = np.repeat(np.repeat(dist_r * S, S, axis=0), S, axis=1)[:h, :w]
-        D_tof = np.repeat(np.repeat(lut[labels_r], S, axis=0), S, axis=1)[:h, :w]
+        D_tof = np.repeat(np.repeat(tof_r, S, axis=0), S, axis=1)[:h, :w]
 
     near_px = float(fx) * np.tan(np.deg2rad(near_deg))
     far_px = float(fx) * np.tan(np.deg2rad(far_deg))

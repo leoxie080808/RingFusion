@@ -12,7 +12,8 @@ tracker live in [`ros2_ws/README.md`](ros2_ws/README.md).
 
 ![RingFusion pipeline running live](docs/demo/gifs/pipeline_4panel.gif)
 
-*Live on the Orin at 13.7 Hz end-to-end. Left to right: rectified camera · 32×32 ToF (the only real
+*Live on the Orin at 13.7 Hz end-to-end (blend + ROI off; the default configuration measures
+7.4 Hz — see Status below). Left to right: rectified camera · 32×32 ToF (the only real
 distance measurement) · fused metric depth · top-down obstacle map. Full 34 s clip and an
 **interactive 3D flythrough** of the same drive:
 [`docs/demo/network_b_v1_vs_v2.html`](docs/demo/network_b_v1_vs_v2.html) — open it in a browser,
@@ -64,14 +65,23 @@ estimate, supervised on held-out ToF zones.
 
 ## Status — 2026-07-30
 
-**Running live end-to-end on the Orin with both real networks at 13.7 Hz** — that figure is
-the full node including ROS transport and CPU rectification; `pipeline.run()` alone is 19.2 Hz.
-Perception, not the ToF, is the current constraint
-([reconciled here](ros2_ws/README.md#throughput-reconciled)).
+**Running live end-to-end on the Orin with both real networks.** The rate depends on whether
+the two optional stages (Stage 7c blend, Stage 4b/7d ROI) are on — both default to **on**:
+
+| configuration | measured on the robot |
+|---|---|
+| blend + ROI **on** (default) | **7.4 Hz** ❌ below the ToF's 8.3 Hz |
+| blend + ROI **off** | **13.3 Hz** ✅ |
+
+Measured 2026-07-30 with [`rate_live.py`](tools/diagnostics/rate_live.py); earlier figures of
+13.7 Hz predate these stages and correspond to the second row. Perception, not the ToF, is the
+constraint ([reconciled here](ros2_ws/README.md#throughput-reconciled)); the per-stage
+breakdown and the reason the offline estimate was 38 ms optimistic are
+[here](ros2_ws/README.md#the-deployed-rate-measured-2026-07-30).
 
 | | value |
 |---|---|
-| `/depth`, `/depth_var`, `/cloud` | **13.7 Hz** *(deployed node, incl. ROS + rectification)* |
+| `/depth`, `/depth_var`, `/cloud` | **7.4 Hz** default / **13.3 Hz** with blend+ROI off *(deployed node, incl. ROS + rectification)* |
 | Depth error, extrapolating away from the ToF | **0.044 m** median (`center` protocol) |
 | Depth error, interpolating between ToF zones | **0.010 m** median (`random` protocol) |
 | Uncertainty quality, `corr(σ, \|error\|)` | **0.943** *(at ToF anchor pixels only — see limits)* |
