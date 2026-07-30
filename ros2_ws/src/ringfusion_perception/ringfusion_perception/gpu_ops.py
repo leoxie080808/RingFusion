@@ -195,6 +195,57 @@ def blend_apply_lowres(D_net, dist_r, D_tof_r, scale, near_px, far_px):
     return out.cpu().numpy(), wgt.cpu().numpy()
 
 
+def roi_mask_and_sigma_floor(var, metric, K, plane, reach_max, height_max, stride, frac):
+    """Stage 7d end to end on the GPU: build the ROI mask AND apply the sigma floor.
+
+    Replaces roi.pixel_roi_mask + roi_sigma_floor_lowres, which together profiled at 24.0 ms
+    on the robot -- the largest remaining cost after the blend fix. Three things were wrong
+    with doing it CPU-side:
+
+      1. `np.asarray(depth, float)` promoted the WHOLE 2 MP float32 map to float64 -- a 16 MB
+         allocation -- when only the ~31 k strided samples are ever read from it.
+      2. backprojection and the height/reach geometry then ran in float64 on the CPU.
+      3. `metric` and `var` were already being copied to the GPU for the floor anyway, so the
+         mask was computed on one device using data that had to reach the other regardless.
+
+    Here the strided subsample, the backprojection, the plane geometry, the mask and the floor
+    all run on device in float32, from the single copy of metric/var the floor already needed.
+
+    Returns (var_floored, mask_small) -- mask_small is the STRIDED mask, matching what
+    roi.pixel_roi_mask(expand=False) returns, so the pipeline's return value is unchanged.
+    """
+    v = _to_cuda(var, np.float32)
+    m = _to_cuda(metric, np.float32)
+    h, w = m.shape
+
+    fx, fy, cx, cy = (float(x) for x in (np.asarray(K).ravel() if np.asarray(K).size == 4
+                                         else (K[0, 0], K[1, 1], K[0, 2], K[1, 2])))
+    s = int(stride)
+    z = m[::s, ::s]                                    # strided view, no full-size copy
+    hs, ws = z.shape
+    us = torch.arange(0, w, s, device='cuda', dtype=torch.float32)[:ws]
+    vs = torch.arange(0, h, s, device='cuda', dtype=torch.float32)[:hs]
+    x = (us[None, :] - cx) * z / fx
+    y = (vs[:, None] - cy) * z / fy
+
+    n, d = plane
+    n0, n1, n2 = (float(n[0]), float(n[1]), float(n[2]))
+    d = float(d)
+    height = x * n0 + y * n1 + z * n2 + d              # signed distance above the floor
+    # Project points and the camera origin onto the plane, then measure the distance there.
+    # c_flat = -d * n, so (p_flat - c_flat) = p - height*n + d*n.
+    ex = x - height * n0 + d * n0
+    ey = y - height * n1 + d * n1
+    ez = z - height * n2 + d * n2
+    reach = torch.sqrt(ex * ex + ey * ey + ez * ez)
+
+    inside_s = (reach <= float(reach_max)) & (height <= float(height_max)) & (z > 0)
+    inside = _upsample_nearest(inside_s.to(torch.float32), s, h, w) > 0.5
+    floor = (float(frac) * m) ** 2
+    out = torch.where(inside, v, torch.maximum(v, floor))
+    return out.cpu().numpy(), inside_s.cpu().numpy()
+
+
 def roi_sigma_floor_lowres(var, metric, mask_small, stride, frac):
     """roi_sigma_floor, but taking the STRIDED mask instead of the expanded one.
 

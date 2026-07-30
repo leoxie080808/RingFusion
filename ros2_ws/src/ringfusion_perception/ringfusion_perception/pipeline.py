@@ -254,19 +254,22 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
     # ROI_OUTSIDE_SIGMA_FRAC * D -- a "could be anywhere" signal rather than a number.
     # The mask is returned so consumers can drop those points instead of trusting them.
     roi_mask = None
+    mask_stride_out = 1        # what roi_mask is actually at; see the return dict
     if roi_enable and plane is not None:
-        # On GPU, keep the mask STRIDED and expand it device-side (see
-        # gpu_ops.roi_sigma_floor_lowres). Expanding on the CPU built a 2 MP bool array
-        # purely to copy it across, and profiled at 23.5 ms/frame on the robot.
-        roi_mask = roi.pixel_roi_mask(metric, K, plane, reach_max=roi_reach_max,
-                                      height_max=roi_height_max, stride=roi_mask_stride,
-                                      expand=not gpu)
-        if var is not None:
-            if gpu:
-                var = gpu_ops.roi_sigma_floor_lowres(var, metric, roi_mask,
-                                                     roi_mask_stride,
-                                                     ROI_OUTSIDE_SIGMA_FRAC)
-            else:
+        if gpu and var is not None:
+            # Whole stage on the GPU: mask construction AND the sigma floor, from the one
+            # copy of metric/var the floor needed anyway. The CPU version promoted the full
+            # 2 MP depth map to float64 just to read ~31 k strided samples out of it.
+            # roi_mask comes back STRIDED (see roi_mask_stride in the return dict).
+            var, roi_mask = gpu_ops.roi_mask_and_sigma_floor(
+                var, metric, K, plane, roi_reach_max, roi_height_max,
+                roi_mask_stride, ROI_OUTSIDE_SIGMA_FRAC)
+            mask_stride_out = roi_mask_stride
+        else:
+            roi_mask = roi.pixel_roi_mask(metric, K, plane, reach_max=roi_reach_max,
+                                          height_max=roi_height_max,
+                                          stride=roi_mask_stride, expand=True)
+            if var is not None:
                 floor_var = (ROI_OUTSIDE_SIGMA_FRAC * metric.astype(np.float32)) ** 2
                 var = np.where(roi_mask, var, np.maximum(var, floor_var)).astype(np.float32)
 
@@ -288,7 +291,5 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
             # 1 means full resolution, N means each mask cell covers an NxN pixel block, so
             # a consumer wanting full resolution does
             #     np.repeat(np.repeat(m, N, 0), N, 1)[:h, :w]
-            'roi_mask': roi_mask, 'roi_mask_stride': (roi_mask_stride if
-                                                      (roi_mask is not None and gpu and
-                                                       roi_mask_stride > 1) else 1),
+            'roi_mask': roi_mask, 'roi_mask_stride': mask_stride_out,
             'plane': plane}

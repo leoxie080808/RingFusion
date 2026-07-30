@@ -17,10 +17,10 @@ ros2 launch ringfusion_bringup single_module.launch.py port:=/dev/ttyACM1 \
 
 `residual_v4_last` is the recommended residual — see
 [Network B v4](#network-b-v4--the-training-protocol-was-the-limitation). Stage 7c blend and the
-ROI/σ stages are on by default and cost 31 ms together at full resolution *offline* — but
-**measured on the robot 2026-07-30 they cost 70.7 ms and drop the deployed rate to 7.4 Hz,
-below the ToF's own 8.3 Hz.** See
-[the deployed rate, measured](#the-deployed-rate-measured-2026-07-30).
+ROI/σ stages are on by default and cost 19.8 ms together at full resolution *offline* — but
+measured on the robot they first added 70.7 ms and dropped the deployed rate to 7.2 Hz, below
+the ToF's own 8.3 Hz. Two GPU rewrites later the default configuration measures **10.4 Hz ✅**.
+See [the deployed rate, measured](#the-deployed-rate-measured-2026-07-30).
 `blend:=false roi_enable:=false` restores the pre-2026-07-30 behaviour and **13.3 Hz**.
 
 Two things changed on 2026-07-28 and they dominate everything measured before that date.
@@ -83,7 +83,7 @@ key to the rest.
 | **ZJU-L5** | Is the depth actually *right*, judged by a different device? | dense RealSense GT — **not our ToF** | **The only open-loop result.** Competitive on Rel/δ₁ with published methods; **2.7× worse on RMSE** — a far-field tail, not a typical-pixel problem. |
 | **DEPTHOR head-to-head** | How do we compare to published SOTA on identical data, identical metric code, identical regions? | dense RealSense GT | **4–8 % behind DEPTHOR-Small on Rel, uniformly across regions**, with *zero learned fusion* against their 6 M head. |
 | **Held-out re-distill** | Were the absolute numbers inflated because Network A trained on the eval set? | held-out ToF zones, on 200 frames Network A never saw | **Yes, by ~5 %.** Rankings unchanged. Numbers now clean. |
-| **Timing** | Does it run in real time, and how does that compare fairly? | wall clock on this Orin | 12.3 Hz at 1640×1232 with every stage on; **2.8× faster than DEPTHOR-Small** at their resolution, our whole pipeline against their network alone. |
+| **Timing** | Does it run in real time, and how does that compare fairly? | wall clock on this Orin | **10.4 Hz measured on the robot**, 14.1 Hz for `pipeline.run()` alone, both at 1640×1232 with every stage on; **3.1× faster than DEPTHOR-Small** at their resolution, our whole pipeline against their network alone. |
 | **Tape ground truth** | Is the **ToF itself** right? | a tape measure | ⬜ **NOT DONE.** The one thing nothing else can substitute for. |
 
 ### What "good" looks like for each one
@@ -100,16 +100,17 @@ evaluation as a whole.
 | ZJU-L5 vs published | **our Rel ↓ and RMSE ↓ below theirs, our δ₁ ↑ above theirs** | we beat CFPNet and PENet on Rel/δ₁, sit 4–8 % behind DEPTHOR-Small, and are **2.7× worse on RMSE** ❌ — the one target clearly missed |
 | DEPTHOR by region | **the gap should not depend on region.** A gap that shrinks inside the ToF footprint would mean we only look good where we have measurements | gap is −4 % inside, −8 % outside, −6 % overall → **uniform**, so no region-picking advantage ✅ (and none to claim) |
 | Held-out re-distill | **the clean numbers should be close to the contaminated ones.** A large gap would mean the published figures were fiction | +5 %, rankings unchanged ✅ |
-| Timing | **Hz ↑, ms ↓**, and stay above the ToF's 8.3 Hz complete-map rate | 12.3 Hz offline with every stage on ✅ — but **measured on the robot: 7.4 Hz ❌ FAILS**, below the 8.3 Hz ToF rate. 13.3 Hz ✅ with blend+ROI off. See [the deployed rate, measured](#the-deployed-rate-measured-2026-07-30) |
+| Timing | **Hz ↑, ms ↓**, and stay above the ToF's 8.3 Hz complete-map rate | **10.4 Hz measured on the robot ✅** with every stage on (7.2 Hz as first shipped — fixed by two GPU rewrites). 13.3 Hz with blend+ROI off. See [the deployed rate, measured](#the-deployed-rate-measured-2026-07-30) |
 | σ calibration | **coverage at ±1σ should hit 0.683 exactly** — this is a target, not a direction. Too low = overconfident, too high = σ inflated and useless | analytic σ in the far field: **0.229** ❌ badly overconfident |
 | Tape ground truth | **our depth ↔ tape agreement**, especially outside the ToF cone. The headline is the **outside/inside AbsRel ratio** — near 1.0 means the extrapolation holds up | ⬜ not collected; tooling built and tested, see [below](#tape-ground-truth-tools-built-and-tested-measurements-not-yet-taken) |
 
-**Scorecard as it stands: five targets met, three missed (far-field RMSE, σ calibration —
-both the same root cause — and the deployed rate), one unmeasured (tape).**
+**Scorecard as it stands: six targets met, two missed (far-field RMSE and σ calibration —
+both the same root cause), one unmeasured (tape).**
 
-The deployed rate moved from "unmeasured" to "missed" on 2026-07-30: the extrapolation said
-9.9 Hz, the robot said 7.2 Hz. That is the only target that got *worse* on contact with
-reality, and it is the reason extrapolated figures are now labelled as such throughout.
+The deployed rate went "unmeasured → missed → met" on 2026-07-30. The extrapolation said
+9.9 Hz, the robot said 7.2 Hz, and two GPU rewrites took it to 10.4 Hz. It is the reason
+extrapolated figures are now labelled as such throughout: the estimate was not merely
+imprecise, it was optimistic in a way that hid a failed target.
 
 ### The single most important thing to understand
 
@@ -129,8 +130,11 @@ why both are reported. Neither is "the" number.
 - **Does deployed σ flag its own errors in the far field?** Untested. The σ result below is the
   *analytic* term only, which is ~0.1 % of what `/depth_var` actually publishes.
 - ~~**Does the deployed node still hit its rate with the new stages?**~~ **ANSWERED
-  2026-07-30: no.** 7.2 Hz measured against 8.3 Hz needed. Fixed partially (7.4 Hz); the ROI
-  σ stage is the remaining cost. See [the deployed rate, measured](#the-deployed-rate-measured-2026-07-30).
+  2026-07-30.** Initially no — 7.2 Hz against 8.3 Hz needed. Now **10.4 Hz ✅** after moving
+  the blend expansion and the whole ROI mask onto the GPU. See
+  [the deployed rate, measured](#the-deployed-rate-measured-2026-07-30).
+- ~~**Latency: depth maps arrive 385 ms stale.**~~ **FIXED 2026-07-30** — queue depth 5 → 1
+  plus lazy rectification took it to **128.5 ms** with no change in throughput.
 
 ## Metric reference
 
@@ -575,20 +579,23 @@ Network-only, batch 1, 480×640, CUDA-synced, nothing else on the GPU:
 |---|---|---|
 | DEPTHOR-Small | 79.4 ms | 12.6 |
 | DEPTHOR-Large | 183.8 ms | 5.4 |
-| ours, `pipeline.run()`, blend + ROI **off** | 20.3 ms | 49.3 |
-| **ours, `pipeline.run()`, blend + ROI on (deployed)** | **28.4 ms** | **35.2** |
+| ours, `pipeline.run()`, blend + ROI **off** | 20.0 ms | 50.1 |
+| **ours, `pipeline.run()`, blend + ROI on (deployed)** | **25.8 ms** | **38.7** |
 
-**2.8× faster than DEPTHOR-Small in the deployed configuration — and that is our *entire*
-pipeline against their network alone** (3.9× with the two optional stages off).
+**3.1× faster than DEPTHOR-Small in the deployed configuration — and that is our *entire*
+pipeline against their network alone** (4.0× with the two optional stages off).
 
-> Quote the **28.4 ms** row. An earlier revision of this section reported 21.3 ms / 3.7×
+> Quote the **25.8 ms** row. An earlier revision of this section reported 21.3 ms / 3.7×
 > against a "full" pipeline that in fact had blend and ROI off, while the summary table at
 > the top of this file quoted 3.0× from the everything-on number — the same comparison
 > appearing as two different ratios. Both are now the everything-on figure, re-measured
 > 2026-07-30.
 
-At our deployed 1640×1232 (6.5× the pixels) `pipeline.run()` is **81.4 ms / 12.3 Hz** with
-every stage on, 50.3 ms / 19.9 Hz with blend and ROI off.
+At our deployed 1640×1232 (6.5× the pixels) `pipeline.run()` is **70.7 ms / 14.1 Hz** with
+every stage on, 50.9 ms / 19.6 Hz with blend and ROI off. The **deployed node**, which also
+pays ROS transport and rectification, measures **10.4 Hz** — see
+[the deployed rate, measured](#the-deployed-rate-measured-2026-07-30). Quote the deployed
+figure when comparing whole systems; quote `pipeline.run()` when comparing to a network.
 
 > Two integrity notes. Their `evaluate.py` tqdm rate (7.84 it/s = 128 ms) **includes h5
 > dataloading** — use the network-only figures for model-vs-model. And a background GPU job
@@ -1263,20 +1270,27 @@ bottleneck ... perception has ~2× headroom" **does not survive re-profiling**:
 | figure | what it actually measures | source |
 |---|---|---|
 | **~27 Hz** "backbone capable" | backbone **inference alone**, no anchoring, no residual, no rectification, no ROS | 2026-07-23 |
-| **19.2 Hz** (52.2 ms) | `pipeline.run()` offline: backbone + residual + anchoring + variance + cloud, at 1640×1232, **no ROS, no rectification, blend/ROI off** | `time_pipeline.py`, 2026-07-30 |
-| **13.7 Hz** (73 ms) | the deployed `perception` node end-to-end, **including** ROS transport and CPU rectification | 2026-07-28 |
+| **19.6 Hz** (50.9 ms) | `pipeline.run()` offline: backbone + residual + anchoring + variance + cloud, at 1640×1232, **no ROS, no rectification, blend/ROI off** | `time_pipeline.py`, 2026-07-30 |
+| **14.1 Hz** (70.7 ms) | the same, **blend/ROI on** — the configuration that actually ships | `time_pipeline.py`, 2026-07-30 |
+| **10.4 Hz** (96 ms) | the deployed `perception` node end-to-end, **including** ROS transport and CPU rectification, blend/ROI on | `rate_live.py`, 2026-07-30 |
+| **13.7 Hz** (73 ms) | the same deployed node *before* blend/ROI existed — quoted historically, not a current figure | 2026-07-28 |
 | **~16 Hz** `/tof` | ToF **subframe** arrivals. Complete 32×32 maps assemble at **8.3 Hz** (60.3 ms median inter-arrival, CV 0.142 = sensor-clocked, integration-bound) | `profile_stages.py` |
 
-So: **perception at 73 ms is the constraint, not the ToF at 60.3 ms.** The "~2× headroom"
-claim compared the backbone in isolation against the full ToF path — different scopes on
-either side of the comparison. Stage profile at 13.7 Hz: residual ~40 %, backbone ~20 %,
-rectify ~15 % (a CPU `cv2.remap` over 2 MP that should be GPU-offloaded).
+So: **perception is the constraint, not the ToF at 60.3 ms.** The "~2× headroom" claim
+compared the backbone in isolation against the full ToF path — different scopes on either
+side of the comparison. That remains true at 96 ms deployed: the pipeline is slower than the
+ToF's 60.3 ms subframe cadence, though it now clears the 8.3 Hz *complete-map* rate.
+
+The per-stage split is measured directly rather than estimated — see
+[per-stage cost on the robot](#per-stage-cost-on-the-robot). The largest items are the
+residual (28.7 ms) and the backbone (10.3 ms); rectification, once ~15 % of the frame, is now
+4.4 ms and runs once per *used* frame rather than once per camera frame.
 
 Consequence for the roadmap: **raising the ToF rate buys nothing until perception is faster**,
 and switching ToF I²C→SPI is bounded to ~+31 % anyway because integration time is ~77 % of the
 ToF frame period.
 
-### Stage 7c/4b/7d cost, and the four fixes that made them affordable
+### Stage 7c/4b/7d cost, and the seven fixes that made them affordable
 
 Measured with [`time_pipeline.py`](../tools/diagnostics/time_pipeline.py), `pipeline.run()`,
 backbone + `residual_v4_last`, nothing else on the GPU.
@@ -1386,14 +1400,19 @@ Fixed: the node now keeps one tracker for as long as it runs.
 
 | resolution | blend | ROI | median ms ↓ | p90 ms ↓ | Hz ↑ |
 |---|---|---|---|---|---|
-| 1640×1232 | off | off | 50.3 ms | 52.6 | 19.9 |
-| 1640×1232 | on | off | 69.9 ms | 70.1 | 14.3 |
-| **1640×1232** | **on** | **on** | **81.4 ms** | **82.8** | **12.3** |
-| 640×480 | off | off | 20.3 ms | 20.4 | 49.3 |
-| 640×480 | on | off | 24.3 ms | 24.5 | 41.2 |
-| **640×480** | **on** | **on** | **28.4 ms** | **29.5** | **35.2** |
+| 1640×1232 | off | off | 50.9 ms | 52.7 | 19.6 |
+| 1640×1232 | on | off | 64.8 ms | 65.0 | 15.4 |
+| **1640×1232** | **on** | **on** | **70.7 ms** | **70.9** | **14.1** |
+| 640×480 | off | off | 20.0 ms | 20.0 | 50.1 |
+| 640×480 | on | off | 23.4 ms | 23.6 | 42.7 |
+| **640×480** | **on** | **on** | **25.8 ms** | **26.0** | **38.7** |
 
-Both stages cost **31 ms** together at full resolution, down from 328 ms.
+Both stages cost **19.8 ms** together at full resolution, down from 328 ms.
+
+*(Superseded values: before the two GPU rewrites described further below, the same table read
+81.4 ms / 12.3 Hz at full resolution and 28.4 ms at 640×480. The narrative immediately below
+was written against those numbers and is kept because its point — which configuration a
+measurement describes — is what mattered.)*
 
 **Why this table barely moved, and why that is still the point.** 81.4 ms is essentially the
 same as the 80.7 ms measured before fix 5, which looks like the work achieved nothing. It did
@@ -1440,17 +1459,48 @@ own 8.3 Hz complete-map rate.
 | configuration | rate ↑ | per frame ↓ | verdict |
 |---|---|---|---|
 | blend + ROI **off** | **13.3 Hz** | 75 ms | ✅ above 8.3 Hz |
-| blend + ROI **on** (the default) | **7.2 Hz** | 139 ms | ❌ **below 8.3 Hz** |
-| blend + ROI on, after the GPU-upsample fix | **7.4 Hz** | 135 ms | ❌ still below |
+| blend + ROI on, as first shipped | 7.2 Hz | 139 ms | ❌ below 8.3 Hz |
+| blend + ROI on, after the GPU-upsample fix | 7.4 Hz | 135 ms | ❌ still below |
+| **blend + ROI on (the default), after the ROI-on-GPU rewrite** | **10.4 Hz** | **98 ms** | ✅ **above 8.3 Hz** |
 
 Measured with [`rate_live.py`](../tools/diagnostics/rate_live.py), robot stationary, 30 s
 windows, nothing else on the machine
 ([`preflight.py`](../tools/diagnostics/preflight.py) reporting CLEAR).
 
-**Latency is the worse half of this result.** The ToF supplies 16 frames/s and we consume 7,
-so frames queue: each depth map is a median **425 ms old** when it arrives, against a 139 ms
-publish period. Throughput alone hides that — a robot avoiding an obstacle acts on data
-almost half a second stale. Rate and latency are reported separately for this reason.
+**Latency needed a separate fix, because it is a separate problem.** Rate and latency are
+reported separately here for a reason: making the pipeline faster barely moved staleness.
+Each depth map arrived a median **426 ms old**, and after both GPU rewrites — a 45 % speedup
+— it was still **385 ms**. The cause was not speed but **queueing**: the subscriptions were
+created with queue depth 5, so with the ToF publishing at 16 Hz into a ~10 Hz pipeline the
+queues simply filled, and the pipeline spent its time working through a backlog of frames
+that were already obsolete.
+
+Two changes, neither of which touches the maths:
+
+1. **Queue depth 5 → 1** on both subscriptions. With `KEEP_LAST` the middleware discards the
+   backlog and hands over the *newest* frame whenever the callback comes free. Throughput is
+   unaffected — those frames were never going to be processed anyway.
+2. **Rectify lazily.** `on_image` used to rectify every camera frame, at ~30 Hz, but a frame
+   is only consumed when a ToF frame arrives at ~10 Hz — so two thirds of a 4.4 ms 2 MP
+   `cv2.remap` was discarded, ~130 ms of CPU per second. Worse, both callbacks share one
+   single-threaded executor, so every wasted remap directly delayed the next pipeline run.
+   The node now stores the raw frame and rectifies the one it actually uses.
+
+| | rate ↑ | ms/frame ↓ | **latency ↓** |
+|---|---|---|---|
+| as shipped | 7.16 Hz | 138.8 | 426.5 ms |
+| + blend on GPU | 7.41 Hz | 133.1 | 420.5 ms |
+| + ROI on GPU | 10.36 Hz | 97.8 | 385.1 ms |
+| **+ queue depth 1, lazy rectify** | **10.37 Hz** | **96.1** | **128.5 ms** ✅ |
+
+**Latency fell 67 % with no change in throughput** — which is the signature of a queueing fix
+rather than a speed fix, and confirms the diagnosis. Depth maps are now ~1.3 publish periods
+old instead of ~4.
+
+The lesson worth keeping: **a rate measurement cannot detect this.** Throughput looked
+identical at 385 ms and at 128 ms of staleness. Any consumer that acts on the world — obstacle
+avoidance, SLAM — cares about the second number, so `rate_live.py` reports both and flags the
+ratio between them.
 
 #### Per-stage cost on the robot
 
@@ -1480,15 +1530,19 @@ Two things to read off this table:
 
 - **The RANSAC fix worked.** The ground-plane fit is **0.10 ms**, down from ~20 ms. It was
   the largest ROI component before; it is now the smallest line in the table.
-- **The two stages cost 70.7 ms, not the 46.7 ms they spend directly.** The extra ~24 ms is
+- **The two stages cost 70.7 ms of *added* time, not the 46.7 ms they spend directly.**
+  (Unrelated to the 70.7 ms offline *total* quoted elsewhere — an unfortunate coincidence of
+  the same number meaning two things.) The extra ~24 ms is
   *other* stages slowing down — the residual alone goes 28 → 38 ms, and it has nothing to do
   with blend or ROI. The likely mechanism is memory bandwidth: every stage here moves 2 MP
   float arrays through the Orin's shared LPDDR5, and adding several more full-frame passes
   slows everything sharing it. The jitter agrees — rectify's p90 goes 5.5 → 16.8 ms while
   doing identical work.
 
-This is also why offline predicted 31 ms for the two stages and the robot charged 70.7: an
-isolated benchmark has the whole memory system to itself.
+This is also why the offline benchmark of the day predicted 31 ms for the two stages while
+the robot charged 70.7 ms of added time: an isolated benchmark has the whole memory system to
+itself. (Both figures are from before the GPU rewrites; offline now measures 19.8 ms for the
+two stages.)
 
 #### The GPU-upsample fix: half of it worked
 
@@ -1505,11 +1559,41 @@ Implemented as `gpu_ops.blend_apply_lowres` / `roi_sigma_floor_lowres`, both ver
 | deployed rate | 7.16 Hz | **7.41 Hz** | +3.5 % |
 
 **The blend diagnosis was right and the ROI diagnosis was wrong.** ROI's cost is not the
-expansion — it is `pixel_roi_mask` itself, which back-projects ~31 k points in float64 and
-computes heights and reaches on the CPU before the GPU is involved at all. Moving that whole
-computation onto the GPU, where `metric` already lives, is the outstanding work.
+expansion — it is `pixel_roi_mask` itself. The fix is kept regardless: bit-identical output,
+strictly less work.
 
-The fix is kept regardless: it is bit-identical and strictly less work.
+#### The ROI-on-GPU rewrite: this is the one that fixed it
+
+Profiling the CPU mask turned up three separate problems, the first of which dominated:
+
+1. **`np.asarray(depth, float)` promoted the entire 2 MP depth map to float64** — a 16 MB
+   allocation — in order to read ~31 k strided samples out of it. 63 out of every 64 values
+   converted were never looked at.
+2. The back-projection and the height/reach geometry then ran in float64 on the CPU.
+3. `metric` and `var` were being copied to the GPU for the σ floor *anyway*, so the mask was
+   computed on one device from data that had to reach the other regardless.
+
+`gpu_ops.roi_mask_and_sigma_floor` does the whole stage on device — strided subsample,
+back-projection, plane geometry, mask, and floor — from the single copy the floor already
+needed. Verified against the CPU path on 189 420 mask cells over 6 scenes: **zero
+disagreeing cells**, variance bit-identical.
+
+| stage | as shipped | +GPU upsample | **+ROI on GPU** |
+|---|---|---|---|
+| ROI σ floor (7d) | 23.50 ms | 24.05 ms | **6.16 ms** ✅ −74 % |
+| blend (7c) | 23.20 ms | 15.26 ms | 15.35 ms |
+| residual (collateral) | 37.98 ms | 29.42 ms | 28.68 ms |
+| rectify (collateral) | 5.81 ms | 7.33 ms | 4.44 ms |
+| frame total | 140.12 ms | 121.34 ms | **90.43 ms** |
+| **deployed rate, measured** | **7.16 Hz** ❌ | **7.41 Hz** ❌ | **10.36 Hz** ✅ |
+
+**The default configuration now clears the 8.3 Hz ToF rate for the first time**, at +45 % over
+where it started. The collateral stages recovered too — the residual is back to 28.7 ms and
+rectify to 4.4 ms without either being touched, which is the memory-bandwidth explanation
+above behaving as predicted in reverse.
+
+Both remaining costs are now the two networks (residual 28.7 ms, backbone 10.3 ms) plus the
+blend at 15.4 ms. There is no longer a stage whose cost is an artefact of how it was written.
 
 > **A note on which measurements to believe here.** Attempts to micro-benchmark *inside* the
 > ROI stage produced `inside_mask` at 2.61 ms and `height_and_reach` — **which `inside_mask`

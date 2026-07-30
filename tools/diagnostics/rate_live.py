@@ -3,7 +3,9 @@
 
 This settles the one number in the READMEs that has never been observed: `time_pipeline.py`
 times `pipeline.run()` with no ROS and no rectification, so the deployed rate has only ever
-been extrapolated (81.4 ms + ~20 ms => ~9.9 Hz). This measures it.
+been extrapolated (81.4 ms + ~20 ms => ~9.9 Hz). This measures it -- and the extrapolation
+was wrong: the robot returned 7.2 Hz, because the overhead is not a constant you can add on.
+See "the deployed rate, measured" in ros2_ws/README.md.
 
 Two numbers, and they answer different questions:
 
@@ -150,7 +152,7 @@ def main():
                   f'what we wanted.')
     print(f'  measured {d["hz"]:.2f} Hz vs {a.expect_hz:.1f} Hz extrapolated '
           f'({100 * (d["hz"] - a.expect_hz) / a.expect_hz:+.0f}%)')
-    print(f'  offline pipeline.run() reference: 12.3 Hz (81.4 ms) at 1640x1232, '
+    print(f'  offline pipeline.run() reference: 14.1 Hz (70.7 ms) at 1640x1232, '
           f'blend+ROI on, no ROS')
     print(f'  ToF complete-map rate to stay above: 8.3 Hz -- '
           f'{"PASS" if d["hz"] >= 8.3 else "FAIL"}')

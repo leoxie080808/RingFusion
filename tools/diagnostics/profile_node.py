@@ -2,9 +2,9 @@
 """Where do the deployed milliseconds go? Profiles the FULL node path, not just the maths.
 
 The deployed node runs at 7.2 Hz (139 ms/frame) with blend+ROI on, while `time_pipeline.py`
-measures the same stages at 81.4 ms offline. Something costs ~58 ms on the robot that costs
-nothing on logged frames, and `pipeline.run` alone cannot show it -- because the missing work
-is the part that is NOT pipeline.run:
+measured the same stages at 81.4 ms offline. Something cost ~58 ms on the robot that cost
+nothing on logged frames, and `pipeline.run` alone could not show it -- because the missing
+work is the part that is NOT pipeline.run:
 
   * rectification -- a 2 MP cv2.remap on the CPU, per frame, that the offline harness skips
     entirely (it reads already-rectified PNGs)
@@ -169,7 +169,8 @@ def main():
     print(f'{"pipeline.run total":<20}{pipe:>11.2f}{"":>9}{100*pipe/tot:>9.1f}%')
     print(f'{"FRAME TOTAL":<20}{tot:>11.2f}{"":>9}{100.0:>9.1f}%')
     print(f'\nimplied rate: {1000/tot:.2f} Hz')
-    print(f'offline pipeline.run reference: 81.4 ms (blend+ROI on), 50.3 ms (both off)')
+    print('offline pipeline.run reference (time_pipeline.py, 1640x1232, post-GPU-rewrites):')
+    print('  70.7 ms blend+ROI on   |   50.9 ms both off')
     print(f'non-pipeline overhead here: {tot - pipe:.1f} ms '
           f'(rectify + publish, neither present offline)')
 
