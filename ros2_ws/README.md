@@ -68,6 +68,64 @@ says nothing about the 92.5%; independent tape ground truth is
 [planned](../docs/VALIDATION_PLAN.md) and not yet collected. Design details live in
 `RingFusion_technical_reference_updateP2.md`.
 
+## Reading the benchmarks — what each one asks, and what it answered
+
+Seven separate evaluations appear below. They are **not interchangeable**: each asks a
+different question, and several disagree with each other *because* of that. This table is the
+key to the rest.
+
+| evaluation | the question it answers | judged against | what it found |
+|---|---|---|---|
+| **`insample`** | How well does the fit reproduce the very points it was fitted to? | the same ToF zones used for the fit | **Not an evaluation.** A nearest-neighbour lookup scores 0.000 m. Every number published before 2026-07-28 used this. |
+| **`random` hold-out** | Can it interpolate *between* adjacent ToF zones? | 25 % of zones held out at random | **Raw ToF wins** (0.010 vs 0.044 medAE). 99.6 % of these targets have a real measurement ~1.7 cm away, so this is a lookup task, not depth estimation. |
+| **`center` hold-out** | Can it extrapolate *away* from the ToF, which is what deployment requires? | zones outside a central 16×16 anchor island | **The architecture's case.** Nearest-zone degrades 9× with distance; the camera path stays flat and wins 3–5× past 10°. |
+| **ZJU-L5** | Is the depth actually *right*, judged by a different device? | dense RealSense GT — **not our ToF** | **The only open-loop result.** Competitive on Rel/δ₁ with published methods; **2.7× worse on RMSE** — a far-field tail, not a typical-pixel problem. |
+| **DEPTHOR head-to-head** | How do we compare to published SOTA on identical data, identical metric code, identical regions? | dense RealSense GT | **4–8 % behind DEPTHOR-Small on Rel, uniformly across regions**, with *zero learned fusion* against their 6 M head. |
+| **Held-out re-distill** | Were the absolute numbers inflated because Network A trained on the eval set? | held-out ToF zones, on 200 frames Network A never saw | **Yes, by ~5 %.** Rankings unchanged. Numbers now clean. |
+| **Timing** | Does it run in real time, and how does that compare fairly? | wall clock on this Orin | 12.4 Hz at 1640×1232 with every stage on; **3.0× faster than DEPTHOR-Small** at their resolution. |
+| **Tape ground truth** | Is the **ToF itself** right? | a tape measure | ⬜ **NOT DONE.** The one thing nothing else can substitute for. |
+
+### What "good" looks like for each one
+
+Direction alone is not enough — for a comparison it matters *whose* number should move which
+way. Every metric table below carries ↓ / ↑ on its headers; this is the target for each
+evaluation as a whole.
+
+| evaluation | what we are trying to achieve | how to tell if it worked |
+|---|---|---|
+| `insample` | **nothing** — it exists only to reproduce the pre-2026-07-28 figures and show they were optimistic | ignore the value; the point is that a trivial method scores 0.000 |
+| `random` hold-out | **not to win.** Raw ToF *should* beat us here — the answer is 1.7 cm away | our medAE close to raw ToF's is fine; being far worse would indicate a real defect. We are **0.010 vs 0.010** ✅ |
+| `center` hold-out | **to win, and to stay flat with distance** | our medAE **below** nearest-zone's, and roughly constant across the 0–3° → 15–30° columns while nearest-zone's rises ✅ |
+| ZJU-L5 vs published | **our Rel ↓ and RMSE ↓ below theirs, our δ₁ ↑ above theirs** | we beat CFPNet and PENet on Rel/δ₁, sit 4–8 % behind DEPTHOR-Small, and are **2.7× worse on RMSE** ❌ — the one target clearly missed |
+| DEPTHOR by region | **the gap should not depend on region.** A gap that shrinks inside the ToF footprint would mean we only look good where we have measurements | gap is −4 % inside, −8 % outside, −6 % overall → **uniform**, so no region-picking advantage ✅ (and none to claim) |
+| Held-out re-distill | **the clean numbers should be close to the contaminated ones.** A large gap would mean the published figures were fiction | +5 %, rankings unchanged ✅ |
+| Timing | **Hz ↑, ms ↓**, and stay above the ToF's 8.3 Hz complete-map rate | 12.4 Hz at full resolution with every stage on ✅ offline — **deployed rate still unmeasured** ⬜ |
+| σ calibration | **coverage at ±1σ should hit 0.683 exactly** — this is a target, not a direction. Too low = overconfident, too high = σ inflated and useless | analytic σ in the far field: **0.229** ❌ badly overconfident |
+| Tape ground truth | **our depth ↔ tape agreement**, especially outside the ToF cone | ⬜ not collected |
+
+**Scorecard as it stands: five targets met, two missed (far-field RMSE and σ calibration —
+both the same root cause), two unmeasured (deployed rate, tape).**
+
+### The single most important thing to understand
+
+**Six of those seven score against the ToF we anchor to.** That is a closed loop: it cannot
+detect a bias in the ToF, and it says nothing about the 92.5 % of the frame the ToF never sees.
+Only ZJU-L5 (and, when it exists, the tape) breaks that loop.
+
+This is why `random` and `center` disagree about whether the neural stack is worth having, and
+why both are reported. Neither is "the" number.
+
+### What none of these answer
+
+- **Is our ToF biased?** Nothing here can tell. Needs the tape.
+- **Does the far field work?** No — it demonstrably does not
+  ([the ceiling](#the-far-field-ceiling--mechanism-and-what-does-and-does-not-fix-it)).
+  Depth beyond ~1.4 m on our sensor is bounded by the model, not measured.
+- **Does deployed σ flag its own errors in the far field?** Untested. The σ result below is the
+  *analytic* term only, which is ~0.1 % of what `/depth_var` actually publishes.
+- **Does the deployed node still hit its rate with the new stages?** Estimated ~10 Hz,
+  **not measured** — the offline figure excludes ROS transport and rectification.
+
 ## Metric reference
 
 One definition for all of it, in [`tools/diagnostics/metrics.py`](../tools/diagnostics/metrics.py).
@@ -112,7 +170,7 @@ Two hold-out protocols, because the choice dominates the conclusion:
   the deployed geometry (ToF in the middle, extrapolate outward): median **8.4°** from the
   nearest anchor, ~30 cm at 2 m.
 
-| | `random` MAE | `random` medAE | `center` MAE | `center` medAE |
+| | `random` MAE ↓ | `random` medAE ↓ | `center` MAE ↓ | `center` medAE ↓ |
 |---|---|---|---|---|
 | B0 constant (median of anchors) | 0.527 m | 0.254 m | 0.633 m | 0.441 m |
 | **B1 nearest zone** *(0 params, no camera)* | **0.056 m** | **0.010 m** | **0.232 m** | 0.108 m |
@@ -121,6 +179,10 @@ Two hold-out protocols, because the choice dominates the conclusion:
 | B4 closed-form, as deployed *(2 params)* | 0.283 m | 0.068 m | **18.092 m** | **0.066 m** |
 | B4c closed-form + the 20 m clamp | 0.283 m | 0.068 m | 0.359 m | 0.066 m |
 | B5 RingFusion v3 *(~0.46 M params)* | **0.148 m** | **0.026 m** | 0.331 m | 0.067 m |
+
+> **What this says:** on `random` a zero-parameter lookup beats the whole pipeline, because the
+> answer is 1.7 cm away. On `center` that reverses. The protocol, not the method, decides the
+> winner — which is why a single headline MAE was misleading.
 
 ### What this changes
 
@@ -146,12 +208,16 @@ Two hold-out protocols, because the choice dominates the conclusion:
 
 Median error by angular distance from the nearest anchor, `center` protocol:
 
-| medAE | 0–3° | 3–6° | 6–10° | 10–15° | 15–30° |
+| medAE ↓ *(lower is better everywhere)* | 0–3° | 3–6° | 6–10° | 10–15° | 15–30° |
 |---|---|---|---|---|---|
 | *n* | 103 586 | 157 446 | 216 632 | 185 856 | 72 335 |
 | B1 nearest zone | **0.027** | 0.072 | 0.122 | 0.180 | 0.239 |
 | B4c closed-form | 0.073 | 0.071 | 0.078 | **0.061** | **0.047** |
 | B5 RingFusion v3 | 0.064 | 0.073 | 0.078 | 0.062 | 0.047 |
+
+> **What this says:** read left to right, this is "how does each method decay as it leaves the
+> measurements". It is the most informative table in the file — the ToF collapses, the camera
+> path does not, and that flatness *is* the argument for having a camera at all.
 
 Nearest-neighbour degrades **9×** across the range; the camera path is **flat**. They
 cross at 3–6°, and past 10° the camera wins 3–5×. Since the ToF covers 7.5 % of the frame
@@ -169,7 +235,7 @@ only ever graded on interpolation, so near-identity was the correct thing to lea
 v3. **One changed argument.** Scored on the 61 frames of `train_residual.py`'s
 `random_split(..., manual_seed(0))` validation split, which no version trained on:
 
-| `center` (extrapolation) | MAE | medAE | δ<1.25 |
+| `center` (extrapolation) | MAE ↓ | medAE ↓ | δ<1.25 ↑ |
 |---|---|---|---|
 | B4c closed-form + clamp | 0.316 m | 0.064 m | 0.616 |
 | v3 (random hold-out) | 0.296 m | 0.066 m | 0.628 |
@@ -189,7 +255,7 @@ Neither source wins everywhere and the crossover is sharp, so
 the anchors and the network far from them, smoothstepping between (2°→5°, angle-driven so
 it follows the optics rather than the resolution).
 
-| medAE, `center` | 0–3° | 3–6° | 6–10° | 10–15° | 15–30° |
+| medAE ↓, `center` | 0–3° | 3–6° | 6–10° | 10–15° | 15–30° |
 |---|---|---|---|---|---|
 | nearest-zone ToF | **0.025** | 0.070 | 0.123 | 0.188 | 0.244 |
 | v4 network | 0.048 | 0.047 | 0.052 | 0.042 | 0.038 |
@@ -197,7 +263,7 @@ it follows the optics rather than the resolution).
 
 It tracks whichever source is better in every bin. Headline, same 61-frame split:
 
-| | `random` MAE / medAE | `center` MAE / medAE |
+| | `random` MAE ↓ / medAE ↓ | `center` MAE ↓ / medAE ↓ |
 |---|---|---|
 | nearest-zone ToF | 0.056 / 0.010 | 0.240 / 0.108 |
 | v4 network alone | 0.261 / 0.091 | 0.206 / 0.045 |
@@ -238,7 +304,7 @@ Network B's 61-frame validation split, so one set is unseen by both), reaching
 
 `center` protocol, median AE:
 
-| | contaminated *(v3, 61 frames)* | **clean** *(v4, 200 frames)* | change |
+| medAE ↓ | contaminated *(v3, 61 frames)* | **clean** *(v4, 200 frames)* | change |
 |---|---|---|---|
 | B4c closed-form | 0.064 m | 0.067 m | +5 % |
 | B5 Network B v4 | 0.045 m | 0.048 m | +7 % |
@@ -250,14 +316,14 @@ its teacher even on frames it trained on (ρ 0.737 vs 0.750), so it had not memo
 
 Scored with `student_v4_heldout` + `residual_v4_last` + blend:
 
-| protocol | B1 nearest-zone | B4c closed-form | B5 Network B | **B6 + blend** |
+| protocol *(all metrics ↓ lower is better)* | B1 nearest-zone | B4c closed-form | B5 Network B | **B6 + blend** |
 |---|---|---|---|---|
 | `random` MAE / medAE | **0.059 / 0.010** | 0.296 / 0.066 | 0.309 / 0.098 | 0.059 / 0.010 |
 | `center` MAE / medAE | 0.243 / 0.109 | 0.357 / 0.067 | 0.213 / 0.048 | **0.198 / 0.044** |
 
 medAE by angular distance from the nearest anchor, `center`:
 
-| | 0–3° | 3–6° | 6–10° | 10–15° | 15–30° |
+| medAE ↓ | 0–3° | 3–6° | 6–10° | 10–15° | 15–30° |
 |---|---|---|---|---|---|
 | B1 nearest-zone | **0.026** | 0.071 | 0.126 | 0.183 | 0.239 |
 | B4c closed-form | 0.073 | 0.072 | 0.079 | 0.062 | 0.048 |
@@ -327,7 +393,7 @@ mirrored or transposed grid would recur.
 
 `zjul5_eval.py` prints ρ(disparity, 1/z) at the anchors as a gate, and it fired at once:
 
-| backbone | params | ρ at anchors | Rel, all px | δ₁, all px |
+| backbone | params | ρ at anchors ↑ | Rel, all px ↓ | δ₁, all px ↑ |
 |---|---|---|---|---|
 | **`student_v3`** — deployed | 3.66 M | **0.417** | 0.185 | 0.716 |
 | **Depth Anything V2 Large** — its teacher | **335.3 M** | **0.867** | **0.086** | **0.908** |
@@ -437,7 +503,7 @@ needed and are recorded in
 
 ### Harness validation
 
-| DEPTHOR-Small | our run | their paper |
+| DEPTHOR-Small | our run | their paper | *(agreement is the point, not the direction)* |
 |---|---|---|
 | δ₁ | **0.923** | 0.921 |
 | δ₂ | **0.968** | 0.963 |
@@ -499,7 +565,7 @@ measurement here.
 
 Network-only, batch 1, 480×640, CUDA-synced, nothing else on the GPU:
 
-| | latency | Hz |
+| | latency ↓ | Hz ↑ |
 |---|---|---|
 | DEPTHOR-Small | 79.4 ms | 12.6 |
 | DEPTHOR-Large | 183.8 ms | 5.4 |
@@ -527,7 +593,7 @@ out, and its `compute_errors` key named `mae` is actually AbsRel.)
 
 Harness check first — our re-score of their model against their paper:
 
-| | our re-score | published |
+| Rel ↓ / δ₁ ↑ | our re-score | published |
 |---|---|---|
 | DEPTHOR-Small Rel | 0.081 | 0.079 |
 | DEPTHOR-Large Rel | 0.077 | 0.075 |
@@ -636,12 +702,16 @@ by depth.
 
 Analytic variance against ZJU-L5's dense independent GT:
 
-| true depth | median \|error\| | median σ | σ / \|error\| | share of RMSE² |
+| true depth | median \|error\| ↓ | median σ | σ / \|error\| *(want ≈1)* | share of RMSE² |
 |---|---|---|---|---|
 | 0–1 m | 0.029 m | 0.011 m | 0.40 | 0.5 % |
 | 4–6 m | 2.402 m | 0.401 m | 0.17 | 12.8 % |
 | 6–10 m | 5.517 m | 0.259 m | 0.05 | 28.6 % |
 | **10–20 m** | **11.845 m** | **0.079 m** | **0.01** | **50.1 %** |
+
+> **What this says:** the system is most confident exactly where it is most wrong, and half of
+> all squared error comes from 0.3 % of pixels. But this is the *analytic* variance only — see
+> the scope warning above before reading it as a statement about `/depth_var`.
 
 Analytic σ is **150× too small** at range and *decreases* past 4–6 m, because
 `Var[D] = D⁴ · jᵀ Cov j` and `D` is itself capped by the same `1/b` ceiling. **One mechanism,
@@ -708,7 +778,7 @@ refuted by measurement, not just untested. **`1/b` is a bias/variance knob, not 
 - **`b_prior` stays 0 in deployment — validated, and it does NOT transfer.** Swept on 300 of
   our own logs with [`ceiling_diag.py`](../tools/diagnostics/ceiling_diag.py):
 
-  | `b_prior` | ceiling | 0.5–1.5 m | 3–6.5 m | MAE | medAE |
+  | `b_prior` | ceiling ↑ | 0.5–1.5 m ↓ | 3–6.5 m ↓ | MAE ↓ | medAE ↓ |
   |---|---|---|---|---|---|
   | **0** *(default)* | 1.43 m | **0.104 m** | 2.355 m | 0.301 m | **0.060 m** |
   | 0.003 *(ZJU-L5's pick)* | 1.45 m | 0.105 m | 2.340 m | 0.301 m | 0.060 m |
@@ -1197,7 +1267,7 @@ backbone + `residual_v4_last`, nothing else on the GPU.
 
 **As first written the two stages cost 7.4× — unusable:**
 
-| 1640×1232 | blend | ROI | median | Hz |
+| 1640×1232 | blend | ROI | median ms ↓ | Hz ↑ |
 |---|---|---|---|---|
 | before | off | off | 52.2 ms | 19.2 |
 | before | on | off | 108.9 ms | 9.2 |
@@ -1230,7 +1300,7 @@ resolution **283 ms**, the blend's 2 MP CPU `distanceTransformWithLabels` **56 m
 
 **After:**
 
-| resolution | blend | ROI | median | Hz |
+| resolution | blend | ROI | median ms ↓ | Hz ↑ |
 |---|---|---|---|---|
 | 1640×1232 | off | off | 52.5 ms | 19.0 |
 | 1640×1232 | on | off | 70.0 ms | 14.3 |
