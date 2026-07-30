@@ -9,6 +9,9 @@ UART-bridge one which only ever prints ROM bootloader text.
 
 Use image:=/path/shot.jpg to test with a still image instead of the CSI camera.
 View in rviz2: add PointCloud2 on /cloud (fixed frame: cam_0).
+
+For the live blend A/B, relaunch with blend:=false -- the node reads the parameter once at
+construction, so `ros2 param set` on a running node will NOT switch it.
 """
 import os
 from ament_index_python.packages import get_package_share_directory
@@ -16,6 +19,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -27,6 +31,13 @@ def generate_launch_description():
     image = LaunchConfiguration('image')
     backbone_engine = LaunchConfiguration('backbone_engine')
     residual_engine = LaunchConfiguration('residual_engine')
+    # A bare LaunchConfiguration substitutes as a STRING, which fails to match the node's
+    # bool/int parameter declarations ("Wrong parameter type"). ParameterValue with an
+    # explicit value_type is the supported way to pass a typed override from the CLI.
+    blend = ParameterValue(LaunchConfiguration('blend'), value_type=bool)
+    roi_enable = ParameterValue(LaunchConfiguration('roi_enable'), value_type=bool)
+    plane_refit_every = ParameterValue(LaunchConfiguration('plane_refit_every'),
+                                       value_type=int)
 
     return LaunchDescription([
         DeclareLaunchArgument('port', default_value='/dev/ttyACM1'),
@@ -36,6 +47,15 @@ def generate_launch_description():
                               description='backbone .engine path; empty = MockBackbone'),
         DeclareLaunchArgument('residual_engine', default_value='',
                               description='residual .engine path; empty = MockResidual'),
+        # Stage 7c / 4b+7d. Both default ON, matching pipeline.run's own defaults. Exposed
+        # so the live A/B needs a relaunch and not a rebuild -- the node reads `blend` once
+        # at construction, so `ros2 param set` after startup has no effect.
+        DeclareLaunchArgument('blend', default_value='true',
+                              description='Stage 7c ToF/network blend'),
+        DeclareLaunchArgument('roi_enable', default_value='true',
+                              description='Stage 4b/7d geometric ROI'),
+        DeclareLaunchArgument('plane_refit_every', default_value='1',
+                              description='ground-plane RANSAC cadence, in frames'),
 
         Node(package='ringfusion_drivers', executable='tof_driver',
              name='tof_driver', output='screen',
@@ -56,7 +76,9 @@ def generate_launch_description():
              name='perception', output='screen',
              parameters=[{'calib': calib, 'frame_id': 'cam_0',
                           'backbone_engine': backbone_engine,
-                          'residual_engine': residual_engine}]),
+                          'residual_engine': residual_engine,
+                          'blend': blend, 'roi_enable': roi_enable,
+                          'plane_refit_every': plane_refit_every}]),
 
         # static transform: ToF frame relative to camera (from the measured extrinsic)
         # translation in metres, lens above ToF so ToF is +y below camera.

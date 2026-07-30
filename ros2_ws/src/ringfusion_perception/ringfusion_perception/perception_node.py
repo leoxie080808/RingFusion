@@ -35,6 +35,7 @@ from ringfusion_msgs.msg import ToFFrame
 from . import geometry as geo
 from . import pipeline
 from . import blend as blend_mod
+from . import roi
 from .backbone import MockBackbone
 from .residual import MockResidual
 from .rectify import FisheyeRectifier
@@ -77,12 +78,27 @@ class PerceptionNode(Node):
         self.declare_parameter('blend', True)
         self.declare_parameter('blend_near_deg', blend_mod.NEAR_DEG)
         self.declare_parameter('blend_far_deg', blend_mod.FAR_DEG)
+        # Stage 4b/7d ROI. pipeline.run defaults roi_enable=True, so this was already ON in
+        # deployment -- but it was not exposed, so there was no way to turn it off from a
+        # launch file despite the README documenting `roi_enable:=false` as the fallback.
+        self.declare_parameter('roi_enable', True)
+        # refit_every for the ground-plane tracker; see the PlaneTracker note below.
+        self.declare_parameter('plane_refit_every', 1)
         raw = load_calib(self.get_parameter('calib').value)
         self.frame_id = self.get_parameter('frame_id').value
         self.min_confidence = int(self.get_parameter('min_confidence').value)
         self.blend = bool(self.get_parameter('blend').value)
         self.blend_near = float(self.get_parameter('blend_near_deg').value)
         self.blend_far = float(self.get_parameter('blend_far_deg').value)
+        self.roi_enable = bool(self.get_parameter('roi_enable').value)
+        # The node used to pass no plane_tracker at all, so pipeline.run fell through to its
+        # `plane_tracker=None` default and re-RANSAC'd the ground plane from scratch on EVERY
+        # frame. The 80.7 ms / 12.4 Hz offline benchmark was measured WITH a tracker, so the
+        # deployed node was carrying a cost the benchmark never saw -- the timing figures did
+        # not describe the shipped configuration. Hold one tracker for the node's lifetime,
+        # which is also what makes the EMA and the jump-rejection in PlaneTracker do anything.
+        self.plane_tracker = roi.PlaneTracker(
+            refit_every=int(self.get_parameter('plane_refit_every').value))
 
         # Stage 1 rectifier: fisheye raw -> rectilinear. Identity until the lens
         # is calibrated (dist all zeros), so the pipeline runs unchanged today.
@@ -155,7 +171,8 @@ class PerceptionNode(Node):
                            self.backbone, self.residual,
                            confidence=confidence, min_confidence=self.min_confidence,
                            blend=self.blend, blend_near=self.blend_near,
-                           blend_far=self.blend_far)
+                           blend_far=self.blend_far, roi_enable=self.roi_enable,
+                           plane_tracker=self.plane_tracker)
         if not res['ok']:
             self.get_logger().warn(
                 f"anchoring failed ({res['n_anchors']} anchors this frame)")

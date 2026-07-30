@@ -61,6 +61,26 @@ def fit_ground_plane(pts, iters=200, thresh=0.03, up_hint=(0.0, -1.0, 0.0), rng=
     upright, so -y. It is only used to orient and to reject near-vertical candidates
     (a wall is a plane too, and RANSAC will happily find it).
     Returns None if no plane is supported.
+
+    VECTORISED: all `iters` hypotheses are drawn and scored as one (N, iters) matrix rather
+    than one per Python iteration. The anchor set is at most 32x32 = 1024 points, so the
+    whole problem is ~200x1024 = 205k distance evaluations -- small enough that the old
+    Python loop was pure interpreter overhead. Measured on the Orin over 120 real anchor sets
+    (N median 839, max 1023 -- the hardware cannot exceed 1024): 19.6 ms -> 1.18 ms median,
+    p90 1.31, max 4.47. That 16.6x is what let the caller stop amortising the fit across
+    frames (see PlaneTracker.refit_every).
+
+    A CUDA version of exactly this was built and measured at 2.6-2.9 ms -- SLOWER than numpy,
+    on every real frame. The problem is ~1.6 MB, well under the transfer + kernel-launch
+    floor, and the refit below stays on the CPU regardless. Even a free hypothesis stage
+    would floor at ~0.4 ms, worse than the 1.18 ms this already achieves. Do not "optimise"
+    this onto the GPU.
+
+    Sampling is WITH replacement, unlike the loop's rng.choice(replace=False). A duplicated
+    index makes two sample points identical, so the cross product is ~0 and the hypothesis
+    is dropped by the `ln > 1e-9` mask below -- the degenerate case is already handled, and
+    at N~859 it costs ~1% of hypotheses. The loop discarded a comparable share to its own
+    wall-rejection `continue`.
     """
     pts = np.asarray(pts, float)
     pts = pts[np.isfinite(pts).all(axis=1)]
@@ -70,33 +90,46 @@ def fit_ground_plane(pts, iters=200, thresh=0.03, up_hint=(0.0, -1.0, 0.0), rng=
     up = np.asarray(up_hint, float)
     up = up / max(np.linalg.norm(up), 1e-9)
 
-    best_n, best_d, best_cnt = None, None, 0
-    for _ in range(iters):
-        s = pts[rng.choice(len(pts), 3, replace=False)]
-        n = np.cross(s[1] - s[0], s[2] - s[0])
-        ln = np.linalg.norm(n)
-        if ln < 1e-9:
-            continue
-        n = n / ln
-        if abs(float(n @ up)) < 0.7:      # reject walls: floor normal ~ parallel to up
-            continue
-        if float(n @ up) < 0:
-            n = -n
-        d = -float(n @ s[0])
-        cnt = int((np.abs(pts @ n + d) < thresh).sum())
-        if cnt > best_cnt:
-            best_n, best_d, best_cnt = n, d, cnt
+    s = pts[rng.integers(0, len(pts), size=(iters, 3))]      # (iters,3,3)
+    n = np.cross(s[:, 1] - s[:, 0], s[:, 2] - s[:, 0])       # (iters,3)
+    ln = np.sqrt((n * n).sum(-1))
+    ok = ln > 1e-9                                           # drop degenerate triples
+    n = n / np.where(ok, ln, 1.0)[:, None]
+    dot = n @ up
+    ok &= np.abs(dot) >= 0.7          # reject walls: floor normal ~ parallel to up
+    n = np.where((dot < 0)[:, None], -n, n)                  # orient UP
+    d = -(n * s[:, 0]).sum(-1)                               # (iters,)
 
-    if best_n is None or best_cnt < 16:
+    # (N, iters) support counts -- every hypothesis scored against every point at once.
+    cnt = np.where(ok, (np.abs(pts @ n.T + d[None, :]) < thresh).sum(0), 0)
+    best = int(cnt.argmax())          # argmax takes the FIRST max, as `cnt > best_cnt` did
+    if int(cnt[best]) < 16:
         return None
-    # refit on the inliers for a less noisy plane
-    inl = pts[np.abs(pts @ best_n + best_d) < thresh]
+
+    # Refit on the inliers for a less noisy plane: the normal is the minor axis of the
+    # inliers' scatter.
+    #
+    # This used to be np.linalg.svd(inl - c), which defaults to full_matrices=True and so
+    # allocates and computes the full (N, N) left-singular matrix -- at the measured median
+    # of 344 inliers that is a 344x344 decomposition, of which we use exactly one 3-vector,
+    # and it grows with floor coverage. The old Python-loop hypothesis stage was 19.6 ms, so
+    # this was invisible; once that dropped it became worth fixing (1.51 -> 1.18 ms on the
+    # same 120 real frames).
+    #
+    # The 3x3 scatter matrix has the same eigenvectors as the right-singular vectors of
+    # (inl - c), so eigh on it is exact, not an approximation -- and it is O(N) to form plus
+    # a fixed 3x3 solve, i.e. independent of inlier count. eigh returns ASCENDING
+    # eigenvalues, so column 0 is the least-variance direction = the plane normal.
+    inl = pts[np.abs(pts @ n[best] + d[best]) < thresh]
+    if len(inl) < 16:
+        return None
     c = inl.mean(axis=0)
-    _, _, vt = np.linalg.svd(inl - c)
-    n = vt[2] / max(np.linalg.norm(vt[2]), 1e-9)
-    if float(n @ up) < 0:
-        n = -n
-    return n, -float(n @ c)
+    q = inl - c
+    nn = np.linalg.eigh(q.T @ q)[1][:, 0]
+    nn = nn / max(np.linalg.norm(nn), 1e-9)
+    if float(nn @ up) < 0:
+        nn = -nn
+    return nn, -float(nn @ c)
 
 
 def height_and_reach(pts, plane):
@@ -142,17 +175,23 @@ class PlaneTracker:
     update() returns the plane to use, or None if none has ever been established.
     """
 
-    def __init__(self, alpha=0.2, max_tilt=0.35, max_height_jump=0.10, refit_every=10):
+    def __init__(self, alpha=0.2, max_tilt=0.35, max_height_jump=0.10, refit_every=1):
         self.plane = None
         self.alpha = alpha
         self.max_tilt = max_tilt                  # reject a fit this far off the cached normal
         self.max_height_jump = max_height_jump
-        # RANSAC here is a 200-iteration Python loop and cost 20.9 ms/frame measured on the
-        # Orin -- the single largest component of the ROI stage. But the camera is rigidly
-        # mounted and the plane is near-constant (see above: normal stable to 0.05, height to
-        # 0.02 m across three captures), so refitting every frame buys nothing. Refit every
-        # Nth frame and serve the cached, EMA-smoothed plane in between; that is already the
-        # documented behaviour when a frame cannot fit one at all.
+        # refit_every used to default to 10 for one reason only: fit_ground_plane was a
+        # 200-iteration Python loop costing 20.9 ms/frame, the single largest component of
+        # the ROI stage. Skipping 9 frames in 10 amortised it to ~2 ms -- but it also left a
+        # 20.9 ms SPIKE every 10th frame, which is what a real-time consumer actually feels,
+        # and it starved the EMA below of updates.
+        #
+        # Vectorising the fit (see fit_ground_plane) took it to 1.5 ms, so that trade is gone
+        # and the default is now to refit EVERY frame. This is the better answer on accuracy
+        # too: measured over 5 seeds on 60 real frames, RANSAC's own normal scatter is a
+        # median 4.0 deg but a p90 of 21.6 deg, so a single unlucky fit held for 10 frames is
+        # a real error source. Refitting every frame lets the EMA average that scatter down
+        # instead of latching one draw of it.
         self.refit_every = max(1, int(refit_every))
         self._n = 0
 

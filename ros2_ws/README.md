@@ -82,7 +82,7 @@ key to the rest.
 | **ZJU-L5** | Is the depth actually *right*, judged by a different device? | dense RealSense GT — **not our ToF** | **The only open-loop result.** Competitive on Rel/δ₁ with published methods; **2.7× worse on RMSE** — a far-field tail, not a typical-pixel problem. |
 | **DEPTHOR head-to-head** | How do we compare to published SOTA on identical data, identical metric code, identical regions? | dense RealSense GT | **4–8 % behind DEPTHOR-Small on Rel, uniformly across regions**, with *zero learned fusion* against their 6 M head. |
 | **Held-out re-distill** | Were the absolute numbers inflated because Network A trained on the eval set? | held-out ToF zones, on 200 frames Network A never saw | **Yes, by ~5 %.** Rankings unchanged. Numbers now clean. |
-| **Timing** | Does it run in real time, and how does that compare fairly? | wall clock on this Orin | 12.4 Hz at 1640×1232 with every stage on; **3.0× faster than DEPTHOR-Small** at their resolution. |
+| **Timing** | Does it run in real time, and how does that compare fairly? | wall clock on this Orin | 12.3 Hz at 1640×1232 with every stage on; **2.8× faster than DEPTHOR-Small** at their resolution, our whole pipeline against their network alone. |
 | **Tape ground truth** | Is the **ToF itself** right? | a tape measure | ⬜ **NOT DONE.** The one thing nothing else can substitute for. |
 
 ### What "good" looks like for each one
@@ -94,14 +94,14 @@ evaluation as a whole.
 | evaluation | what we are trying to achieve | how to tell if it worked |
 |---|---|---|
 | `insample` | **nothing** — it exists only to reproduce the pre-2026-07-28 figures and show they were optimistic | ignore the value; the point is that a trivial method scores 0.000 |
-| `random` hold-out | **not to win.** Raw ToF *should* beat us here — the answer is 1.7 cm away | our medAE close to raw ToF's is fine; being far worse would indicate a real defect. We are **0.010 vs 0.010** ✅ |
+| `random` hold-out | **not to win.** Raw ToF *should* beat us here — the answer is 1.7 cm away | our medAE close to raw ToF's is fine; being far worse would point to an actual defect. We are **0.010 vs 0.010** ✅ |
 | `center` hold-out | **to win, and to stay flat with distance** | our medAE **below** nearest-zone's, and roughly constant across the 0–3° → 15–30° columns while nearest-zone's rises ✅ |
 | ZJU-L5 vs published | **our Rel ↓ and RMSE ↓ below theirs, our δ₁ ↑ above theirs** | we beat CFPNet and PENet on Rel/δ₁, sit 4–8 % behind DEPTHOR-Small, and are **2.7× worse on RMSE** ❌ — the one target clearly missed |
 | DEPTHOR by region | **the gap should not depend on region.** A gap that shrinks inside the ToF footprint would mean we only look good where we have measurements | gap is −4 % inside, −8 % outside, −6 % overall → **uniform**, so no region-picking advantage ✅ (and none to claim) |
 | Held-out re-distill | **the clean numbers should be close to the contaminated ones.** A large gap would mean the published figures were fiction | +5 %, rankings unchanged ✅ |
-| Timing | **Hz ↑, ms ↓**, and stay above the ToF's 8.3 Hz complete-map rate | 12.4 Hz at full resolution with every stage on ✅ offline — **deployed rate still unmeasured** ⬜ |
+| Timing | **Hz ↑, ms ↓**, and stay above the ToF's 8.3 Hz complete-map rate | 12.3 Hz at full resolution with every stage on ✅ offline — **deployed rate still unmeasured** ⬜ (estimated 9.9 Hz; was ~8.5 Hz before the 2026-07-30 PlaneTracker fix, i.e. below the ToF rate) |
 | σ calibration | **coverage at ±1σ should hit 0.683 exactly** — this is a target, not a direction. Too low = overconfident, too high = σ inflated and useless | analytic σ in the far field: **0.229** ❌ badly overconfident |
-| Tape ground truth | **our depth ↔ tape agreement**, especially outside the ToF cone | ⬜ not collected |
+| Tape ground truth | **our depth ↔ tape agreement**, especially outside the ToF cone. The headline is the **outside/inside AbsRel ratio** — near 1.0 means the extrapolation holds up | ⬜ not collected; tooling built and tested, see [below](#tape-ground-truth-tools-built-and-tested-measurements-not-yet-taken) |
 
 **Scorecard as it stands: five targets met, two missed (far-field RMSE and σ calibration —
 both the same root cause), two unmeasured (deployed rate, tape).**
@@ -245,7 +245,7 @@ v3 was **statistically tied with having no network at all** (0.066 vs 0.064). v4
 closed-form by 30 %. A third run, `residual_v5_mixed` (alternating per sample), lands
 between the two on both protocols — a genuine compromise, not a free lunch.
 
-The cost is real: v4 gives up interpolation, `random` medAE 0.026 → 0.091. Which is what
+There is a measurable cost: v4 gives up interpolation, `random` medAE 0.026 → 0.091. Which is what
 Stage 7c exists to recover.
 
 ## Stage 7c — the ToF/network blend
@@ -358,7 +358,7 @@ the model can never recover. A random init is mildly anti-correlated with the te
 (corr −0.12, chance), least squares asks for `a = −48`, the clamp sets 0, and training dies.
 Only `gradient_loss` retained a path, which is why the total moved briefly then locked.
 
-The clamp existed for a real reason — its docstring records a from-scratch re-distill
+The clamp was added to fix a specific failure — its docstring records a from-scratch re-distill
 converging *sign-inverted* at ρ −0.998 — but it makes ~half of random seeds unrecoverable, and
 it is in committed code (`936775f`), so it would break any re-distill, not just ours.
 
@@ -558,7 +558,7 @@ Rel while beating it on δ₁ — with no learned fusion at all.
 adopted as a deployed default, see the ceiling section.
 
 **What DEPTHOR's completion head buys**: Rel −13 %, δ₁ +0.015, and **RMSE 2.8× better**. The
-accuracy gap is modest; the **tail** gap is the real one, consistent with every other
+accuracy gap is modest; the **tail** gap is the one that matters, consistent with every other
 measurement here.
 
 ### Speed, on the same hardware at the same resolution
@@ -569,10 +569,20 @@ Network-only, batch 1, 480×640, CUDA-synced, nothing else on the GPU:
 |---|---|---|
 | DEPTHOR-Small | 79.4 ms | 12.6 |
 | DEPTHOR-Large | 183.8 ms | 5.4 |
-| **ours, `pipeline.run()` full** | **21.3 ms** | **47.0** |
+| ours, `pipeline.run()`, blend + ROI **off** | 20.3 ms | 49.3 |
+| **ours, `pipeline.run()`, blend + ROI on (deployed)** | **28.4 ms** | **35.2** |
 
-**3.7× faster than DEPTHOR-Small — and that is our *entire* pipeline against their network
-alone.** At our deployed 1640×1232 (6.5× the pixels) `pipeline.run()` is 52.2 ms / 19.2 Hz.
+**2.8× faster than DEPTHOR-Small in the deployed configuration — and that is our *entire*
+pipeline against their network alone** (3.9× with the two optional stages off).
+
+> Quote the **28.4 ms** row. An earlier revision of this section reported 21.3 ms / 3.7×
+> against a "full" pipeline that in fact had blend and ROI off, while the summary table at
+> the top of this file quoted 3.0× from the everything-on number — the same comparison
+> appearing as two different ratios. Both are now the everything-on figure, re-measured
+> 2026-07-30.
+
+At our deployed 1640×1232 (6.5× the pixels) `pipeline.run()` is **81.4 ms / 12.3 Hz** with
+every stage on, 50.3 ms / 19.9 Hz with blend and ROI off.
 
 > Two integrity notes. Their `evaluate.py` tqdm rate (7.84 it/s = 128 ms) **includes h5
 > dataloading** — use the network-only figures for model-vs-model. And a background GPU job
@@ -610,7 +620,7 @@ Within 0.002–0.004 despite a different GT gate, so the region numbers can be t
 **The gap is nearly uniform across regions.** Restricting to the ToF footprint improves our
 absolute numbers a lot (Rel 0.086 → 0.052) but improves theirs by the same proportion. Earlier
 it looked as though we were close to DEPTHOR inside the footprint (0.052 against their *published*
-0.079) — that was **entirely the region mismatch**, not a real advantage.
+0.079) — that was **entirely the region mismatch** — an artefact of scoring the two methods on different sets of pixels, not an advantage of ours.
 
 So the defensible claim is: consistently **4–8 % behind DEPTHOR-Small on Rel in every region,
 with zero learned fusion** against their 6 M completion head — and that this is *not*
@@ -737,7 +747,7 @@ grows more negative. Capping only reduces depth, and the system already under-re
 **σ as a filter** — falsified above.
 
 **A ridge on `b`** (`solve_scale_shift(..., b_prior=)`; `lam = b_prior · Σw`, so 0 reproduces
-the plain affine fit and ∞ is exact scale-only) — **a real but modest win.** Bracketed on
+the plain affine fit and ∞ is exact scale-only) — **a genuine but modest win.** Bracketed on
 ZJU-L5 train, all pixels:
 
 | `b_prior` | RMSE ↓ | MAE ↓ | Rel ↓ | δ₁ ↑ | bias → 0 |
@@ -820,7 +830,7 @@ problem. Temporal fusion is the only candidate that acquires the missing informa
 - **Anchor re-splatting** (`gpu_ops.resplat_anchors`). Resizing the sparse anchor maps from
   2 MP down to the 288×384 engine input dropped ~95% of the ToF anchors; re-projecting each
   nonzero pixel onto the engine grid instead keeps **~97%** (991/1024 measured). Network B
-  was trained at full anchor density, so this removes a real train/deploy domain shift.
+  was trained at full anchor density, so this removes a mismatch between how the network was trained and how it is used.
 - **Training + export code written** ([../training/](../training/), [../tools/](../tools/)): Network A
   (student backbone), Network B (residual, measured ~0.46M params), distillation + NLL
   losses, datasets, teacher caching, ONNX + TensorRT build scripts. Torch-only parts
@@ -883,7 +893,7 @@ problem. Temporal fusion is the only candidate that acquires the missing informa
 | 5 | ~~`export_onnx` → `build_engine`, **measure Orin FPS**~~ | 4, Jetson | **DONE** (~13–14 Hz with A+B live) |
 | 6 | Run DEPTHOR-Small on the same Orin | Jetson | efficiency claim |
 | 7a | ~~Structure loss tying B to A's relative geometry off-anchor~~ | — | **IMPLEMENTED** — `losses.structure_loss`, `--struct-weight` (default 0.3) |
-| 7b | ~~Widen B's supervision (no new hardware)~~ | — | **IMPLEMENTED** — `max_range` 5.0 → 6.5. Small gain (0.23% of zones); the sensor, not the gate, is the real ceiling |
+| 7b | ~~Widen B's supervision (no new hardware)~~ | — | **IMPLEMENTED** — `max_range` 5.0 → 6.5. Small gain (0.23% of zones); the sensor, not the gate, is what limits this |
 | 7c | ~~Re-weight the closed-form fit~~ | — | **IMPLEMENTED** — `anchoring.range_weights`, `w = z^1`. Note: **theory said z², measurement said z¹** |
 | 8 | ~~Re-train B with the new objective~~ | 7 | **DONE** — `residual_v2`, measured 2026-07-28: blowup + lattice fixed, but over-regularised |
 | 8b | ~~Sweep `--struct-weight` down from 0.3~~ | 8 | **DONE at 0.15** → `residual_v3`, the first B that beats the closed-form path |
@@ -1297,26 +1307,210 @@ resolution **283 ms**, the blend's 2 MP CPU `distanceTransformWithLabels` **56 m
    near-constant (normal stable to 0.05, height to 0.02 m across three captures), so
    re-RANSACing every frame bought nothing. Cached EMA plane in between, which is already the
    documented behaviour for frames that cannot fit one. **20.9 → ~2 ms** amortised.
+   *(Superseded 2026-07-30 — the fit itself is now 1.18 ms, so it refits every frame. See
+   below.)*
 
-**After:**
+### A fifth fix, and the bug that stopped the first four reaching the robot (2026-07-30)
 
-| resolution | blend | ROI | median ms ↓ | Hz ↑ |
-|---|---|---|---|---|
-| 1640×1232 | off | off | 52.5 ms | 19.0 |
-| 1640×1232 | on | off | 70.0 ms | 14.3 |
-| **1640×1232** | **on** | **on** | **80.7 ms** | **12.4** |
-| 640×480 | off | off | 20.2 ms | 49.6 |
-| **640×480** | **on** | **on** | **26.3 ms** | **38.0** |
+**Background, if you are new to this part.** The pipeline fits a flat *ground plane* to the
+ToF measurements each frame — essentially "where is the floor?" — so it can tell which pixels
+are floor a robot could drive over and which are wall, shelving, or ceiling. It finds that
+plane with an algorithm called **RANSAC**: guess a plane through 3 randomly chosen points,
+count how many of the other points lie close to it, repeat 200 times, keep the best guess.
+Fix 4 above sped this up by only re-running it every 10th frame and reusing the previous
+answer in between (that reuse is what `PlaneTracker` does).
 
-Both stages now cost **28 ms** together at full resolution, down from 328 ms.
+**The bug.** Checking the deployed code before the live timing run, `perception_node.py` — the
+program that actually runs on the robot — never passed a `PlaneTracker` in. So on the robot,
+RANSAC ran from scratch on **every single frame**, costing the full ~20 ms each time. Fix 4
+worked, but only in the offline test harness. Nobody had checked that the two ran the same
+way, so the published 12.4 Hz was measured on a faster configuration than the one shipping.
 
-> **Still a real cost, and still unconfirmed live.** `pipeline.run()` is 52.5 ms offline
-> against 73 ms for the deployed node, so ROS transport + CPU rectification add ~20 ms.
-> Extrapolating, the deployed rate with both stages on would be ~101 ms ≈ **10 Hz, down from
-> 13.7** — an estimate, not a measurement. Confirm on the robot before treating it as the
-> deployed configuration; `blend:=false roi_enable:=false` restores the old behaviour.
+**Why that matters beyond speed.** Reusing the previous plane is not just a shortcut. Some
+frames genuinely cannot find a floor — the robot is nose-in to a wall, or the floor is out of
+view — and the reuse is what supplies a sensible answer on those frames. Without a tracker,
+those frames had nothing to fall back on.
+
+Fixed: the node now keeps one tracker for as long as it runs.
+
+**Then the fifth fix — making RANSAC itself fast, so the shortcut is no longer needed:**
+
+5. **`fit_ground_plane` rewritten to work on all 200 guesses at once.** The old code was a
+   Python `for` loop testing one guess per pass. Python loops are slow; the arithmetic inside
+   each pass is trivial. Rewriting it so all 200 guesses are scored in one batch of array
+   maths (this is called **vectorising**) removed almost all of that overhead. The ToF is a
+   32×32 grid, so there are at most **1024 points** — a tiny problem that was slow purely
+   because of how it was written, not because of how much work it required.
+
+   Measured over 120 logged frames: **19.6 ms → 1.18 ms** (p90 1.31, max 4.47), a **16.6×
+   speedup**.
+
+   *(19.6 ms here vs the 20.9 ms quoted above is the same code timed two ways — 20.9 ms
+   measured inside the running pipeline, 19.6 ms measured calling the function directly.
+   Not a contradiction, just two different harnesses.)*
+
+   Two things came out of that rewrite:
+
+   - **A hidden slowdown in the final step.** After picking the best guess, the code
+     refines it using all the nearby points. It called `np.linalg.svd`, which by default
+     also computes a large matrix the code never uses — at the typical 344 nearby points,
+     a 344×344 one — just to read out three numbers. Swapped for `eigh` on a 3×3 matrix,
+     which gives the identical answer (this is exact, not an approximation) and does not
+     grow as more points are involved: **1.51 → 1.18 ms**. The 19.6 ms loop had been large
+     enough to hide it.
+   - **The every-10th-frame shortcut is no longer worth it**, so it now refits every frame.
+     Two reasons. Skipping frames left a ~20 ms *spike* every 10th frame, which a real-time
+     consumer feels more than a slightly higher average. And RANSAC's answer wobbles from
+     frame to frame because it picks its guesses at random: over 5 different random seeds on
+     60 frames, the plane's tilt moved by a median 4.0° but **as much as 21.6°** in the worst
+     10%. Holding one unlucky answer for 10 frames therefore propagates that error; refitting
+     every frame lets the smoothing average the wobble out instead.
+
+> **The GPU was tried here and lost — worth recording so nobody retries it.** A CUDA version
+> of the same calculation measured **2.6–2.9 ms against numpy's 1.18 ms**. The reason is size:
+> at ~1.6 MB the job is too small to be worth shipping to the GPU, because copying data there
+> and launching the work costs more than the arithmetic saves. Even if the GPU did its part
+> instantly, the final refinement step stays on the CPU and would still cost ~0.4 ms.
+>
+> This is the **opposite** of the per-pixel work in `gpu_ops`, where the GPU wins easily —
+> that operates on 2 million pixels, this on 1024 points. **Problem size decides, not how
+> parallel the maths looks.** `roi.py` carries a comment saying so.
+
+**After** (re-measured 2026-07-30 with fixes 1–5 and `refit_every=1`, 40 iters, clean GPU):
+
+| resolution | blend | ROI | median ms ↓ | p90 ms ↓ | Hz ↑ |
+|---|---|---|---|---|---|
+| 1640×1232 | off | off | 50.3 ms | 52.6 | 19.9 |
+| 1640×1232 | on | off | 69.9 ms | 70.1 | 14.3 |
+| **1640×1232** | **on** | **on** | **81.4 ms** | **82.8** | **12.3** |
+| 640×480 | off | off | 20.3 ms | 20.4 | 49.3 |
+| 640×480 | on | off | 24.3 ms | 24.5 | 41.2 |
+| **640×480** | **on** | **on** | **28.4 ms** | **29.5** | **35.2** |
+
+Both stages cost **31 ms** together at full resolution, down from 328 ms.
+
+**Why this table barely moved, and why that is still the point.** 81.4 ms is essentially the
+same as the 80.7 ms measured before fix 5, which looks like the work achieved nothing. It did
+not achieve much *here* — because this offline harness already used a `PlaneTracker`, so it
+was already paying about 2 ms rather than 20 ms, and making a 20 ms step 16× faster cannot
+save much when you were only running it every 10th frame anyway.
+
+What changed is **which setup these numbers describe**. They now describe the program that
+runs on the robot. Before, that program had no tracker and paid the full ~20 ms every frame,
+so it was slower than this table ever showed. The p90 column is the other half of the story:
+at 82.8 ms it sits just 1.4 ms above the median, meaning frames now take a consistent amount
+of time instead of one in ten taking ~20 ms longer.
+
+> **These stages still cost something, and the deployed rate is still not measured.**
+> `pipeline.run()` — the maths alone — is 50.3 ms, while the full program on the robot took
+> 73 ms in an earlier measurement. The ~20 ms difference is the cost of moving images between
+> programs and undistorting the camera image, neither of which the offline harness does.
+>
+> Adding that ~20 ms to the 81.4 ms above predicts **~101 ms ≈ 9.9 Hz** on the robot, down
+> from the 13.7 Hz measured before these stages existed. **This is arithmetic, not a
+> measurement** — it is the one number in this file that has not been observed directly.
+>
+> The same arithmetic before the fixes gave ~118 ms ≈ **8.5 Hz**, because the robot was paying
+> ~20 ms per frame for the RANSAC this table never charged it. That is *below* the ToF's own
+> 8.3 Hz — so the shipped configuration may have been missing its real-time target the whole
+> time, while this file reported 12.4 Hz. Confirm on the robot before trusting either figure.
+> `blend:=false roi_enable:=false` restores the older, faster behaviour, and **both are now
+> genuine launch arguments** — until 2026-07-30 typing them did nothing at all (see below).
 
 All of it found and fixed offline on logged frames, which is the point of having the harness.
+
+### Tape ground truth: tools built and tested, measurements not yet taken
+
+**Why this test exists.** Every other number in this file compares our depth output against
+the ToF sensor. But the pipeline *uses* that same ToF sensor to calibrate itself, so it is
+marking its own homework: if the ToF is wrong, our numbers would look fine anyway. The fix is
+to measure some distances by hand with a laser rangefinder and compare against those. That is
+the only check here that does not depend on the ToF being correct.
+
+Two tools, built and tested 2026-07-30 *before* the measuring session, because a tool that
+breaks halfway through costs the whole session and the room has to be booked again:
+
+- [`tape_capture.py`](../tools/diagnostics/tape_capture.py) — freeze the live camera view,
+  click the point you measured, type the distance. It saves the raw depth output, the camera
+  image and the ToF reading for that instant, and writes the file to disk **after every
+  point** rather than at the end, so a crash costs one measurement instead of all of them. It
+  also reopens an existing session, since ~20 points is more than one sitting. Clicking opens
+  a ×8 magnified inset, because being a few pixels off can land on a different surface
+  entirely — the wall behind the box rather than the box.
+- [`tape_eval.py`](../tools/diagnostics/tape_eval.py) — compares the two and reports the
+  score **split by whether the point was inside the ToF's field of view or outside it**.
+
+That split is the whole point. The ToF only covers 7.5% of the image; the other 92.5% is the
+camera guessing, stretched to fit the ToF's calibration. Nothing so far tells us how good
+that guess is. **A large gap between inside and outside is a genuine result worth publishing,
+not a failure** — it would put a number on a limitation this file currently only describes in
+words.
+
+**Two corrections happen at scoring time rather than when measuring**, so the handwritten
+measurements stay exactly as taken and can be re-scored later without going back to the room:
+the offset from the camera housing to the lens's true optical centre, and a conversion
+explained next.
+
+> **The conversion that would have silently ruined this.** A rangefinder measures distance
+> *along the direction it is pointing*. The pipeline reports distance *straight ahead*, along
+> the camera's centre line. For a point off to one side these differ, and the further off to
+> the side, the bigger the difference. Converting between them takes one line of trigonometry
+> (`z = r·cos θ`).
+>
+> To check we got it right, we built a fake dataset where the correct answer is known exactly,
+> then deliberately deleted the conversion to see what a mistake would look like. The result:
+> the point dead-centre stayed perfect at 0.000 m, while points near the edges were off by up
+> to 62.5% — giving **0.000 m error inside the ToF's field of view and 3.362 m outside it**.
+>
+> That is the dangerous part. It does not look like a bug; it looks exactly like the thing
+> this experiment was built to detect, so we would have "discovered" that our depth falls
+> apart outside the ToF cone and published it. With the conversion in place, the same fake
+> dataset scores exact zeros everywhere including the extreme corners.
+
+**How accurate the hand measurements themselves are: ±12 mm.** That combines the rangefinder
+(±3 mm), how well we know the lens's optical centre (±10 mm) and how precisely a marker can
+be placed and clicked (±5 mm). `tape_eval` prints this and warns that any error smaller than
+about 0.023 m is indistinguishable from measurement noise and must not be read as a result.
+For context, the errors we expect to see are around 0.2 m — roughly 16× larger — so the hand
+measurements are precise enough to judge the pipeline by.
+
+### Turning the optional stages on and off — and why each test needs a restart
+
+Checking the same code path turned up two more places where this file described something the
+code could not actually do. Both matter because the planned live comparison depends on being
+able to switch these stages off.
+
+A **launch argument** is an option you type on the command line when starting the robot
+software, like `blend:=false`. For one to work, two separate things must be true: the program
+has to know the option exists, *and* the startup file has to pass it along. Each of these was
+missing one of the two halves, so typing the option had no effect and gave no error either.
+
+| | before 2026-07-30 | now |
+|---|---|---|
+| `roi_enable` | the program did not know this option existed. The stage was on, because on is the built-in default — but `roi_enable:=false`, which this file recommended as the fallback, silently did nothing | works |
+| `blend` | the program knew the option, but the startup file never passed it along, so `blend:=false` was not accepted | works |
+| `plane_refit_every` | not available at all | works, default 1 |
+
+```bash
+# the deployed configuration
+ros2 launch ringfusion_bringup single_module.launch.py \
+     backbone_engine:=student_v4_heldout_fp16.engine \
+     residual_engine:=residual_v4_last_fp16.engine
+
+# the A/B arm, and the fallback if the live rate disappoints
+ros2 launch ringfusion_bringup single_module.launch.py … blend:=false roi_enable:=false
+```
+
+> **You cannot flip these while the robot is running.** ROS has a command
+> (`ros2 param set`) that changes a setting on a running program, and it will appear to
+> succeed here — but the program reads these three settings **once, when it starts**, and
+> never looks again. So the two halves of the live comparison have to be separate runs: start
+> it, drive the route, stop it, restart with `blend:=false`, drive the same route.
+>
+> *(Implementation note: the launch file wraps these in `ParameterValue(..., value_type=bool)`.
+> Without that, a command-line value arrives as text — `"false"`, the word — and the program
+> rejects it because it expects a true/false value, not a word. This is a common ROS trap
+> and the failure message, "Wrong parameter type", does not make the cause obvious.)*
 
 > **With Network B enabled** (`residual_engine:=…`), `/depth` used to drop to **~7 Hz** —
 > B's `refine()` upsampled/applied its 3 fields over 2 MP **on the CPU**. Now GPU-offloaded;
@@ -1620,7 +1814,7 @@ systematic bias. None is present, so none of those is the problem. **And Network
 improves accuracy where it is supervised** — 23.8% → 16.1% and 10.9% → 5.7% relative error.
 B is doing its job inside its domain.
 
-#### The one real systematic: far-field under-read
+#### The one systematic error: far-field under-read
 
 Binning the anchor residuals by image row exposes a consistent structure in **both** scenes:
 
@@ -1696,7 +1890,7 @@ signal's own broadband median, along the image's horizontal axis.
 | power @ 13 px anchor pitch — A | 3.1× (noise floor) | 2.9× (noise floor) |
 | power @ 13 px anchor pitch — B | 15.4× (**B/A 5.0**) | 23.2× (**B/A 8.0**) |
 
-**Both effects are real, and they are now separated:**
+**Both effects are present, and they are now separated:**
 
 - **Texture amplification (scene-dependent).** B locks onto whatever periodic texture the scene
   has — 173 px with the trophies, 253 px with the blackboards — and amplifies it **2–4×** over
