@@ -84,6 +84,7 @@ key to the rest.
 | **DEPTHOR head-to-head** | How do we compare to published SOTA on identical data, identical metric code, identical regions? | dense RealSense GT | **4–8 % behind DEPTHOR-Small on Rel, uniformly across regions**, with *zero learned fusion* against their 6 M head. |
 | **Held-out re-distill** | Were the absolute numbers inflated because Network A trained on the eval set? | held-out ToF zones, on 200 frames Network A never saw | **Yes, by ~5 %.** Rankings unchanged. Numbers now clean. |
 | **Timing** | Does it run in real time, and how does that compare fairly? | wall clock on this Orin | **10.4 Hz measured on the robot**, 14.1 Hz for `pipeline.run()` alone, both at 1640×1232 with every stage on; **3.1× faster than DEPTHOR-Small** at their resolution, our whole pipeline against their network alone. |
+| **Blend A/B, driving** | Does Stage 7c help on a *moving* robot, or only on saved frames? | held-out ToF zones, 600 frames | **5.4 % better MAE against 5.8 % predicted offline.** It improves the tail, not the median. No added flicker. |
 | **Tape ground truth** | Is the **ToF itself** right? | a tape measure | ⬜ **NOT DONE.** The one thing nothing else can substitute for. |
 
 ### What "good" looks like for each one
@@ -102,9 +103,10 @@ evaluation as a whole.
 | Held-out re-distill | **the clean numbers should be close to the contaminated ones.** A large gap would mean the published figures were fiction | +5 %, rankings unchanged ✅ |
 | Timing | **Hz ↑, ms ↓**, and stay above the ToF's 8.3 Hz complete-map rate | **10.4 Hz measured on the robot ✅** with every stage on (7.2 Hz as first shipped — fixed by two GPU rewrites). 13.3 Hz with blend+ROI off. See [the deployed rate, measured](#the-deployed-rate-measured-2026-07-30) |
 | σ calibration | **coverage at ±1σ should hit 0.683 exactly** — this is a target, not a direction. Too low = overconfident, too high = σ inflated and useless | analytic σ in the far field: **0.229** ❌ badly overconfident |
+| Blend A/B, driving | **the offline prediction should transfer.** A large miss either way would mean the offline bench does not describe the robot | 5.4 % measured against 5.8 % predicted ✅ — the first offline prediction in this project to survive contact unchanged |
 | Tape ground truth | **our depth ↔ tape agreement**, especially outside the ToF cone. The headline is the **outside/inside AbsRel ratio** — near 1.0 means the extrapolation holds up | ⬜ not collected; tooling built and tested, see [below](#tape-ground-truth-tools-built-and-tested-measurements-not-yet-taken) |
 
-**Scorecard as it stands: six targets met, two missed (far-field RMSE and σ calibration —
+**Scorecard as it stands: seven targets met, two missed (far-field RMSE and σ calibration —
 both the same root cause), one unmeasured (tape).**
 
 The deployed rate went "unmeasured → missed → met" on 2026-07-30. The extrapolation said
@@ -285,6 +287,75 @@ cancels noise neither cancels alone. It also settles v4-vs-v5: with the blend, i
 is *identical* between them (the ToF supplies it), and v4 wins extrapolation by 19 %.
 
 **Recommended configuration: `student_v3` + `residual_v4_last` + blend.**
+
+> **Confirmed live, 2026-07-30 — and the offline number held.** 600 frames while driving,
+> both arms computed from **one** backbone+residual pass per frame so the only difference is
+> the blend, and the blend fed **only** the central island so it never saw a scored zone:
+>
+> | `center`, held-out zones | MAE ↓ | medAE ↓ | p95 ↓ | δ<1.25 ↑ |
+> |---|---|---|---|---|
+> | network alone | 0.168 m | 0.045 m | 0.782 m | 0.775 |
+> | **+ blend** | **0.159 m** | **0.044 m** | **0.761 m** | **0.790** |
+>
+> **5.4 % better MAE live against 5.8 % predicted offline** — the offline figure transferred
+> almost exactly, which is the first time in this project an offline prediction has survived
+> contact with the robot unchanged.
+>
+> Two things offline could not test, both now measured: **temporal stability is identical**
+> (median frame-to-frame |Δdepth| 0.0027 m blended vs 0.0028 m not — the blend adds no
+> flicker under motion), and the **far field does not blow up** (max depth 2.93 m blended vs
+> 3.08 m, nothing beyond the ToF range in either arm).
+>
+> **What it actually improves — the medians say it plainly.** The *typical* error barely
+> moves (medAE 0.045 → 0.044 m) while the *mean* moves ten times as far (MAE 0.168 → 0.159 m)
+> and the tail moves with it (p95 0.782 → 0.761 m). The blend is not making ordinary pixels
+> better; it is making **bad** pixels less bad. Where the network is already roughly right it
+> contributes nothing, and where the network is badly wrong near an anchor it catches the
+> error. That is worth knowing before anyone tries to tune it: optimising it against a median
+> would show no signal at all.
+>
+> **Scope: this measured extrapolation only.** The `center` protocol holds out everything
+> outside the island, so every scored zone is in the outer ring. The blend's *large* win is
+> on `random` — interpolation *between* zones inside the cone, where it takes MAE 0.261 →
+> 0.045 — and no zone inside the cone is scored here. That benefit remains offline-only.
+>
+> **The trade, now that both sides are measured on the robot:** the blend costs **15.35 ms of
+> a 96.1 ms frame**. Turning it off gives **12.4 Hz instead of 10.4 Hz (+19 %)** for **5.4 %
+> worse MAE**.
+>
+> **Decision (2026-07-30): the blend stays ON by default.** A 19 % rate gain is not worth a
+> 5 % accuracy loss while the pipeline already clears its 8.3 Hz real-time target with room
+> to spare. `blend:=false` remains available for a consumer that would rather have the rate.
+>
+> [`blend_ab_live.py`](../tools/diagnostics/blend_ab_live.py),
+> `docs/demo/benchmarks/blend_ab_live.json`, and a visual readout at
+> [`docs/demo/live2_readout.html`](../docs/demo/live2_readout.html).
+
+#### Intent: the blend is architecture, not a patch
+
+Worth stating explicitly, because a 5 % number invites the wrong reading. Stage 7c is **not a
+correction bolted on to compensate for a weak network** — it is the part of the design that
+decides *which source to believe where*, and it is meant to stay.
+
+The system has two estimators with opposite failure modes. The ToF measures true distance but only
+at ~1024 points covering 7 % of the frame. The network covers every pixel but knows only
+relative geometry and inherits whatever the affine fit gets wrong. Neither is right everywhere,
+so something has to arbitrate — and doing that by distance to the nearest real measurement is
+the principled rule, not a heuristic.
+
+Three consequences that follow from treating it that way rather than as a patch:
+
+- **It should get *better* as the sensor improves, not redundant.** More ToF zones, or a
+  longer range, widen the region where a real measurement is nearby. The blend is the
+  mechanism that converts extra sensor coverage into map accuracy.
+- **It is where per-pixel provenance belongs.** The blend already computes a weight per pixel
+  — how much of this depth came from measurement versus inference. That is exactly the signal
+  a downstream consumer needs and `/depth_var` currently approximates. Exposing it is a
+  natural extension; deleting the blend would remove the only place it exists.
+- **Judge it on the tail, not the average.** Per the medians above it targets the worst
+  pixels, which is what "arbitrate between two sources" is supposed to do. A future version
+  should be tuned against p95 and RMSE, and against the tape ground truth once that exists —
+  not against a headline mean that averages its effect away.
 
 Enabled by default; `blend:=false`, `blend_near_deg`, `blend_far_deg` are `perception` node
 parameters for live A/B.
@@ -1661,6 +1732,48 @@ be placed and clicked (±5 mm). `tape_eval` prints this and warns that any error
 about 0.023 m is indistinguishable from measurement noise and must not be read as a result.
 For context, the errors we expect to see are around 0.2 m — roughly 16× larger — so the hand
 measurements are precise enough to judge the pipeline by.
+
+### Recorded clips and result files
+
+Every measurement on this page is backed by a file. Nothing here is quoted from memory.
+
+**Clips** (`docs/demo/clips/`). All four-panel clips are *camera · ToF · fused depth ·
+top-down*, recorded from the deployed node by
+[`record_clip.py`](../tools/diagnostics/record_clip.py).
+
+| file | what it shows |
+|---|---|
+| `live2_4panel.mp4` | **2026-07-30, current build** — 35 s driving, 421 frames, blend + ROI on, after all seven speed fixes. The clip that matches every number in this file. |
+| `live2_4panel_small.mp4` | the same, downscaled for embedding |
+| `drive_4panel.mp4` | 2026-07-28, **pre-dates** the blend, the ROI stage and the GPU rewrites |
+| `static_4panel.mp4` | 2026-07-28, stationary |
+| `drive_camera.mp4`, `drive_tof_heatmap.mp4`, `drive_fused_depth.mp4`, `drive_topdown.mp4` | the 2026-07-28 panels separately |
+| `drive_cloudseq_colordepth.mp4` | point-cloud flythrough |
+
+> **Raw frames are deliberately not in git.** `.gitignore` excludes
+> `docs/demo/**/*_frames_raw.tar.gz`; `live2_frames_raw.tar.gz` (43 MB, all 421 source JPEGs)
+> and the 2026-07-28 equivalent live on the Orin only. Re-encode from those if a different
+> crop, frame rate or panel layout is ever needed — the mp4s are lossy derivatives.
+
+**Result files** (`docs/demo/benchmarks/`, 35 JSONs). The ones behind the live work:
+
+| file | measurement |
+|---|---|
+| `blend_ab_live.json` | LIVE-2 — blend A/B, 600 frames driving |
+| `rate_live_on_verified.json` | deployed rate as first shipped — 7.16 Hz |
+| `rate_live_after_fix.json` | after the blend GPU rewrite — 7.41 Hz |
+| `rate_live_roigpu.json` | after the ROI GPU rewrite — 10.36 Hz |
+| `rate_live_q1.json` | after the queue fix — 10.37 Hz, latency 128.5 ms |
+| `rate_live_stagesoff.json` | blend + ROI off — 13.28 Hz |
+| `profile_node_on.json` / `_gpuup` / `_roigpu` / `_off` | per-stage cost at each step |
+| `timing_after_gpufixes.json` | offline `pipeline.run` — 70.7 ms / 14.1 Hz |
+
+`rate_live_on_final.json` is retained but **labelled inside as mislabelled at capture**: it
+was intended as a blend-on run and actually measured a stale blend-off launch. Kept rather
+than deleted so the record of the mistake survives with it.
+
+**Visual readout.** [`docs/demo/live2_readout.html`](../docs/demo/live2_readout.html) presents
+the LIVE-2 result, the rate recovery and the per-stage breakdown alongside the embedded clip.
 
 ### Turning the optional stages on and off — and why each test needs a restart
 

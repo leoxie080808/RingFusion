@@ -88,7 +88,7 @@ def main():
     K = calib['K']
     x0, y0, x1, y1 = tof_footprint(calib, h, w)
 
-    pred, gt, inside, labels, us, vs = [], [], [], [], [], []
+    pred, gt, inside, labels, us, vs, sigma = [], [], [], [], [], [], []
     for q in pts:
         D = np.load(os.path.join(a.dir, q['stem'] + '_depth.npy'))
         u, v = int(q['u']), int(q['v'])
@@ -99,6 +99,12 @@ def main():
             p = float(np.median(sub)) if sub.size else float('nan')
         else:
             p = float(D[v, u])
+        # sigma comes straight from the published /depth_var, so this checks the DEPLOYED
+        # uncertainty -- not the analytic term alone, which is ~0.1% of it and is the only
+        # part any previous calibration result covered.
+        vp = os.path.join(a.dir, q['stem'] + '_var.npy')
+        sigma.append(float(np.sqrt(max(np.load(vp)[v, u], 0.0)))
+                     if os.path.exists(vp) else float('nan'))
         pred.append(p)
         gt.append(axis_depth(float(q['range_m']) + off, u, v, K))
         inside.append(x0 <= u < x1 and y0 <= v < y1)
@@ -106,6 +112,7 @@ def main():
         us.append(u); vs.append(v)
 
     pred = np.array(pred); gt = np.array(gt); inside = np.array(inside)
+    sigma = np.array(sigma)
 
     sig = np.sqrt(SIGMA_INSTRUMENT.get(instrument, 0.005) ** 2
                   + SIGMA_ORIGIN ** 2 + SIGMA_MARK ** 2)
@@ -150,6 +157,39 @@ def main():
     for name, m in rows:
         print(f'  {name:<14}{m["rmse"]:>9.3f} m'
               f'    (MAE {m["mae"]:.3f} m; RMSE >> MAE means a few large outliers)')
+
+    # --- sigma calibration against INDEPENDENT ground truth ---------------------------
+    # Every previous calibration number in this repo was scored against the ToF the pipeline
+    # anchors to, and covered only the ANALYTIC variance term (~0.1% of what /depth_var
+    # actually publishes). This is the first check of the DEPLOYED sigma against a
+    # measurement the pipeline never saw.
+    if np.isfinite(sigma).any():
+        print('\n=== sigma calibration (deployed /depth_var, vs independent GT) ===')
+        print('target is 0.683 EXACTLY -- this is a target, not a direction.')
+        print('  below 0.683 = overconfident (sigma too small, the dangerous failure)')
+        print('  above 0.683 = sigma inflated and useless (it flags everything)')
+        hdr = f'{"region":<14}{"n":>5}{"cov@1σ":>9}{"cov@2σ":>9}{"med σ":>9}{"med |err|":>11}'
+        print(hdr); print('-' * len(hdr))
+        for sel, name in ((np.ones_like(inside), 'ALL'), (inside, 'INSIDE ToF'),
+                          (~inside, 'OUTSIDE ToF')):
+            ok = sel & np.isfinite(sigma) & np.isfinite(pred) & (sigma > 0)
+            if not ok.any():
+                continue
+            err = np.abs(pred[ok] - gt[ok])
+            c1 = float((err <= sigma[ok]).mean())
+            c2 = float((err <= 2 * sigma[ok]).mean())
+            flag = '' if abs(c1 - 0.683) < 0.15 else ('  <- OVERCONFIDENT' if c1 < 0.683
+                                                      else '  <- inflated')
+            print(f'{name:<14}{int(ok.sum()):>5}{c1:>9.3f}{c2:>9.3f}'
+                  f'{np.median(sigma[ok]):>8.3f}m{np.median(err):>10.3f}m{flag}')
+        n_ok = int((np.isfinite(sigma) & (sigma > 0)).sum())
+        if n_ok < 20:
+            print(f'\n  NOTE: only {n_ok} points. A coverage fraction from <20 samples has a '
+                  f'±{100*0.5/max(n_ok,1)**0.5:.0f}% standard error —\n'
+                  f'  enough to distinguish 0.23 from 0.68, not enough to certify 0.68.')
+    else:
+        print('\nsigma calibration: SKIPPED, no *_var.npy files '
+              '(was /depth_var publishing during capture?)')
 
     print('\nlower is better: mae, medae, p95, rmse, absrel, |bias|')
     print('higher is better: coverage, d1, d2, d3')
