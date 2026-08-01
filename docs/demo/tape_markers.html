@@ -1,0 +1,151 @@
+<title>RingFusion — printable ground-truth markers</title>
+<style>
+  :root {
+    --ink: #1A1A1F; --ink-2: #55555F; --ink-3: #85858F;
+    --surface: #FAF9F7; --panel: #FFFFFF; --line: #E4E2DC;
+    --mark: #C2185B;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: "Avenir Next", "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink:#EDEDF2; --ink-2:#A6A6B4; --ink-3:#76768A;
+            --surface:#15161C; --panel:#1E1F27; --line:#2E3040; }
+  }
+  :root[data-theme="dark"] { --ink:#EDEDF2; --ink-2:#A6A6B4; --ink-3:#76768A;
+            --surface:#15161C; --panel:#1E1F27; --line:#2E3040; }
+  :root[data-theme="light"] { --ink:#1A1A1F; --ink-2:#55555F; --ink-3:#85858F;
+            --surface:#FAF9F7; --panel:#FFFFFF; --line:#E4E2DC; }
+
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--surface); color:var(--ink);
+         font-family:var(--sans); line-height:1.55; }
+  .doc { max-width:60rem; margin:0 auto; padding:2.5rem 1.5rem 4rem; }
+  h1 { font-size:1.8rem; margin:0 0 .5rem; letter-spacing:-.02em; text-wrap:balance; }
+  .eyebrow { font-family:var(--mono); font-size:.7rem; letter-spacing:.14em;
+             text-transform:uppercase; color:var(--ink-3); margin:0 0 .5rem; }
+  p { max-width:62ch; color:var(--ink-2); }
+  .warn { background:var(--panel); border:1px solid var(--line);
+          border-left:3px solid var(--mark); border-radius:3px;
+          padding:1rem 1.2rem; margin:1.5rem 0; }
+  .warn strong { color:var(--ink); }
+  .warn p { margin:0; }
+  h2 { font-size:1.1rem; margin:2.5rem 0 .3rem; }
+  .sheet { background:var(--panel); border:1px solid var(--line); border-radius:3px;
+           padding:1.2rem; margin:1rem 0; }
+  .row { display:flex; flex-wrap:wrap; gap:8mm; align-items:flex-start; }
+  .marker { position:relative; border:0.3mm solid #000; background:#fff;
+            flex:0 0 auto; }
+  .marker svg { display:block; width:100%; height:100%; }
+  .cap { font-family:var(--mono); font-size:2.6mm; text-align:center;
+         color:#000; margin-top:1mm; }
+  .unit { display:flex; flex-direction:column; align-items:center; }
+  .rule { margin-top:6mm; }
+  .rule svg { display:block; }
+  .rulelabel { font-family:var(--mono); font-size:2.4mm; color:#000; margin-top:1mm; }
+  table { border-collapse:collapse; font-size:.9rem; margin:1rem 0; }
+  th,td { text-align:left; padding:.4rem .8rem .4rem 0; border-bottom:1px solid var(--line); }
+  th { font-family:var(--mono); font-size:.68rem; letter-spacing:.08em;
+       text-transform:uppercase; color:var(--ink-3); font-weight:500; }
+  .num { font-variant-numeric:tabular-nums; }
+  button { font:inherit; font-size:.9rem; padding:.5rem 1.1rem; border-radius:3px;
+           border:1px solid var(--ink); background:var(--ink); color:var(--surface);
+           cursor:pointer; }
+  button:focus-visible { outline:3px solid var(--mark); outline-offset:2px; }
+
+  /* ---- print: real millimetres, nothing but the markers ---- */
+  @page { size: A4 landscape; margin: 10mm; }
+  @media print {
+    :root { --surface:#fff; --panel:#fff; --ink:#000; }
+    body { background:#fff; }
+    .doc { max-width:none; padding:0; }
+    .screen-only { display:none !important; }
+    .sheet { border:0; padding:0; margin:0; background:#fff;
+             break-after:page; page-break-after:always; }
+    .sheet:last-of-type { break-after:auto; page-break-after:auto; }
+    h2 { font-size:3mm; margin:0 0 4mm; color:#000; }
+  }
+  @media (prefers-reduced-motion:reduce) { * { transition:none!important; } }
+</style>
+
+<div class="doc">
+  <div class="screen-only">
+    <p class="eyebrow">RingFusion · tape ground truth · LIVE-3 / LIVE-4</p>
+    <h1>Printable markers</h1>
+    <p>Nineteen fiducial markers, sized from the camera's actual geometry. Each has an X whose
+    crossing — the white dot — is the point you measure to and later click on. Print this page
+    and the markers come out at true size.</p>
+
+    <div class="warn">
+      <p><strong>Print at 100 % scale — not “fit to page”.</strong> Then hold a ruler against
+      the 100 mm bar at the bottom of each sheet. If it isn’t exactly 100 mm, the print scaled
+      and every marker is the wrong size. They will look completely normal, which is what makes
+      this worth checking.</p>
+    </div>
+
+    <p><button onclick="window.print()">Print these sheets</button></p>
+
+    <h2>Why one size</h2>
+    <p>An earlier version graded marker size by distance, which keeps the pixel span constant
+    and is optically ideal — and is unusable, because markers go up <em>before</em> the robot
+    is parked, so you cannot know the distance when you choose the size.</p>
+    <p><strong>12 cm removes the decision.</strong> Pixels across = f<sub>x</sub> × size ÷
+    distance, with the rectified f<sub>x</sub> ≈ 380 px:</p>
+    <table>
+      <thead><tr><th>Distance</th><th class="num">0.4 m</th><th class="num">1 m</th>
+        <th class="num">2 m</th><th class="num">3 m</th><th class="num">4 m</th>
+        <th class="num">4.5 m</th></tr></thead>
+      <tbody><tr><td>12 cm marker</td><td class="num">114 px</td><td class="num">46 px</td>
+        <td class="num">23 px</td><td class="num">15 px</td><td class="num">11 px</td>
+        <td class="num">10 px</td></tr></tbody>
+    </table>
+    <p>Clickable across the whole range a robot on a 3.66 m field can produce — 10 px is
+    comfortable with the capture tool’s ×8 zoom, 6 px is the floor. The four 6 cm markers on
+    the last sheet are for surfaces a 12 cm square will not sit flat on. That is a judgement
+    about the <em>surface</em>, which you can make while placing; not about distance, which
+    you cannot.</p>
+
+    <h2>Measuring, once they’re up</h2>
+    <p>One straight-line measurement per marker, <strong>from the camera lens to the white
+    dot</strong> — through the air, at whatever angle it runs. Not to the ToF sensor, which
+    sits 20.2 mm lower. Not a floor or top-down distance: for a marker 1 m above the lens at
+    3 m ahead those differ by 162 mm, which is larger than the error being measured.</p>
+  </div>
+
+  <div id="sheets"></div>
+</div>
+
+<script>
+  // Generated rather than hand-written: 24 near-identical blocks invite exactly the
+  // copy-paste slip (a duplicated id, a stale size) this page exists to prevent.
+  const RULE = `<div class="rule"><svg width="100mm" height="5mm" viewBox="0 0 100 5">
+      <line x1="0" y1="2.5" x2="100" y2="2.5" stroke="#000" stroke-width="0.35"/>
+      <line x1="0" y1="0.4" x2="0" y2="4.6" stroke="#000" stroke-width="0.35"/>
+      <line x1="50" y1="0.9" x2="50" y2="4.1" stroke="#000" stroke-width="0.35"/>
+      <line x1="100" y1="0.4" x2="100" y2="4.6" stroke="#000" stroke-width="0.35"/>
+    </svg><div class="rulelabel">THIS BAR MUST MEASURE EXACTLY 100 mm</div></div>`;
+
+  const marker = (id, mm) => `
+    <div class="unit">
+      <div class="marker" style="width:${mm}mm;height:${mm}mm">
+        <svg viewBox="0 0 100 100" aria-label="Marker ${id}, ${mm} mm">
+          <line x1="0" y1="0" x2="100" y2="100" stroke="#C2185B" stroke-width="4"/>
+          <line x1="0" y1="100" x2="100" y2="0" stroke="#C2185B" stroke-width="4"/>
+          <circle cx="50" cy="50" r="3.4" fill="#fff" stroke="#C2185B" stroke-width="0.7"/>
+        </svg>
+      </div>
+      <div class="cap">#${id} &middot; ${mm} mm</div>
+    </div>`;
+
+  const sheets = [];
+  let id = 1;
+  const emit = (ids, mm, title) => sheets.push(
+    `<div class="sheet"><h2>${title}</h2>` +
+    `<div class="row">${ids.map(i => marker(i, mm)).join('')}</div>${RULE}</div>`);
+
+  for (let i = 0; i < 10; i++) {            // 20 x 12 cm, two per landscape sheet
+    emit([id++, id++], 120, '12 cm — use at ANY distance, 0.4–4.5 m');
+  }
+  emit([id++, id++, id++, id++], 60,        // 4 x 6 cm for narrow surfaces
+       '6 cm — only where 12 cm will not sit flat (narrow edges, rails)');
+  document.getElementById('sheets').innerHTML = sheets.join('');
+</script>

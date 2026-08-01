@@ -1680,6 +1680,15 @@ blend at 15.4 ms. There is no longer a stage whose cost is an artefact of how it
 
 ### Tape ground truth: tools built and tested, measurements not yet taken
 
+> **"Tape" means two different things and it is worth separating them once.** The **tape
+> measure** is the *instrument* — the retractable ruler. "Tape ground truth" just means
+> "distances measured by hand"; a laser rangefinder does the same job and the budget barely
+> changes (±12.2 mm by tape against ±11.6 mm by laser — the optical-centre offset dominates
+> both, so **no rangefinder is needed**). The instrument is never in shot: measure, get it out
+> of the way, then capture. A **marker** is the small sticker left *on* the scene so you know
+> which pixel a measurement belongs to — masking or painter's tape is ideal. Markers *do* stay
+> in view; that is what they are for.
+
 **Why this test exists.** Every other number in this file compares our depth output against
 the ToF sensor. But the pipeline *uses* that same ToF sensor to calibrate itself, so it is
 marking its own homework: if the ToF is wrong, our numbers would look fine anyway. The fix is
@@ -1696,6 +1705,24 @@ breaks halfway through costs the whole session and the room has to be booked aga
   also reopens an existing session, since ~20 points is more than one sitting. Clicking opens
   a ×8 magnified inset, because being a few pixels off can land on a different surface
   entirely — the wall behind the box rather than the box.
+
+  **The view stays frozen between points.** The scene has to be static for this exercise
+  anyway, so one frozen frame supplies every marker in it: click, type, click, type. Depth,
+  variance and rgb are stored **once per frozen frame** rather than once per point — a
+  20-point session on one frame is ~16 MB instead of ~320 MB of identical arrays.
+
+  **Several camera positions are allowed, and are easier than one.** Fitting 20 markers
+  spanning 0.3–6 m into a single view is awkward — a marker at 0.3 m nearly touches the lens
+  and occludes whatever is behind it. Instead treat each position as a self-contained
+  mini-session: park, measure what is visible *from there*, freeze, click them all, ESC, drive
+  on. Points record which frozen frame they came from and are scored against that frame's
+  depth map; `tape_eval` pools the lot. Roughly **three positions of ~7 markers** is a
+  comfortable session.
+
+  > **If the robot moves, re-measure.** Ranges are measured *from the camera*, so a marker
+  > 2.10 m from one parking spot is not 2.10 m from the next. The same physical markers can be
+  > reused, but the numbers must be taken again. Within a position nothing may move between
+  > measuring and capturing.
 - [`tape_eval.py`](../tools/diagnostics/tape_eval.py) — compares the two and reports the
   score **split by whether the point was inside the ToF's field of view or outside it**.
 
