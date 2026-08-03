@@ -32,28 +32,39 @@
   h2 { font-size:1.1rem; margin:2.5rem 0 .3rem; }
   .sheet { background:var(--panel); border:1px solid var(--line); border-radius:3px;
            padding:1.2rem; margin:1rem 0; }
-  .row { display:flex; flex-wrap:wrap; gap:8mm; align-items:flex-start; }
+
+  /* The grid is 2 x 90 mm + a 10 mm gutter = 190 mm, exactly the width of A4 portrait
+     inside 10 mm margins -- and identical to what make_markers.py lays into the PDF. */
+  .grid { position:relative; display:grid; gap:10mm;
+          grid-template-columns:repeat(2, 90mm); justify-content:center; }
+  .cut { position:absolute; border:0; border-top:0.2mm dashed #B0B0B0; }
+  .cut.v { border-top:0; border-left:0.2mm dashed #B0B0B0;
+           left:50%; top:-6mm; bottom:-6mm; }
+  .cut.h { left:-6mm; right:-6mm; top:50%; }
   .marker { position:relative; border:0.3mm solid #000; background:#fff;
-            flex:0 0 auto; }
+            width:90mm; height:90mm; }
   .marker svg { display:block; width:100%; height:100%; }
   .cap { font-family:var(--mono); font-size:2.6mm; text-align:center;
          color:#000; margin-top:1mm; }
   .unit { display:flex; flex-direction:column; align-items:center; }
-  .rule { margin-top:6mm; }
+  .rule { margin-top:8mm; }
   .rule svg { display:block; }
   .rulelabel { font-family:var(--mono); font-size:2.4mm; color:#000; margin-top:1mm; }
-  table { border-collapse:collapse; font-size:.9rem; margin:1rem 0; }
-  th,td { text-align:left; padding:.4rem .8rem .4rem 0; border-bottom:1px solid var(--line); }
+  table { border-collapse:collapse; font-size:.9rem; margin:1rem 0;
+          display:block; overflow-x:auto; }
+  th,td { text-align:left; padding:.4rem .8rem .4rem 0; border-bottom:1px solid var(--line);
+          white-space:nowrap; }
   th { font-family:var(--mono); font-size:.68rem; letter-spacing:.08em;
        text-transform:uppercase; color:var(--ink-3); font-weight:500; }
   .num { font-variant-numeric:tabular-nums; }
+  tr.dim td { color:var(--ink-3); }
   button { font:inherit; font-size:.9rem; padding:.5rem 1.1rem; border-radius:3px;
            border:1px solid var(--ink); background:var(--ink); color:var(--surface);
            cursor:pointer; }
   button:focus-visible { outline:3px solid var(--mark); outline-offset:2px; }
 
   /* ---- print: real millimetres, nothing but the markers ---- */
-  @page { size: A4 landscape; margin: 10mm; }
+  @page { size: A4 portrait; margin: 10mm; }
   @media print {
     :root { --surface:#fff; --panel:#fff; --ink:#000; }
     body { background:#fff; }
@@ -62,7 +73,7 @@
     .sheet { border:0; padding:0; margin:0; background:#fff;
              break-after:page; page-break-after:always; }
     .sheet:last-of-type { break-after:auto; page-break-after:auto; }
-    h2 { font-size:3mm; margin:0 0 4mm; color:#000; }
+    h2 { font-size:3mm; margin:0 0 5mm; color:#000; }
   }
   @media (prefers-reduced-motion:reduce) { * { transition:none!important; } }
 </style>
@@ -71,38 +82,61 @@
   <div class="screen-only">
     <p class="eyebrow">RingFusion · tape ground truth · LIVE-3 / LIVE-4</p>
     <h1>Printable markers</h1>
-    <p>Nineteen fiducial markers, sized from the camera's actual geometry. Each has an X whose
-    crossing — the white dot — is the point you measure to and later click on. Print this page
-    and the markers come out at true size.</p>
+    <p>Twenty 9 cm markers, four to a sheet, plus four 5 cm spares. Each has an X whose
+    crossing — the white dot — is the point you measure to and later click on. Print this
+    page and they come out at true size, with a 10 mm gap and a dashed guide between
+    neighbours to cut along.</p>
 
     <div class="warn">
-      <p><strong>Print at 100 % scale — not “fit to page”.</strong> Then hold a ruler against
-      the 100 mm bar at the bottom of each sheet. If it isn’t exactly 100 mm, the print scaled
-      and every marker is the wrong size. They will look completely normal, which is what makes
-      this worth checking.</p>
+      <p><strong>Print at 100 % scale, portrait — not “fit to page”.</strong> Then hold a
+      ruler against the 100 mm bar at the bottom of each sheet. If it isn’t exactly 100 mm,
+      the print scaled, and that same percentage becomes a bias in every measurement you
+      take today. The sheets will look completely normal either way, which is what makes
+      this worth ten seconds.</p>
     </div>
 
     <p><button onclick="window.print()">Print these sheets</button></p>
 
-    <h2>Why one size</h2>
-    <p>An earlier version graded marker size by distance, which keeps the pixel span constant
-    and is optically ideal — and is unusable, because markers go up <em>before</em> the robot
-    is parked, so you cannot know the distance when you choose the size.</p>
-    <p><strong>12 cm removes the decision.</strong> Pixels across = f<sub>x</sub> × size ÷
-    distance, with the rectified f<sub>x</sub> ≈ 380 px:</p>
+    <h2>Why 9 cm</h2>
+    <p>It is tempting to size a marker so it covers several cells of the depth map. That
+    is unreachable. The backbone works at 384×288, so the depth grid has an effective
+    f<sub>x</sub> of only ≈ 89 px — even a 12 cm marker spans 2.7 depth cells at 4 m. You
+    would need a half-metre board.</p>
+    <p>It doesn’t matter, because <strong>the marker is not the object being
+    measured</strong>. It is a label saying “this pixel”, lying flat against a wall or box
+    whose depth is what we actually want — and the depth behind the paper is the depth of
+    the paper.</p>
+    <p>So the only real constraint is <em>clicking</em>, which happens on the full
+    rectified 1640×1232 image where f<sub>x</sub> = 379.6 px. Pixels across =
+    f<sub>x</sub> × size ÷ distance:</p>
     <table>
-      <thead><tr><th>Distance</th><th class="num">0.4 m</th><th class="num">1 m</th>
+      <thead><tr><th>Marker</th><th class="num">0.4 m</th><th class="num">1 m</th>
         <th class="num">2 m</th><th class="num">3 m</th><th class="num">4 m</th>
         <th class="num">4.5 m</th></tr></thead>
-      <tbody><tr><td>12 cm marker</td><td class="num">114 px</td><td class="num">46 px</td>
-        <td class="num">23 px</td><td class="num">15 px</td><td class="num">11 px</td>
-        <td class="num">10 px</td></tr></tbody>
+      <tbody>
+        <tr><td><strong>9 cm</strong> — on the image</td><td class="num">85</td>
+          <td class="num">34</td><td class="num">17</td><td class="num">11</td>
+          <td class="num">8.5</td><td class="num">7.6</td></tr>
+        <tr class="dim"><td>9 cm — in the depth grid</td><td class="num">20</td>
+          <td class="num">8.0</td><td class="num">4.0</td><td class="num">2.7</td>
+          <td class="num">2.0</td><td class="num">1.8</td></tr>
+      </tbody>
     </table>
-    <p>Clickable across the whole range a robot on a 3.66 m field can produce — 10 px is
-    comfortable with the capture tool’s ×8 zoom, 6 px is the floor. The four 6 cm markers on
-    the last sheet are for surfaces a 12 cm square will not sit flat on. That is a judgement
-    about the <em>surface</em>, which you can make while placing; not about distance, which
-    you cannot.</p>
+    <p>6 px is the floor for placing a click; the capture tool’s ×8 zoom makes 8 px
+    comfortable. 9 cm clears the floor across the whole range a robot on a 3.66 m field can
+    produce — and it is the largest size that fits <strong>four</strong> to a portrait A4
+    with a cutting gap, so twenty markers is five sheets instead of ten. At the far end,
+    click the four corners instead of the centre: the tool intersects the diagonals, which
+    is exact where averaging the corners is not.</p>
+
+    <h2>Placing them</h2>
+    <p>Keep each marker roughly a hand’s width clear of any edge, corner or doorway. That
+    is the one case where the coarse depth grid does bite — a marker straddling a depth
+    discontinuity gets foreground and background blurred together, and the number you
+    record belongs to neither.</p>
+    <p>Spread them out. At least half should land <em>outside</em> the central ToF box, so
+    the session measures extrapolation rather than just the region the sensor already
+    covers.</p>
 
     <h2>Measuring, once they’re up</h2>
     <p>One straight-line measurement per marker, <strong>from the camera lens to the white
@@ -138,14 +172,18 @@
 
   const sheets = [];
   let id = 1;
-  const emit = (ids, mm, title) => sheets.push(
+  // Cut guides run down the middle of each gutter, so one cut serves both neighbours.
+  const emit = (ids, mm, cols, title) => sheets.push(
     `<div class="sheet"><h2>${title}</h2>` +
-    `<div class="row">${ids.map(i => marker(i, mm)).join('')}</div>${RULE}</div>`);
+    `<div class="grid" style="grid-template-columns:repeat(${cols}, ${mm}mm)">` +
+    `<div class="cut v"></div>${ids.length > cols ? '<div class="cut h"></div>' : ''}` +
+    `${ids.map(i => marker(i, mm)).join('')}</div>${RULE}</div>`);
 
-  for (let i = 0; i < 10; i++) {            // 20 x 12 cm, two per landscape sheet
-    emit([id++, id++], 120, '12 cm — use at ANY distance, 0.4–4.5 m');
+  for (let i = 0; i < 5; i++) {            // 20 x 9 cm, FOUR per portrait sheet
+    emit([id++, id++, id++, id++], 90, 2,
+         '9 cm — use at ANY distance, 0.4–4.5 m — cut on the dashed lines');
   }
-  emit([id++, id++, id++, id++], 60,        // 4 x 6 cm for narrow surfaces
-       '6 cm — only where 12 cm will not sit flat (narrow edges, rails)');
+  emit([id++, id++, id++, id++], 50, 2,    // 4 x 5 cm for narrow surfaces
+       '5 cm — only where 9 cm will not sit flat (narrow edges, rails)');
   document.getElementById('sheets').innerHTML = sheets.join('');
 </script>
