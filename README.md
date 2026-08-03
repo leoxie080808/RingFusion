@@ -6,10 +6,6 @@ supplies dense *structure*; the ToF supplies absolute *scale*; a closed-form
 least-squares fit joins them with **no learned parameters**. Design notes and the full task
 tracker live in [`ros2_ws/README.md`](ros2_ws/README.md).
 
-> `RingFusion_technical_reference_updateP2.md` is referenced in places as the design doc but
-> **is not in this repository** — it is kept outside version control. Those references are
-> pointers to an external document, not broken links to a tracked file.
-
 ![RingFusion pipeline running live](docs/demo/gifs/pipeline_4panel.gif)
 
 *Live on the Orin at 13.7 Hz end-to-end (blend + ROI off; the default configuration measures
