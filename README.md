@@ -261,10 +261,30 @@ Pilot scale — 14 tape points, 0.39–2.03 m, no far field. Directional, not a 
 > and unconfirmed against ground truth.** Given that v6 halved its ToF-scored error and moved
 > this tape MAE by 1 mm, expect the tape gain to be well under v7's 25 % offline figure.
 >
-> **`fov_v` has never been checked against tape at all.** Every marker in that session sat
-> within −10.9°…+9.4° vertically out of a claimed 60.5°, so the vertical angle has almost no
-> supporting evidence. It is the highest-priority open item, because if it is also wrong,
-> everything downstream of it has to be redone again.
+### `fov_v` verified — 2026-08-04
+
+The vertical field of view was the last unmeasured number in the geometry, and after `fov_h`
+turned out to be 1.6× wrong we expected the same again. **It is correct**, confirmed three
+independent ways with eight markers spanning UP 35° to DOWN 9°, plus the floor:
+
+| evidence | result |
+|---|---|
+| 5 markers, 0.33 – 3.03 m | within 1–10 cm of tape, **MAE 0.043 m** |
+| floor vs a 16.2 cm lens-height tape | implies **15.97 cm** — 2.3 mm |
+| cone edge, bracketed | inside at UP 30.1°, outside at UP 35.3°; config says 30.25° |
+
+That third row is the cleanest: a marker just inside the edge finds a ToF ray 0.24° away, one
+just outside finds nothing nearer than 5.0°. **The calibration's field-of-view numbers are now
+both measured rather than assumed.**
+
+> **One claim retracted.** Mid-session a plane fit to the floor reported a 4.46° tilt, written
+> up at the time as a probable ToF-vs-camera pitch error. It was a fitting artifact. The direct
+> test bounds any pitch **under ~2°** and cannot resolve it; `rotation_rpy_deg` stays `[0,0,0]`.
+>
+> **Still unverified:** the ToF↔camera *translation* (weakly constrained — an 80 mm `ty` sweep
+> changes nothing measurable), and **yaw and roll, never tested at all**.
+
+Full detail: [`fov_v` verified against tape](ros2_ws/README.md#fov_v-verified-against-tape--2026-08-04).
 
 ### On a public benchmark, with independent ground truth
 

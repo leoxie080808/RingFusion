@@ -224,8 +224,9 @@ checkerboard) before the far field is reachable.
 | ✅ | Rate re-confirmation | done — 10.29 Hz, unchanged |
 | ✅ | Resource utilisation (CPU/GPU/RAM/power) | done — first ever measurement |
 | ✅ | FP16 engine parity vs checkpoint | done — σ within 0.42 % |
-| ⬜ | **Tape re-measure on v7** | **needs lights** — the key open number |
-| ⬜ | **`fov_v` verification** | **needs lights** — highest priority; see below |
+| ✅ | **`fov_v` verification** | done 2026-08-04 — **confirmed correct**, see below |
+| ✅ | Tape re-measure on v7 | done — v7 ≈ v6 in-cone; one out-of-cone regression |
+| ⬜ | Marker #5 re-placement | its zone clips a foreground bottle; move it and re-tape |
 | ⬜ | Blend A/B re-run | needs lights **+ driving** |
 | ⬜ | LIVE-4 σ evaluation, n > 7 | needs lights |
 | ⬜ | 4-panel demo clip re-record | needs lights — `live2_4panel.mp4` still shows the 45° cone |
@@ -234,13 +235,59 @@ checkerboard) before the far field is reachable.
 | ⬜ | `anchoring_bridge.default_calib` still `(61.0, 45.0)` | synthetic runs only, but stale |
 | ⬜ | `B3_medscale` MAE 64.5 m; `B2_bilinear` NaN under `center` | pre-existing, appears in baseline tables |
 
-> **`fov_v` is the one that could invalidate the others.** It has never been checked against
-> tape: every marker in the 2026-08-03 session sat within −10.9°…+9.4° vertically, out of a
-> claimed 60.5°, so there is almost no leverage on the vertical angle. If `fov_v` is also
-> wrong, the v7 tape re-measure and the blend A/B both have to be redone afterwards — so it
-> should go **first** once the lights are on. It needs markers placed high and low in the
-> frame rather than the middle third, plus the camera height above the floor (which makes the
-> floor itself a free dense vertical target).
+### `fov_v` verified against tape — 2026-08-04
+
+`fov_v` was the last never-measured number in the geometry, and after `fov_h` turned out to
+be 1.6× wrong there was every reason to expect the same again. **It is correct.** Eight bold
+markers spanning **UP 35.3° to DOWN 8.7°** (the 2026-08-03 session had only −10.9°…+9.4°, which
+is why it could not answer this), each tape-measured, plus the floor as an independent
+constraint from a **16.2 cm** lens height.
+
+Three lines of evidence, all agreeing:
+
+**1. Markers, 0.33 – 3.03 m — the first ground truth this project has had at 3 m:**
+
+| # | vertical | tape | zone reads | err |
+|---|---|---|---|---|
+| 3 | DOWN 8.7° | 0.33 m | 0.33 m | **−0.01** |
+| 1 | UP 5.0° | 0.74 m | 0.72 m | **−0.01** |
+| 2 | UP 5.3° | 1.70 m | 1.70 m | **−0.005** |
+| 4 | UP 12.9° | 2.10 m | 2.01 m | −0.09 |
+| 6 | UP 23.7° | 3.03 m | 2.93 m | −0.10 |
+
+MAE **0.043 m**.
+
+**2. The floor implies a lens height of 15.97 cm against a 16.2 cm tape — 2.3 mm.** Independent
+of the markers entirely.
+
+**3. The cone edge is bracketed — the cleanest evidence.** Configured, the cone stops at
+±30.25°. Marker 7 sits at **UP 30.1°** and the nearest zone ray is **0.24°** away (inside);
+marker 8 at **UP 35.3°** has nothing nearer than **5.0°** (outside). The edge lies between
+30.1° and 35.3°; the config says 30.25°.
+
+> **A correction, recorded deliberately.** Earlier in this session a robust plane fit to the
+> floor reported a **4.46° tilt**, and it was written up here as a probable ToF-vs-camera
+> extrinsic pitch error. **That was an artifact** — the fit trimmed onto a sloped subset of
+> points rather than the floor. The direct test (does the implied lens height match the tape?)
+> puts any pitch **under ~2°** and cannot resolve its sign or magnitude: across a pitch sweep
+> from −4° to +1° the marker MAE only moves between 2.6 and 4.5 cm, which is inside our
+> measurement precision. **No pitch change is justified. `rotation_rpy_deg` stays `[0,0,0]`.**
+
+**What is still NOT verified:** `translation_mm` is a physical measurement never checked
+against data (a 0→80 mm `ty` sweep changed nothing measurable, so it is weakly constrained),
+and **yaw and roll have never been tested at all** — today's session constrains pitch only.
+
+Two limitations found along the way, both worth keeping:
+
+- **Marker 5 failed** — 0.35 m against a 2.89 m tape, because its zone clips a water bottle in
+  the foreground and locks onto it. Identical partial-fill failure to the red pole. Excluded
+  from the fit rather than fudged.
+- **The bold markers work to ~2.5 m, not 3.4 m.** At 3.36 m the 8.1 mm X ink subtends **0.9 px**
+  — sub-pixel again. Template matching failed outright and was abandoned; positions were read
+  by hand off gridded zooms. The redesign bought a **4×** range gain (0.5 m → ~2 m), not an
+  unlimited one.
+
+Data: [`fov_v_session_2026-08-04.json`](../docs/demo/benchmarks/fov_v_session_2026-08-04.json).
 
 ### Re-run results — where the correction actually landed
 

@@ -1,0 +1,146 @@
+{
+ "captured": "2026-08-04",
+ "session": "LIVE-3 session D -- fov_v verification",
+ "rig": {
+  "lens_height_m": 0.162,
+  "note": "floor to centre of lens glass, tape"
+ },
+ "build": "student_v4_heldout + residual_v7_fov73",
+ "method": "8 bold markers, pixel positions read off gridded zooms (automatic detection failed and was abandoned), tape slant range marker centre -> lens centre. For each marker the zone whose ray points nearest that direction is compared to the tape. Floor used as an independent constraint via implied lens height.",
+ "config_tested": {
+  "fov_v_deg": 60.5,
+  "pitch_deg": 0.0,
+  "fov_h_deg": 73.5
+ },
+ "markers": [
+  {
+   "id": 1,
+   "u": 420,
+   "v": 516,
+   "tape_m": 0.7359,
+   "vert_deg": -5.0,
+   "reads_m": 0.72,
+   "err_m": -0.014,
+   "scored": true
+  },
+  {
+   "id": 2,
+   "u": 780,
+   "v": 514,
+   "tape_m": 1.7038,
+   "vert_deg": -5.3,
+   "reads_m": 1.7,
+   "err_m": -0.005,
+   "scored": true
+  },
+  {
+   "id": 3,
+   "u": 970,
+   "v": 607,
+   "tape_m": 0.3341,
+   "vert_deg": 8.7,
+   "reads_m": 0.33,
+   "err_m": -0.008,
+   "scored": true
+  },
+  {
+   "id": 4,
+   "u": 884,
+   "v": 462,
+   "tape_m": 2.1,
+   "vert_deg": -12.9,
+   "reads_m": 2.01,
+   "err_m": -0.087,
+   "scored": true
+  },
+  {
+   "id": 5,
+   "u": 947,
+   "v": 430,
+   "tape_m": 2.888,
+   "vert_deg": -17.4,
+   "reads_m": 0.35,
+   "err_m": -2.54,
+   "scored": false,
+   "excluded": "zone clips the water bottle in the foreground -- partial fill, reads the bottle (0.33 m)"
+  },
+  {
+   "id": 6,
+   "u": 887,
+   "v": 382,
+   "tape_m": 3.03,
+   "vert_deg": -23.7,
+   "reads_m": 2.93,
+   "err_m": -0.103,
+   "scored": true
+  },
+  {
+   "id": 7,
+   "u": 912,
+   "v": 329,
+   "tape_m": 3.178,
+   "vert_deg": -30.1,
+   "reads_m": null,
+   "err_m": null,
+   "scored": false,
+   "note": "no valid zone -- sits AT the configured cone edge (30.25 deg)"
+  },
+  {
+   "id": 8,
+   "u": 915,
+   "v": 280,
+   "tape_m": 3.3635,
+   "vert_deg": -35.3,
+   "reads_m": null,
+   "err_m": null,
+   "scored": false,
+   "note": "no valid zone, nearest ray 5.0 deg away -- clearly OUTSIDE the cone"
+  }
+ ],
+ "result": {
+  "scored_markers": [
+   1,
+   2,
+   3,
+   4,
+   6
+  ],
+  "MAE_m": 0.043,
+  "range_m": [
+   0.334,
+   3.03
+  ],
+  "vertical_span_deg": [
+   -35.3,
+   8.7
+  ],
+  "floor_implied_lens_height_cm": 15.97,
+  "floor_tape_cm": 16.2,
+  "floor_agreement_mm": 2.3,
+  "verdict": "fov_v 60.5 CONFIRMED. Markers 7 and 8 bracket the cone edge between 30.1 and 35.3 deg, consistent with the configured 30.25. No error comparable to the fov_h bug was found."
+ },
+ "correction": "An earlier plane-fit in this session reported a 4.46 deg floor tilt and was reported as a likely extrinsic pitch error. That was an artifact of the robust plane fit trimming onto a sloped subset. The direct test -- implied lens height vs the tape -- puts any pitch under ~2 deg and cannot resolve its sign or size. No pitch change is justified by this data.",
+ "pitch_sweep_fov_v_60_5": {
+  "-4.0": {
+   "MAE": 0.026,
+   "floor_cm": 18.25
+  },
+  "-2.0": {
+   "MAE": 0.034,
+   "floor_cm": 17.12
+  },
+  "-1.0": {
+   "MAE": 0.038,
+   "floor_cm": 16.48
+  },
+  "0.0": {
+   "MAE": 0.043,
+   "floor_cm": 15.97
+  },
+  "+1.0": {
+   "MAE": 0.045,
+   "floor_cm": 15.51
+  }
+ },
+ "recommendation": "Change nothing. fov_v stays 60.5, rotation_rpy_deg stays [0,0,0]."
+}

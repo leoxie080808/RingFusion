@@ -41,8 +41,15 @@ tof:
   # Above 84 deg is excluded (the -43 deg marker comes on-grid and reads badly). 73.5 sits
   # mid-band. Narrowing it further needs small targets at more distinct angles.
   #
-  # fov_v is NOT independently confirmed -- every marker in that session sat within
-  # -10..+9 deg vertically, so there is almost no leverage on the vertical angle.
+  # fov_v CONFIRMED 2026-08-04 against tape, three independent ways. Previously this block
+  # warned it was unverified -- every marker in the 2026-08-03 session sat within -10..+9 deg
+  # vertically, so there was no leverage on the vertical angle. A second session fixed that
+  # with eight markers spanning UP 35 to DOWN 9 deg:
+  #   1. Five clean markers (0.33 - 3.03 m) read within 1-10 cm of tape, MAE 0.043 m.
+  #   2. The floor implies a lens height of 15.97 cm against a 16.2 cm tape -- 2.3 mm.
+  #   3. The cone edge is BRACKETED: the marker at 30.1 deg has a zone 0.24 deg away (inside),
+  #      the one at 35.3 deg has none nearer than 5.0 deg (outside). Configured edge: 30.25.
+  # Data: docs/demo/benchmarks/fov_v_session_2026-08-04.json
   #
   # The footprint is 567 x 443 px, 12.4% of the 1640x1232 frame.
   fov_h_deg: 73.5
