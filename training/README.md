@@ -178,11 +178,25 @@ so coverage across scenes matters more than raw frame count.
 python training/train_residual.py --real \
     --rgb data/real/rgb --tof data/real/tof \
     --calib ros2_ws/src/ringfusion_bringup/config/calibration.yaml \
-    --student-ckpt runs/student/student_best.pth --out runs/residual \
-    --epochs 40 --holdout-frac 0.25
+    --student-ckpt runs/student_v4_heldout/student_best.pth --out runs/residual \
+    --epochs 200 --holdout island --island 16 --holdout-frac 0.25 \
+    --patience 8 --min-delta 1e-4
 # --calib rebuilds the SAME rectified pinhole K_rect the robot uses, scaled to 288x384.
 # watch coverage -> 0.68 (calibrated).
 ```
+
+> **Do not use `--epochs 40`.** It was the default through `residual_v6` and it stops the run
+> mid-descent: v6's best validation loss landed on its *final* epoch (39, −0.1183), the
+> signature of a truncated run rather than a converged one. Given a 200-epoch budget the same
+> configuration reached **−0.2328 by epoch 108** and was still improving when stopped by hand
+> at 110 — a 2× better loss, and −25 % medAE on the extrapolation protocol, from nothing but
+> a larger epoch budget.
+
+**Early stopping** (`--patience` / `--min-delta`) lets a run terminate itself. The best
+checkpoint always tracks the true minimum; only an improvement larger than `--min-delta`
+resets the patience counter, so a run creeping along at 1e-6 per epoch still stops. Note that
+on `residual_v7` **patience 8 never fired** across 110 epochs — treat it as a safety net, not
+a convergence detector, and give the run a generous `--epochs` ceiling.
 
 ### 2b. Synthetic pretrain (optional bootstrap)
 

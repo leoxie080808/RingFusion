@@ -66,8 +66,12 @@ the two optional stages (Stage 7c blend, Stage 4b/7d ROI) are on — both defaul
 
 | configuration | measured on the robot |
 |---|---|
-| blend + ROI **on** (default) | **10.4 Hz** ✅ above the ToF's 8.3 Hz |
+| blend + ROI **on** (default) | **10.3 Hz** ✅ above the ToF's 8.3 Hz |
 | blend + ROI **off** | **13.3 Hz** ✅ |
+
+*(10.29 Hz on the current `residual_v7` build, 2026-08-04. Figures of **10.4 Hz** elsewhere in
+these docs are the 2026-07-30 measurement; the 1 % difference is run-to-run noise, not a
+regression — the residual is the same architecture and engine size across v4/v6/v7.)*
 
 Measured 2026-07-30 with [`rate_live.py`](tools/diagnostics/rate_live.py); earlier figures of
 13.7 Hz predate these stages and correspond to the second row; the default configuration was
@@ -80,16 +84,24 @@ breakdown and the reason the offline estimate was 38 ms optimistic are
 
 | | value |
 |---|---|
-| `/depth`, `/depth_var`, `/cloud` | **10.4 Hz** default / **13.3 Hz** with blend+ROI off *(deployed node, incl. ROS + rectification)* |
-| Depth error, extrapolating away from the ToF | **0.044 m** median (`center` protocol, 1,234 frames). The 600-frame moving-robot confirmation predates the 2026-08-03 field-of-view fix and needs re-running |
-| Depth error, interpolating between ToF zones | **0.010 m** median (`random` protocol) |
+| `/depth`, `/depth_var`, `/cloud` | **10.3 Hz** default / **13.3 Hz** with blend+ROI off *(deployed node, incl. ROS + rectification)* |
+| Depth error, extrapolating away from the ToF | **0.034 m** median (`center` protocol, 200 held-out frames). The 600-frame moving-robot confirmation predates the 2026-08-03 field-of-view fix and needs re-running |
+| Depth error, interpolating between ToF zones | **0.014 m** median (`random` protocol) |
 | Uncertainty quality, `corr(σ, \|error\|)` | **0.943** *(at ToF anchor pixels only — see limits)* |
 | Backbone agreement with truth, ρ | **0.917** *(deployed config; the projection sweep's best row was 0.914)* |
+| CPU / GPU under full load | **32 % of 12 cores · 26 % GPU · 21.7 W** — neither is saturated |
 
-*Configuration: `student_v4_heldout` + `residual_v6_fov73` + Stage 7c blend, at the corrected
+*Configuration: `student_v4_heldout` + `residual_v7_fov73` + Stage 7c blend, at the corrected
 `fov_h 73.5`. Scored on **200 frames Network A never trained on** — the first uncontaminated absolute numbers in the project.
 Previously published 0.042 / 0.009 were inflated by train/test overlap; the correction is
 **+5 %**, see [contamination](ros2_ws/README.md#traintest-contamination-quantified).*
+
+> **Two corrections to the previous version of this table.** The `center` row was labelled
+> "1,234 frames" while the caption said 200 held-out frames — they cannot both be true, and the
+> 200-frame held-out figure is the honest one, so the label is now fixed. The `random` row read
+> **0.010 m**, which does not match any current measurement (held-out gives 0.0143 m, all-frames
+> 0.0148 m); it has been corrected to the measured value. The `center` figure improved
+> **0.043 → 0.034 m** on the `residual_v7` retrain.
 
 > The previously headlined **0.199 m** was measured **in-sample** — the on-robot harnesses
 > fitted and scored on the same ToF zones. A nearest-neighbour lookup scores 0.000 m under
@@ -167,16 +179,37 @@ interpolation — and scored *tied with having no network at all* on extrapolati
 0.064 m). Supervising on a held-out outer region instead (`--holdout island`, one changed
 argument, same architecture and data) took it to **0.045 m, a 30 % win over the closed-form**.
 
-**Neither source wins everywhere.** Raw ToF is ~2× better within 3° of an anchor; the
-network is ~5× better past 15°. Stage 7c blends them by angular distance and **beats both**:
+**Neither source wins everywhere.** Raw ToF is still the best thing available within 3° of an
+anchor; the network is **5.7× better** past 15°. Stage 7c blends them by angular distance and
+**beats both**:
 
 | medAE | 0–3° | 3–6° | 6–10° | 10–15° | 15–30° |
 |---|---|---|---|---|---|
 | nearest-zone ToF | **0.027** | 0.063 | 0.104 | 0.163 | 0.204 |
-| Network B (v6) | 0.046 | 0.042 | 0.046 | **0.045** | **0.044** |
-| **blend** | **0.027** | **0.041** | **0.046** | **0.045** | **0.044** |
+| Network B (v7) | 0.033 | 0.028 | **0.031** | **0.032** | **0.036** |
+| **blend** | **0.026** | **0.027** | **0.031** | **0.032** | **0.036** |
 
-*(1,234 frames, `center` protocol, current build — `fov_h 73.5` + `residual_v6_fov73`.)*
+*(1,234 frames, `center` protocol, current build — `fov_h 73.5` + `residual_v7_fov73`.)*
+
+The `residual_v7` retrain moved every bin. Under v6 the network only overtook the ToF past 6°;
+it now overtakes it at **3°**, and the ToF's remaining advantage in the innermost bin has
+narrowed from 1.7× to 1.2×. The blend still wins the 0–3° bin outright (0.026 vs the ToF's
+0.027), which is the point of blending rather than switching: averaging two partly-independent
+estimates near the crossover cancels noise that neither cancels alone.
+
+<details><summary>v6 → v7, same 1,234 frames</summary>
+
+| medAE, `center` | v6 | **v7** | |
+|---|---|---|---|
+| B5 ringfusion | 0.0445 | **0.0326** | −27 % |
+| B6 blend | 0.0425 | **0.0319** | −25 % |
+| B5 RMSE | 0.4514 | **0.3960** | −12 % |
+| B6 RMSE | 0.4394 | **0.3890** | −11 % |
+
+`random` protocol barely moves (B6 0.0148 → 0.0144) — the interpolation regime was already at
+the ToF's own noise floor. `B1_nearest` is bit-identical across the two runs, which confirms
+only the residual changed.
+</details>
 
 Also fixed: the closed-form path was **missing the 20 m clamp** the residual path applies,
 so the Network-B-off fallback could publish 10,000 m into `/cloud` — worth 18.092 m →
@@ -220,6 +253,18 @@ measure is the entire reason this workstream exists.
 Full detail, per-marker data and the field-of-view derivation:
 [ToF field of view, measured against tape](ros2_ws/README.md#tof-field-of-view-measured-against-tape).
 Pilot scale — 14 tape points, 0.39–2.03 m, no far field. Directional, not a certified number.
+
+> **This table is a `residual_v6` measurement and has not been redone on `residual_v7`.** The
+> markers have not moved, but re-measuring needs the lights on. v7's offline gain is
+> concentrated in extrapolation — exactly where markers #4 and #7 fail — so this is the table
+> most likely to move. Until it is redone, **v7 is confirmed better at agreeing with the ToF
+> and unconfirmed against ground truth.** Given that v6 halved its ToF-scored error and moved
+> this tape MAE by 1 mm, expect the tape gain to be well under v7's 25 % offline figure.
+>
+> **`fov_v` has never been checked against tape at all.** Every marker in that session sat
+> within −10.9°…+9.4° vertically out of a claimed 60.5°, so the vertical angle has almost no
+> supporting evidence. It is the highest-priority open item, because if it is also wrong,
+> everything downstream of it has to be redone again.
 
 ### On a public benchmark, with independent ground truth
 

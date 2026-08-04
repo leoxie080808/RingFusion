@@ -1,0 +1,175 @@
+{
+ "note": "Jetson Orin resource utilisation, measured 2026-08-04 with tegrastats at 500 ms. 'idle' = nothing running; 'load' = full single_module pipeline (student_v4_heldout + residual_v7_fov73, blend+ROI on) publishing at 10.29 Hz. EMC_FREQ is NOT emitted by this tegrastats build, so memory bandwidth is unmeasured.",
+ "config": {
+  "backbone": "student_v4_heldout_fp16.engine",
+  "residual": "residual_v7_fov73_fp16.engine",
+  "resolution": [
+   1640,
+   1232
+  ],
+  "depth_hz": 10.29
+ },
+ "sample_interval_ms": 500,
+ "idle": {
+  "samples": 89,
+  "n_cores": 12,
+  "cpu_pct_of_machine": {
+   "median": 0.17,
+   "p90": 0.58,
+   "max": 1.42,
+   "n": 89
+  },
+  "cpu_busy_cores": {
+   "median": 0.02,
+   "p90": 0.07,
+   "max": 0.17,
+   "n": 89
+  },
+  "cpu_per_core_median": [
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0
+  ],
+  "gpu_pct": {
+   "median": 0.0,
+   "p90": 0.0,
+   "max": 0.0,
+   "n": 89
+  },
+  "emc_pct": null,
+  "ram_mb": {
+   "median": 11718,
+   "p90": 11719,
+   "max": 11719,
+   "n": 89
+  },
+  "power_mw": {
+   "VDD_GPU_SOC": {
+    "median": 4385,
+    "p90": 4387,
+    "max": 4387,
+    "n": 89
+   },
+   "VDD_CPU_CV": {
+    "median": 1595,
+    "p90": 1595,
+    "max": 1595,
+    "n": 89
+   },
+   "VIN_SYS_5V0": {
+    "median": 4119,
+    "p90": 4119,
+    "max": 4119,
+    "n": 89
+   },
+   "TOTAL": {
+    "median": 10099,
+    "p90": 10101,
+    "max": 10101,
+    "n": 89
+   }
+  }
+ },
+ "load": {
+  "samples": 122,
+  "n_cores": 12,
+  "cpu_pct_of_machine": {
+   "median": 32.42,
+   "p90": 33.58,
+   "max": 35.67,
+   "n": 122
+  },
+  "cpu_busy_cores": {
+   "median": 3.89,
+   "p90": 4.03,
+   "max": 4.28,
+   "n": 122
+  },
+  "cpu_per_core_median": [
+   17.0,
+   20.0,
+   16.5,
+   18.0,
+   20.0,
+   18.0,
+   26.0,
+   16.0,
+   21.0,
+   24.5,
+   17.5,
+   15.0
+  ],
+  "gpu_pct": {
+   "median": 25.5,
+   "p90": 41.0,
+   "max": 46.0,
+   "n": 122
+  },
+  "emc_pct": null,
+  "ram_mb": {
+   "median": 13431.0,
+   "p90": 13437,
+   "max": 13439,
+   "n": 122
+  },
+  "power_mw": {
+   "VDD_GPU_SOC": {
+    "median": 9174.0,
+    "p90": 9174,
+    "max": 9174,
+    "n": 122
+   },
+   "VDD_CPU_CV": {
+    "median": 5584.0,
+    "p90": 5584,
+    "max": 5586,
+    "n": 122
+   },
+   "VIN_SYS_5V0": {
+    "median": 6933.0,
+    "p90": 6933,
+    "max": 7033,
+    "n": 122
+   },
+   "TOTAL": {
+    "median": 21691.0,
+    "p90": 21691,
+    "max": 21791,
+    "n": 122
+   }
+  }
+ },
+ "headline": {
+  "cpu_pct_of_12_cores": {
+   "idle": 0.17,
+   "load": 32.42
+  },
+  "cpu_busy_cores": {
+   "idle": 0.02,
+   "load": 3.89
+  },
+  "gpu_pct": {
+   "idle": 0.0,
+   "load": 25.5,
+   "load_p90": 41.0,
+   "load_max": 46.0
+  },
+  "ram_mb": {
+   "idle": 11718,
+   "load": 13431.0
+  },
+  "power_mw_total": {
+   "idle": 10099,
+   "load": 21691.0
+  }
+ }
+}

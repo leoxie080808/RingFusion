@@ -4,25 +4,38 @@ ROS 2 Humble workspace for the RingFusion project (ToF hub + camera driver, perc
 
 ## Project status (handoff)
 
-Snapshot for anyone picking this up, current as of **2026-07-28**.
+Snapshot for anyone picking this up, current as of **2026-08-04**.
 
 **The whole stack runs live on the Orin with both real networks** — no mocks in the loop.
 Recommended launch:
 
 ```bash
 ros2 launch ringfusion_bringup single_module.launch.py port:=/dev/ttyACM1 \
-    backbone_engine:=$HOME/RingFusion/student_v3_fp16.engine \
-    residual_engine:=$HOME/RingFusion/residual_v6_fov73_fp16.engine
+    backbone_engine:=$HOME/RingFusion/student_v4_heldout_fp16.engine \
+    residual_engine:=$HOME/RingFusion/residual_v7_fov73_fp16.engine
 ```
 
-`residual_v6_fov73` is the recommended residual (retrained 2026-08-04 at the corrected
-`fov_h`; `residual_v4_last` is mismatched to the current calibration) — see
-[Network B v4](#network-b-v4--the-training-protocol-was-the-limitation). Stage 7c blend and the
+`residual_v7_fov73` is the recommended residual (trained 2026-08-04 at the corrected
+`fov_h`, 110 epochs; supersedes `residual_v6_fov73`, which stopped at 40 epochs mid-descent).
+`residual_v4_last` is mismatched to the current calibration — see
+[Network B v7](#network-b-v7--v6-was-stopped-mid-descent).
+
+> **The backbone line changed too.** This example previously read
+> `student_v3_fp16.engine`, which contradicted the recommended configuration further down
+> *and* mismatched the backbone Network B was actually trained against
+> (`--student-ckpt runs/student_v4_heldout/student_best.pth`). Copy-pasting the old line
+> produced a genuine train/deploy mismatch. `student_v4_heldout` is what has been running.
+
+Stage 7c blend and the
 ROI/σ stages are on by default and cost 19.8 ms together at full resolution *offline* — but
 measured on the robot they first added 70.7 ms and dropped the deployed rate to 7.2 Hz, below
-the ToF's own 8.3 Hz. Two GPU rewrites later the default configuration measures **10.4 Hz ✅**.
+the ToF's own 8.3 Hz. Two GPU rewrites later the default configuration measures **10.3 Hz ✅**.
 See [the deployed rate, measured](#the-deployed-rate-measured-2026-07-30).
 `blend:=false roi_enable:=false` restores the pre-2026-07-30 behaviour and **13.3 Hz**.
+
+*(10.29 Hz on the current `residual_v7` build, 2026-08-04. The **10.4 Hz** figures elsewhere in
+this file are the 2026-07-30 session and are left as measured on that date; the 1 % spread
+across v4/v6/v7 is run-to-run noise — same architecture, same engine size.)*
 
 Two things changed on 2026-07-28 and they dominate everything measured before that date.
 
@@ -201,6 +214,34 @@ everywhere — so four-corner clicking never works and the 3–4.5 m band cannot
 all. `make_markers.py` needs a pattern whose features scale with the marker (a 2×2
 checkerboard) before the far field is reachable.
 
+#### Status as of 2026-08-04
+
+| | item | state |
+|---|---|---|
+| ✅ | Tier 1 — offline re-score at the corrected FOV | done |
+| ✅ | Tier 2 — Network B retrained (`residual_v6`, then `residual_v7`) | done |
+| ✅ | Tape re-measure, 7 markers, **v6** | done — MAE 0.427 → 0.192 m |
+| ✅ | Rate re-confirmation | done — 10.29 Hz, unchanged |
+| ✅ | Resource utilisation (CPU/GPU/RAM/power) | done — first ever measurement |
+| ✅ | FP16 engine parity vs checkpoint | done — σ within 0.42 % |
+| ⬜ | **Tape re-measure on v7** | **needs lights** — the key open number |
+| ⬜ | **`fov_v` verification** | **needs lights** — highest priority; see below |
+| ⬜ | Blend A/B re-run | needs lights **+ driving** |
+| ⬜ | LIVE-4 σ evaluation, n > 7 | needs lights |
+| ⬜ | 4-panel demo clip re-record | needs lights — `live2_4panel.mp4` still shows the 45° cone |
+| ⬜ | Marker redesign (checkerboard) | blocks the 3–4.5 m band |
+| ⬜ | EMC / memory-bandwidth measurement | this `tegrastats` build does not emit `EMC_FREQ` |
+| ⬜ | `anchoring_bridge.default_calib` still `(61.0, 45.0)` | synthetic runs only, but stale |
+| ⬜ | `B3_medscale` MAE 64.5 m; `B2_bilinear` NaN under `center` | pre-existing, appears in baseline tables |
+
+> **`fov_v` is the one that could invalidate the others.** It has never been checked against
+> tape: every marker in the 2026-08-03 session sat within −10.9°…+9.4° vertically, out of a
+> claimed 60.5°, so there is almost no leverage on the vertical angle. If `fov_v` is also
+> wrong, the v7 tape re-measure and the blend A/B both have to be redone afterwards — so it
+> should go **first** once the lights are on. It needs markers placed high and low in the
+> frame rather than the middle third, plus the camera height above the floor (which makes the
+> floor itself a free dense vertical target).
+
 ### Re-run results — where the correction actually landed
 
 Done 2026-08-03/04. Every config was run **twice with everything else identical**, so each
@@ -247,6 +288,7 @@ core claim was never wrong; it was being undermined near the anchors.
 
 Training also improved on its own terms: best val NLL **−0.1183** vs v4's −0.1055, and it was
 **still improving at epoch 39** where v4 had plateaued — 40 epochs may now be under-trained.
+*(Confirmed 2026-08-04: it was. See [Network B v7](#network-b-v7--v6-was-stopped-mid-descent).)*
 
 > **These are all ToF-scored, and the ToF projection is exactly what changed** — anchors and
 > evaluation targets moved together, so this is a closed loop and cannot certify the
@@ -273,7 +315,13 @@ Max error is the exception: 0.788 → 0.774 m, essentially unchanged, because it
 #### Deployed system vs tape — the headline table
 
 Same seven markers, same tape numbers, scene never moved. Old = `fov_h 45.0 +
-residual_v4_last`. New = `fov_h 73.5 + residual_v6_fov73`, what is running now.
+residual_v4_last`. New = `fov_h 73.5 + residual_v6_fov73`.
+
+> **This table is a v6 measurement.** `residual_v7_fov73` now supersedes v6 but the markers have
+> **not** been re-measured against it — that needs the lights on. v7's offline gain is
+> concentrated in extrapolation, which is where markers #4 and #7 fail, so this is the table
+> most likely to move. Treat the numbers below as the current *confirmed* ground-truth result
+> and v7's tape performance as unknown.
 
 | # | marker | **measured (tape)** | old system | old err | **new system** | **new err** | change |
 |---|---|---|---|---|---|---|---|
@@ -319,6 +367,116 @@ Within noise. The residual is the same architecture and engine size, and the wid
 puts more anchors in frame without changing the stage structure. **The timing session does not
 need re-running.** The blend A/B *does* — it acts near anchors, the anchors moved, and there
 are now more of them in frame.
+
+### Network B v7 — v6 was stopped mid-descent
+
+The v6 note above flagged that 40 epochs "may now be under-trained." It was. `residual_v7_fov73`
+is the same 463,971-parameter architecture, same data, same hyperparameters — **only the epoch
+budget changed**, from 40 to 110.
+
+`train_residual.py` gained `--patience` / `--min-delta` so a run can stop itself when validation
+stops moving. The best checkpoint always tracks the true minimum; only an improvement larger
+than `--min-delta` resets the patience counter, so a run creeping along at 1e-6 per epoch still
+terminates. Launched with `--epochs 200 --patience 8 --min-delta 1e-4`, **patience never fired** —
+v7 was still setting new bests when it was stopped by hand at epoch 110.
+
+| | v6 | **v7** |
+|---|---|---|
+| epochs run | 40 | **110** (stopped by hand; patience 8 never fired) |
+| best epoch | 39 (the last one) | **108** |
+| best val NLL | −0.1183 | **−0.2328** |
+| val coverage @1σ | — | 0.71 (target 0.683) |
+
+v6's best landed on its *final* epoch — the signature of a run cut off rather than converged.
+v7 tracked v6 to within 0.012 through the whole overlap and only diverged after epoch 39, which
+confirms the two runs are the same experiment at different lengths.
+
+**Offline scoring, v7 vs v6** — identical script, stems, and calibration; the only variable is
+the residual engine:
+
+| split | protocol | method | v6 MAE | **v7 MAE** | Δ | v6 RMSE | **v7 RMSE** | δ<1.25 |
+|---|---|---|---|---|---|---|---|---|
+| held-out (200) | `random` | B5 ringfusion | 0.1906 | **0.1789** | −6.1 % | 0.4296 | **0.4087** | .777→.798 |
+| held-out (200) | `random` | B6 blend | 0.0605 | **0.0591** | −2.3 % | 0.2151 | **0.2089** | .958→.958 |
+| held-out (200) | **`center`** | **B5 ringfusion** | 0.2005 | **0.1627** | **−18.9 %** | 0.4699 | **0.4124** | .746→**.811** |
+| held-out (200) | **`center`** | **B6 blend** | 0.1904 | **0.1563** | **−17.9 %** | 0.4576 | **0.4041** | .762→**.821** |
+| val split (61) | `random` | B5 ringfusion | 0.1792 | **0.1696** | −5.4 % | 0.4186 | **0.3991** | .782→.807 |
+| val split (61) | **`center`** | **B5 ringfusion** | 0.1988 | **0.1605** | **−19.3 %** | 0.4679 | **0.4121** | .748→**.816** |
+| all frames (1234) | `random` | B6 blend | 0.0595 | **0.0580** | −2.5 % | 0.2090 | **0.2033** | — |
+| all frames (1234) | **`center`** | **B6 blend** | 0.1878 | **0.1491** | **−20.6 %** | 0.4394 | **0.3890** | — |
+
+Medians tell the same story on the full 1,234 frames — **B6 blend `center` medAE 0.0425 →
+0.0319 (−25 %)**, B5 `center` 0.0445 → 0.0326 (−27 %) — while `random` barely moves
+(B6 0.0148 → 0.0144). Per-angle, the retrain pushed the crossover where the network overtakes
+the raw ToF from **6° down to 3°**:
+
+| medAE, `center` | 0–3° | 3–6° | 6–10° | 10–15° | 15–30° |
+|---|---|---|---|---|---|
+| nearest-zone ToF | **0.027** | 0.063 | 0.104 | 0.163 | 0.204 |
+| Network B v6 | 0.046 | 0.042 | 0.046 | 0.045 | 0.044 |
+| **Network B v7** | 0.033 | **0.028** | **0.031** | **0.032** | **0.036** |
+| **blend (v7)** | **0.026** | **0.027** | **0.031** | **0.032** | **0.036** |
+
+**The gain is concentrated in extrapolation.** `center` confines anchors to the middle and scores
+the periphery; `random` scatters them and scores the gaps. v7 gains ~19 % on `center` and ~6 % on
+`random`, because the interpolation regime was already near the ToF's own noise floor and had
+little left to give. RMSE moves with MAE in every row, so this is not a median gain paid for
+with a fatter tail.
+
+**Clean control:** B0–B4 are **bit-identical** between v6 and v7 (deltas exactly ±0.0000). Those
+baselines never touch the residual, so the only thing that changed is Network B — no calibration
+drift, no data drift, no scoring nondeterminism.
+
+> **Still ToF-scored, so still circular.** Anchors and evaluation targets come from the same
+> sensor, and this repo has already been burned by that once: v6 *halved* ToF-scored B5 medAE
+> and then moved the tape MAE by **1 mm**. **v7 is confirmed better at agreeing with the ToF; it
+> is not yet confirmed better at measuring the world.** Given the v6 precedent, expect the tape
+> gain to be well under 19 %. The re-measure is pending — see
+> [What needs re-running](#what-needs-re-running).
+
+**The FP16 engine is a faithful build of the checkpoint.** `export_onnx.py` checks PyTorch vs
+ONNXRuntime in FP32 (max abs diff **7.15e-06**), which proves the graph but says nothing about
+the precision loss from the FP16 build. Driving the checkpoint and the engine with matched
+inputs and comparing each output field against its own spread:
+
+| field | p99 abs err | ref std | relative |
+|---|---|---|---|
+| `da` | 1.50e-04 | 1.34e-02 | 1.1 % |
+| `db` | 2.05e-03 | 2.42e-01 | 0.85 % |
+| `log_tau2` | 8.37e-03 | 1.24 | 0.67 % |
+
+σ is off by **+0.42 %** at p99. Any v7 result is attributable to training, not quantisation.
+
+**Throughput is unchanged** (`rate_live_v7.json`): `/depth` **10.29 Hz** vs v6's 10.31, `/cloud`
+10.29 vs 10.28, latency 137.3 ms vs 132.9. v7 is a better-trained network, not a bigger one —
+it costs nothing at runtime.
+
+Files: `heldout_v7.json`, `baselines_valsplit_v7.json`, `baselines_v7.json`. Training log:
+`train_v7_long.log`. The unsuffixed `baselines.json` / `baselines_valsplit.json` / `heldout_v6.json`
+are the **v6** run.
+
+### Resource utilisation on the Orin — measured 2026-08-04
+
+Previously unmeasured: every performance number in this file was wall-clock, so "does it fit on
+the Orin" had never actually been answered. `tegrastats` at 500 ms, idle vs the full pipeline
+publishing at 10.29 Hz (`utilisation_v7.json`):
+
+| resource | idle | **under load** | Δ |
+|---|---|---|---|
+| CPU (12 cores) | 0.2 % | **32.4 %** (p90 33.6, max 35.7) | +32 % |
+| — busy cores | 0.02 | **3.89 of 12** | +3.9 |
+| GPU | 0 % | **25.5 %** (p90 41, max 46) | +26 % |
+| RAM | 11.7 GB | **13.4 GB** | +1.7 GB |
+| Power (total rails) | 10.1 W | **21.7 W** | +11.6 W |
+
+**Neither CPU nor GPU is saturated.** Load spreads evenly across all 12 cores (15–26 % each, no
+single pegged thread), and the GPU peaks at 46 %. There is real headroom for a second camera
+module. The 46 % peak against only 10.3 Hz output suggests the pipeline is latency-bound between
+stages rather than throughput-bound — the ring architecture's per-stage handoffs, not the kernels.
+
+> **Memory bandwidth is NOT measured.** This `tegrastats` build does not emit `EMC_FREQ`. On
+> Orin, EMC is the usual first ceiling for multi-camera scale-out, so the headroom claim above
+> covers compute only and should not be extended to bandwidth without a separate measurement.
 
 ### What "good" looks like for each one
 
@@ -519,8 +677,8 @@ The blend beats **both** sources it mixes, including raw ToF on interpolation
 cancels noise neither cancels alone. It also settles v4-vs-v5: with the blend, interpolation
 is *identical* between them (the ToF supplies it), and v4 wins extrapolation by 19 %.
 
-**Recommended configuration: `student_v4_heldout` + `residual_v6_fov73` + blend.**
-*(This line previously read `student_v3` + `residual_v4_last`; both predate the
+**Recommended configuration: `student_v4_heldout` + `residual_v7_fov73` + blend.**
+*(Was `residual_v6_fov73` until 2026-08-04, and `student_v3` + `residual_v4_last` before the
 2026-08-03 field-of-view fix.)*
 
 > **Confirmed live, 2026-07-30 — and the offline number held.** 600 frames while driving,
@@ -655,7 +813,8 @@ ToF exactly (0.059 / 0.010) — correctly deferring to the sensor where the sens
 > Network B's own overlap is not inflating anything here.
 >
 > *(Superseded 2026-08-04: Network B was retrained as `residual_v6_fov73` after the
-> field-of-view fix. The reasoning below explains why v4 was reused at the time.)*
+> field-of-view fix, then as `residual_v7_fov73` at a 110-epoch budget. The reasoning below
+> explains why v4 was reused at the time.)*
 >
 > **Why `residual_v4_last` is reused unchanged with the new backbone:** it was trained against
 > `student_v3` disparity, but corr(v3, v4) over the held-out frames is **0.99944** (min 0.98963).
@@ -2061,7 +2220,7 @@ missing one of the two halves, so typing the option had no effect and gave no er
 # the deployed configuration
 ros2 launch ringfusion_bringup single_module.launch.py \
      backbone_engine:=student_v4_heldout_fp16.engine \
-     residual_engine:=residual_v6_fov73_fp16.engine
+     residual_engine:=residual_v7_fov73_fp16.engine
 
 # the A/B arm, and the fallback if the live rate disappoints
 ros2 launch ringfusion_bringup single_module.launch.py … blend:=false roi_enable:=false

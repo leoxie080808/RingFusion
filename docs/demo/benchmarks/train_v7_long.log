@@ -1,0 +1,145 @@
+residual parameters: 463,971 | device cuda
+[epoch 0] train 0.1989 (cov 0.90)  val 0.3523 (cov 0.82 -> target 0.68)
+  new best (val 0.3523) -> residual_best.pth
+[epoch 1] train 0.1074 (cov 0.81)  val 0.0811 (cov 0.79 -> target 0.68)
+  new best (val 0.0811) -> residual_best.pth
+[epoch 2] train 0.0409 (cov 0.78)  val 0.1026 (cov 0.81 -> target 0.68)
+[epoch 3] train 0.0551 (cov 0.78)  val 0.6912 (cov 0.75 -> target 0.68)
+[epoch 4] train 0.0279 (cov 0.76)  val 0.0893 (cov 0.74 -> target 0.68)
+[epoch 5] train 0.0381 (cov 0.75)  val 0.0648 (cov 0.85 -> target 0.68)
+  new best (val 0.0648) -> residual_best.pth
+[epoch 6] train 0.0176 (cov 0.75)  val 0.0780 (cov 0.86 -> target 0.68)
+[epoch 7] train 0.0267 (cov 0.76)  val 0.0810 (cov 0.69 -> target 0.68)
+[epoch 8] train 0.0356 (cov 0.76)  val 0.0173 (cov 0.72 -> target 0.68)
+  new best (val 0.0173) -> residual_best.pth
+[epoch 9] train 0.0079 (cov 0.74)  val 0.0386 (cov 0.71 -> target 0.68)
+[epoch 10] train 0.0013 (cov 0.75)  val 0.0868 (cov 0.68 -> target 0.68)
+[epoch 11] train 0.0020 (cov 0.74)  val 0.0293 (cov 0.81 -> target 0.68)
+[epoch 12] train -0.0114 (cov 0.73)  val 0.0804 (cov 0.60 -> target 0.68)
+[epoch 13] train 0.0054 (cov 0.75)  val 0.0177 (cov 0.66 -> target 0.68)
+[epoch 14] train -0.0091 (cov 0.74)  val -0.0046 (cov 0.76 -> target 0.68)
+  new best (val -0.0046) -> residual_best.pth
+[epoch 15] train 0.0024 (cov 0.72)  val 0.5986 (cov 0.58 -> target 0.68)
+[epoch 16] train 0.0057 (cov 0.74)  val -0.0112 (cov 0.83 -> target 0.68)
+  new best (val -0.0112) -> residual_best.pth
+[epoch 17] train -0.0200 (cov 0.74)  val -0.0135 (cov 0.74 -> target 0.68)
+  new best (val -0.0135) -> residual_best.pth
+[epoch 18] train -0.0193 (cov 0.73)  val -0.0100 (cov 0.83 -> target 0.68)
+[epoch 19] train -0.0289 (cov 0.73)  val -0.0357 (cov 0.74 -> target 0.68)
+  new best (val -0.0357) -> residual_best.pth
+[epoch 20] train -0.0168 (cov 0.74)  val 0.0286 (cov 0.68 -> target 0.68)
+[epoch 21] train -0.0206 (cov 0.74)  val 0.0099 (cov 0.70 -> target 0.68)
+[epoch 22] train -0.0363 (cov 0.73)  val -0.0147 (cov 0.74 -> target 0.68)
+[epoch 23] train -0.0458 (cov 0.73)  val -0.0465 (cov 0.80 -> target 0.68)
+  new best (val -0.0465) -> residual_best.pth
+[epoch 24] train -0.0596 (cov 0.74)  val -0.0634 (cov 0.73 -> target 0.68)
+  new best (val -0.0634) -> residual_best.pth
+[epoch 25] train -0.0676 (cov 0.73)  val 0.1360 (cov 0.58 -> target 0.68)
+[epoch 26] train -0.0292 (cov 0.72)  val -0.0209 (cov 0.85 -> target 0.68)
+[epoch 27] train -0.0347 (cov 0.72)  val -0.0537 (cov 0.74 -> target 0.68)
+[epoch 28] train -0.0717 (cov 0.72)  val -0.0953 (cov 0.73 -> target 0.68)
+  new best (val -0.0953) -> residual_best.pth
+[epoch 29] train -0.0746 (cov 0.71)  val -0.0680 (cov 0.71 -> target 0.68)
+[epoch 30] train -0.0612 (cov 0.71)  val -0.0601 (cov 0.67 -> target 0.68)
+[epoch 31] train -0.0613 (cov 0.70)  val -0.0799 (cov 0.72 -> target 0.68)
+[epoch 32] train -0.0940 (cov 0.71)  val -0.0471 (cov 0.74 -> target 0.68)
+[epoch 33] train -0.0973 (cov 0.72)  val -0.1062 (cov 0.73 -> target 0.68)
+  new best (val -0.1062) -> residual_best.pth
+[epoch 34] train -0.0673 (cov 0.72)  val -0.0652 (cov 0.74 -> target 0.68)
+[epoch 35] train -0.0927 (cov 0.70)  val -0.0855 (cov 0.75 -> target 0.68)
+[epoch 36] train -0.0947 (cov 0.71)  val -0.0699 (cov 0.64 -> target 0.68)
+[epoch 37] train -0.1066 (cov 0.70)  val -0.0821 (cov 0.61 -> target 0.68)
+[epoch 38] train -0.0748 (cov 0.73)  val -0.0995 (cov 0.75 -> target 0.68)
+[epoch 39] train -0.0905 (cov 0.71)  val -0.0452 (cov 0.61 -> target 0.68)
+[epoch 40] train -0.0899 (cov 0.69)  val -0.0864 (cov 0.76 -> target 0.68)
+[epoch 41] train -0.1164 (cov 0.70)  val -0.1375 (cov 0.73 -> target 0.68)
+  new best (val -0.1375) -> residual_best.pth
+[epoch 42] train -0.1145 (cov 0.70)  val -0.0851 (cov 0.64 -> target 0.68)
+[epoch 43] train -0.1270 (cov 0.71)  val -0.1103 (cov 0.70 -> target 0.68)
+[epoch 44] train -0.1181 (cov 0.69)  val -0.1404 (cov 0.73 -> target 0.68)
+  new best (val -0.1404) -> residual_best.pth
+[epoch 45] train -0.1192 (cov 0.70)  val -0.1376 (cov 0.73 -> target 0.68)
+[epoch 46] train -0.1344 (cov 0.71)  val -0.1347 (cov 0.73 -> target 0.68)
+[epoch 47] train -0.1387 (cov 0.69)  val -0.1438 (cov 0.73 -> target 0.68)
+  new best (val -0.1438) -> residual_best.pth
+[epoch 48] train -0.1267 (cov 0.69)  val -0.1378 (cov 0.70 -> target 0.68)
+[epoch 49] train -0.1142 (cov 0.69)  val -0.0882 (cov 0.62 -> target 0.68)
+[epoch 50] train -0.1256 (cov 0.69)  val -0.1387 (cov 0.75 -> target 0.68)
+[epoch 51] train -0.1449 (cov 0.71)  val -0.1364 (cov 0.74 -> target 0.68)
+[epoch 52] train -0.1154 (cov 0.68)  val -0.1583 (cov 0.72 -> target 0.68)
+  new best (val -0.1583) -> residual_best.pth
+[epoch 53] train -0.1450 (cov 0.70)  val -0.1461 (cov 0.74 -> target 0.68)
+[epoch 54] train -0.1508 (cov 0.70)  val -0.1076 (cov 0.63 -> target 0.68)
+[epoch 55] train -0.1456 (cov 0.70)  val -0.1650 (cov 0.74 -> target 0.68)
+  new best (val -0.1650) -> residual_best.pth
+[epoch 56] train -0.1328 (cov 0.68)  val -0.1666 (cov 0.73 -> target 0.68)
+  new best (val -0.1666) -> residual_best.pth
+[epoch 57] train -0.1463 (cov 0.70)  val -0.1372 (cov 0.69 -> target 0.68)
+[epoch 58] train -0.1487 (cov 0.69)  val -0.1289 (cov 0.73 -> target 0.68)
+[epoch 59] train -0.1544 (cov 0.70)  val -0.1523 (cov 0.65 -> target 0.68)
+[epoch 60] train -0.1487 (cov 0.69)  val -0.1461 (cov 0.74 -> target 0.68)
+[epoch 61] train -0.1655 (cov 0.70)  val -0.1473 (cov 0.74 -> target 0.68)
+[epoch 62] train -0.1579 (cov 0.70)  val -0.1632 (cov 0.70 -> target 0.68)
+[epoch 63] train -0.1606 (cov 0.69)  val -0.1709 (cov 0.69 -> target 0.68)
+  new best (val -0.1709) -> residual_best.pth
+[epoch 64] train -0.1674 (cov 0.69)  val -0.1450 (cov 0.68 -> target 0.68)
+[epoch 65] train -0.1690 (cov 0.70)  val -0.1721 (cov 0.77 -> target 0.68)
+  new best (val -0.1721) -> residual_best.pth
+[epoch 66] train -0.1646 (cov 0.70)  val -0.1664 (cov 0.68 -> target 0.68)
+[epoch 67] train -0.1453 (cov 0.69)  val -0.1735 (cov 0.77 -> target 0.68)
+  new best (val -0.1735) -> residual_best.pth
+[epoch 68] train -0.1526 (cov 0.69)  val -0.1624 (cov 0.69 -> target 0.68)
+[epoch 69] train -0.1653 (cov 0.69)  val -0.1932 (cov 0.72 -> target 0.68)
+  new best (val -0.1932) -> residual_best.pth
+[epoch 70] train -0.1748 (cov 0.69)  val -0.0740 (cov 0.55 -> target 0.68)
+[epoch 71] train -0.1655 (cov 0.67)  val -0.1403 (cov 0.70 -> target 0.68)
+[epoch 72] train -0.1516 (cov 0.69)  val -0.1704 (cov 0.74 -> target 0.68)
+[epoch 73] train -0.1746 (cov 0.69)  val -0.1938 (cov 0.73 -> target 0.68)
+  new best (val -0.1938) -> residual_best.pth
+[epoch 74] train -0.1828 (cov 0.69)  val -0.1832 (cov 0.69 -> target 0.68)
+[epoch 75] train -0.1741 (cov 0.69)  val -0.1621 (cov 0.68 -> target 0.68)
+[epoch 76] train -0.1807 (cov 0.69)  val -0.1965 (cov 0.71 -> target 0.68)
+  new best (val -0.1965) -> residual_best.pth
+[epoch 77] train -0.1866 (cov 0.69)  val -0.1306 (cov 0.59 -> target 0.68)
+[epoch 78] train -0.1838 (cov 0.67)  val -0.1084 (cov 0.56 -> target 0.68)
+[epoch 79] train -0.1932 (cov 0.70)  val -0.2039 (cov 0.68 -> target 0.68)
+  new best (val -0.2039) -> residual_best.pth
+[epoch 80] train -0.1735 (cov 0.69)  val -0.1574 (cov 0.73 -> target 0.68)
+[epoch 81] train -0.1813 (cov 0.69)  val -0.1821 (cov 0.69 -> target 0.68)
+[epoch 82] train -0.1924 (cov 0.69)  val -0.2059 (cov 0.74 -> target 0.68)
+  new best (val -0.2059) -> residual_best.pth
+[epoch 83] train -0.1988 (cov 0.70)  val -0.2059 (cov 0.71 -> target 0.68)
+[epoch 84] train -0.2013 (cov 0.70)  val -0.1875 (cov 0.68 -> target 0.68)
+[epoch 85] train -0.1902 (cov 0.69)  val -0.1883 (cov 0.70 -> target 0.68)
+[epoch 86] train -0.1869 (cov 0.67)  val -0.1274 (cov 0.56 -> target 0.68)
+[epoch 87] train -0.1930 (cov 0.70)  val -0.2033 (cov 0.69 -> target 0.68)
+[epoch 88] train -0.2062 (cov 0.69)  val -0.1763 (cov 0.61 -> target 0.68)
+[epoch 89] train -0.2118 (cov 0.70)  val -0.1303 (cov 0.58 -> target 0.68)
+[epoch 90] train -0.1877 (cov 0.68)  val -0.2083 (cov 0.72 -> target 0.68)
+  new best (val -0.2083) -> residual_best.pth
+[epoch 91] train -0.2115 (cov 0.70)  val -0.1934 (cov 0.66 -> target 0.68)
+[epoch 92] train -0.2079 (cov 0.69)  val -0.2158 (cov 0.71 -> target 0.68)
+  new best (val -0.2158) -> residual_best.pth
+[epoch 93] train -0.2073 (cov 0.70)  val -0.2060 (cov 0.68 -> target 0.68)
+[epoch 94] train -0.2060 (cov 0.69)  val -0.2263 (cov 0.73 -> target 0.68)
+  new best (val -0.2263) -> residual_best.pth
+[epoch 95] train -0.2167 (cov 0.70)  val -0.2135 (cov 0.76 -> target 0.68)
+[epoch 96] train -0.2137 (cov 0.69)  val -0.2086 (cov 0.71 -> target 0.68)
+[epoch 97] train -0.2129 (cov 0.70)  val -0.1671 (cov 0.61 -> target 0.68)
+[epoch 98] train -0.2039 (cov 0.68)  val -0.2268 (cov 0.71 -> target 0.68)
+  new best (val -0.2268) -> residual_best.pth
+[epoch 99] train -0.2224 (cov 0.70)  val -0.2033 (cov 0.67 -> target 0.68)
+[epoch 100] train -0.2105 (cov 0.69)  val -0.2077 (cov 0.73 -> target 0.68)
+[epoch 101] train -0.2175 (cov 0.69)  val -0.2052 (cov 0.71 -> target 0.68)
+[epoch 102] train -0.2258 (cov 0.70)  val -0.2073 (cov 0.66 -> target 0.68)
+[epoch 103] train -0.2236 (cov 0.70)  val -0.2208 (cov 0.71 -> target 0.68)
+[epoch 104] train -0.2233 (cov 0.69)  val -0.2167 (cov 0.71 -> target 0.68)
+[epoch 105] train -0.2214 (cov 0.70)  val -0.1669 (cov 0.72 -> target 0.68)
+[epoch 106] train -0.2189 (cov 0.69)  val -0.2283 (cov 0.70 -> target 0.68)
+  new best (val -0.2283) -> residual_best.pth
+[epoch 107] train -0.2364 (cov 0.70)  val -0.2029 (cov 0.65 -> target 0.68)
+[epoch 108] train -0.2291 (cov 0.69)  val -0.2328 (cov 0.71 -> target 0.68)
+  new best (val -0.2328) -> residual_best.pth
+[epoch 109] train -0.2292 (cov 0.69)  val -0.2140 (cov 0.66 -> target 0.68)
+[epoch 110] train -0.2244 (cov 0.69)  val -0.2055 (cov 0.66 -> target 0.68)
+Terminated

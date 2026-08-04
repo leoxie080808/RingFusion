@@ -41,6 +41,29 @@ Every page carries a 100 mm scale bar. CHECK IT WITH A RULER after printing -- "
 is the default in many print dialogs and silently shrinks everything by a few percent, which
 would put that same percent of bias into every measurement of the session and, worse, look
 completely normal.
+
+INK WEIGHT: POINTS ARE NOT MILLIMETRES (fixed 2026-08-04)
+--------------------------------------------------------
+The first version sized the X with `lw=size * 0.045`, which reads like "4.5 % of the marker"
+-- 4 mm on a 90 mm marker. It is not. Matplotlib line widths are in POINTS, and 1 pt =
+0.353 mm, so that expression printed a **1.43 mm** stroke: barely a third of the intended
+width. The border was worse, `lw=0.7` = **0.25 mm**.
+
+The consequence only shows up in the field. Marker legibility is not set by the outline but
+by the thinnest printed feature, and at 1640x1232 one pixel subtends distance/379.6:
+
+                    0.5 m    1 m     2 m     3 m    4.5 m
+   1 px covers      1.3mm   2.6mm   5.3mm   7.9mm   11.9mm
+   old X, 1.43 mm   1.1px   0.5px   0.3px   0.2px    0.1px   <- sub-pixel past ~0.5 m
+   new X, 8.1 mm    6.2px   3.1px   1.5px   1.0px    0.7px
+
+Sub-pixel ink does not render faint, it renders as CONTRAST COLLAPSE -- the stroke averages
+into the white paper around it and the marker becomes a pale square. That is why the tape
+session could not read markers past ~2 m and why automatic detection failed every way it was
+tried: the ink was never actually in the image to detect.
+
+So every dimension in this file is now declared in mm and converted with pt() at the point of
+use. Nothing here is expressed in points.
 """
 import argparse
 import glob
@@ -67,6 +90,26 @@ CUT_GAP = 10.0                   # mm of white between neighbours, for scissors
 INK = '#C2185B'
 CUT = '#B0B0B0'                  # cut guides: visible on paper, ignorable in the image
 
+# Ink weights, as a fraction of the marker side. Held as fractions rather than absolute mm
+# so the 5 cm markers get proportionally scaled ink instead of the 9 cm weights, which would
+# swallow them. Values are in MILLIMETRES once multiplied -- see pt() before using them.
+STROKE_FRAC = 0.090              # X limbs      -> 8.1 mm on a 90 mm marker
+DOT_FRAC    = 0.065              # centre disc RADIUS -> 5.85 mm (11.7 mm across)
+BORDER_FRAC = 0.013              # square outline -> 1.2 mm
+
+MM_PER_PT = 25.4 / 72.0
+
+
+def pt(mm):
+    """mm -> matplotlib points.
+
+    Every dimension in this file is authored in mm because that is what comes out of the
+    printer and what a ruler checks. Matplotlib line widths are in points, and conflating
+    the two is exactly the bug described in the module docstring, so the conversion is
+    never done by eye.
+    """
+    return mm / MM_PER_PT
+
 
 def draw_marker(ax, x, y, size, mid):
     """One marker with its lower-left at (x, y) mm, `size` mm across.
@@ -74,13 +117,24 @@ def draw_marker(ax, x, y, size, mid):
     The X's crossing is the centre: it is defined by four long edges rather than one small
     printed dot, so it survives being photographed at 8 px across.
     """
-    ax.add_patch(Rectangle((x, y), size, size, fill=False, ec='black', lw=0.7))
-    ax.plot([x, x + size], [y, y + size], color=INK, lw=size * 0.045, solid_capstyle='butt')
-    ax.plot([x, x + size], [y + size, y], color=INK, lw=size * 0.045, solid_capstyle='butt')
-    # A small white disc at the crossing keeps the exact centre visible instead of buried
-    # under two overlapping strokes -- that point is what gets measured and clicked.
-    ax.add_patch(plt.Circle((x + size / 2, y + size / 2), size * 0.035,
-                            fc='white', ec=INK, lw=0.6, zorder=3))
+    stroke = size * STROKE_FRAC
+    border = Rectangle((x, y), size, size, fill=False, ec='black',
+                       lw=pt(size * BORDER_FRAC))
+    ax.add_patch(border)
+    # The limbs are CLIPPED to the square, not merely butt-capped. A butt cap is square to
+    # the line's own direction, so on a 45-degree diagonal it still projects a triangle of
+    # ink past each corner -- at 8 mm that is several millimetres outside the border, and the
+    # border is exactly the edge corner-clicking looks for. Clipping is the only thing that
+    # actually keeps the ink inside the cut line.
+    for xs, ys in (([x, x + size], [y, y + size]),
+                   ([x, x + size], [y + size, y])):
+        line, = ax.plot(xs, ys, color=INK, lw=pt(stroke), solid_capstyle='butt')
+        line.set_clip_path(border)
+    # A white disc at the crossing keeps the exact centre visible instead of buried under two
+    # overlapping strokes -- that point is what gets measured and clicked. It must stay
+    # comfortably wider than the limbs or the bold X simply covers it.
+    ax.add_patch(plt.Circle((x + size / 2, y + size / 2), size * DOT_FRAC,
+                            fc='white', ec=INK, lw=pt(size * BORDER_FRAC), zorder=3))
     ax.text(x + size / 2, y - 1.5, f'#{mid}   {size:.0f} mm',
             ha='center', va='top', fontsize=7, color='black')
 
@@ -170,6 +224,10 @@ def emit(pdf, count, size, ncol, nrow, title, first_id):
 
 
 def main():
+    # Declared up front: Python rejects a `global` that appears after the name has already
+    # been read in the same scope, and the argparse defaults below read both of these.
+    global STROKE_FRAC, DOT_FRAC
+
     ap = argparse.ArgumentParser()
     # Anchored to the repo, not the shell's cwd: the natural place to run this from is
     # ros2_ws (where everything else lives), and a cwd-relative default fails there with
@@ -187,7 +245,19 @@ def main():
     ap.add_argument('--no-png', action='store_true',
                     help='skip the per-page PNGs (PDF only)')
     ap.add_argument('--dpi', type=int, default=300)
+    ap.add_argument('--stroke-frac', type=float, default=STROKE_FRAC,
+                    help='X limb width as a fraction of the marker side '
+                         f'(default {STROKE_FRAC} = {90*STROKE_FRAC:.1f} mm at 90 mm)')
+    ap.add_argument('--dot-frac', type=float, default=DOT_FRAC,
+                    help='centre disc RADIUS as a fraction of the marker side '
+                         f'(default {DOT_FRAC} = {2*90*DOT_FRAC:.1f} mm across at 90 mm)')
     a = ap.parse_args()
+
+    STROKE_FRAC, DOT_FRAC = a.stroke_frac, a.dot_frac
+    if DOT_FRAC * 2 <= STROKE_FRAC * 1.3:
+        raise SystemExit(f'centre disc ({2*a.size*DOT_FRAC:.1f} mm across) is not clearly '
+                         f'wider than the X limbs ({a.size*STROKE_FRAC:.1f} mm) -- the bold '
+                         f'X would swallow it. Raise --dot-frac or lower --stroke-frac.')
 
     per_page = a.cols * a.rows
     with PdfPages(a.out) as pdf:
@@ -207,6 +277,14 @@ def main():
     print(f'{a.count} x {a.size/10:.0f} cm ({per_page} per portrait A4) '
           f'+ {a.small} x 5 cm  =  {pages} pages')
     print(f'{CUT_GAP:.0f} mm cutting gap between neighbours, dashed guides down each gutter')
+    stroke = a.size * STROKE_FRAC
+    print(f'ink: X limbs {stroke:.1f} mm, centre disc {2*a.size*DOT_FRAC:.1f} mm across, '
+          f'border {a.size*BORDER_FRAC:.1f} mm')
+    print('  X limb width in camera pixels (1640x1232, fx=379.6):')
+    print('   ' + ''.join(f'{d:>8}' for d in ['0.5 m', '1 m', '2 m', '3 m', '4.5 m']))
+    print('   ' + ''.join(f'{379.6 * (stroke/1000.0) / d:>8.1f}'
+                          for d in [0.5, 1.0, 2.0, 3.0, 4.5]))
+    print('  (below ~1 px the stroke averages into the paper and the marker goes pale)')
 
     if not a.no_png:
         stem = a.out[:-4] if a.out.endswith('.pdf') else a.out
