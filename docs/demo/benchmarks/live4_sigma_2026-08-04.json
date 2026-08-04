@@ -1,0 +1,144 @@
+{
+ "captured": "2026-08-04",
+ "test": "LIVE-4 sigma evaluation, stationary",
+ "frames": 15,
+ "n": 11,
+ "points": [
+  {
+   "tag": "new",
+   "id": 1,
+   "u": 420,
+   "v": 516,
+   "gt": 0.7359,
+   "pred": 1.2045677851601486,
+   "err": 0.4686677851601486,
+   "sigma": 0.22963297840875432,
+   "frame_sd": 0.010342878801884635
+  },
+  {
+   "tag": "new",
+   "id": 2,
+   "u": 780,
+   "v": 514,
+   "gt": 1.7038,
+   "pred": 1.7080485328984794,
+   "err": 0.0042485328984793735,
+   "sigma": 0.1568453291507775,
+   "frame_sd": 0.005949121835204809
+  },
+  {
+   "tag": "new",
+   "id": 3,
+   "u": 970,
+   "v": 607,
+   "gt": 0.3341,
+   "pred": 0.32731457395467584,
+   "err": -0.006785426045324172,
+   "sigma": 0.04769345175425599,
+   "frame_sd": 0.0015451635236029071
+  },
+  {
+   "tag": "new",
+   "id": 4,
+   "u": 884,
+   "v": 462,
+   "gt": 2.1,
+   "pred": 2.019035204169199,
+   "err": -0.08096479583080107,
+   "sigma": 0.8498856343597239,
+   "frame_sd": 0.010528384057505112
+  },
+  {
+   "tag": "new",
+   "id": 5,
+   "u": 947,
+   "v": 430,
+   "gt": 2.888,
+   "pred": 0.3399653123592971,
+   "err": -2.548034687640703,
+   "sigma": 0.6595968864134234,
+   "frame_sd": 0.007129915432819775
+  },
+  {
+   "tag": "new",
+   "id": 6,
+   "u": 887,
+   "v": 382,
+   "gt": 3.03,
+   "pred": 2.9055206689018633,
+   "err": -0.12447933109813647,
+   "sigma": 2.907964374557596,
+   "frame_sd": 0.018781924088989085
+  },
+  {
+   "tag": "new",
+   "id": 7,
+   "u": 912,
+   "v": 329,
+   "gt": 3.178,
+   "pred": 2.1071994215392085,
+   "err": -1.0708005784607915,
+   "sigma": 2.102932016206671,
+   "frame_sd": 0.25610070137718294
+  },
+  {
+   "tag": "new",
+   "id": 8,
+   "u": 915,
+   "v": 280,
+   "gt": 3.3635,
+   "pred": 1.845440385119101,
+   "err": -1.5180596148808991,
+   "sigma": 1.844216849640743,
+   "frame_sd": 0.02692712045318174
+  },
+  {
+   "tag": "old",
+   "id": 2,
+   "u": 589,
+   "v": 552,
+   "gt": 0.76,
+   "pred": 0.7478666989291192,
+   "err": -0.012133301070880842,
+   "sigma": 0.14452272438725622,
+   "frame_sd": 0.0021350050663930652
+  },
+  {
+   "tag": "old",
+   "id": 3,
+   "u": 836,
+   "v": 519,
+   "gt": 1.66,
+   "pred": 1.6539451503523024,
+   "err": -0.0060548496476975355,
+   "sigma": 0.1516594726840371,
+   "frame_sd": 0.005246189705916953
+  },
+  {
+   "tag": "old",
+   "id": 6,
+   "u": 1113,
+   "v": 606,
+   "gt": 0.72,
+   "pred": 0.6758470576534558,
+   "err": -0.04415294234654421,
+   "sigma": 0.13916556577345807,
+   "frame_sd": 0.003232530810385707
+  }
+ ],
+ "mae": 0.5349438040982187,
+ "rmse": 0.9623596469106284,
+ "corr_pearson": 0.2813945737151612,
+ "corr_spearman": 0.6545454545454547,
+ "coverage_1sigma": 0.8181818181818182,
+ "coverage_2sigma": 0.8181818181818182,
+ "note": "Stationary, 15 frames, 11 tape points 0.33-3.36 m. 8 bold markers placed and taped 2026-08-04 plus 3 older thin markers proven undisturbed (cross-session drift < 3 mm). sigma read from /depth_var, converted to slant like /depth. The robot did not move; the four older markers excluded had local scene changes (a new marker on the same bottle, the operator standing in frame), not camera motion.",
+ "findings": {
+  "works": "sigma flags the vertically out-of-cone markers (7,8): errors 1.07 and 1.52 m carry sigma 2.10 and 1.84, both inside 1 sigma. Rank correlation +0.655 -- sigma orders the errors.",
+  "not_calibrated": "coverage is 0.818 at BOTH 1 and 2 sigma -- identical, so every point outside 1 sigma is also outside 2. sigma is too wide on easy points (7 of 11 have |err|/sigma < 0.35) and far too narrow on the failures. The distribution shape is wrong, not just the scale.",
+  "blind_spot_mixed_return": "marker 5 is off by 2.55 m with sigma 0.66 (3.9 sigma). Its zone clips a bottle 0.33 m away while the marker is on a banner 2.89 m back. This is the failure mode sigma misses completely, and it is the one that matters most for obstacle detection.",
+  "axis_asymmetry": "marker 1 at -47.8 deg horizontal is outside the +/-36.75 deg cone, off by 0.47 m, sigma only 0.23 (2.0 sigma). Markers outside the cone VERTICALLY got sigma > 1.8 for comparable errors. The uncertainty model treats the two axes differently.",
+  "fusion_degrades_a_correct_reading": "at marker 1 the ToF zone itself reads 0.72 m against a 0.736 m tape -- essentially exact -- while the fused /depth reads 1.20 m. Third independent sighting of the out-of-cone problem.",
+  "instability_unmodelled": "marker 7 varies 256 mm frame-to-frame against a 32 mm average. Frame-to-frame spread is a usable uncertainty signal that sigma does not currently capture."
+ }
+}

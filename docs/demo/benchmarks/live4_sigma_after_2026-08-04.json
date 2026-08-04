@@ -1,0 +1,162 @@
+{
+ "captured": "2026-08-04",
+ "test": "LIVE-4 sigma evaluation, stationary, AFTER the 2026-08-04 sigma changes",
+ "frames": 15,
+ "n": 11,
+ "points": [
+  {
+   "tag": "new",
+   "id": 1,
+   "u": 420,
+   "v": 516,
+   "gt": 0.7359,
+   "pred": 1.2455494808143985,
+   "err": 0.5096494808143985,
+   "sigma": 1.3352980261710001,
+   "frame_sd": 0.009970144426835213
+  },
+  {
+   "tag": "new",
+   "id": 2,
+   "u": 780,
+   "v": 514,
+   "gt": 1.7038,
+   "pred": 1.7053807506352887,
+   "err": 0.0015807506352887302,
+   "sigma": 0.6209032129311791,
+   "frame_sd": 0.004767745891646581
+  },
+  {
+   "tag": "new",
+   "id": 3,
+   "u": 970,
+   "v": 607,
+   "gt": 0.3341,
+   "pred": 0.32706097811723667,
+   "err": -0.007039021882763341,
+   "sigma": 0.06892477348114781,
+   "frame_sd": 0.001094289978525211
+  },
+  {
+   "tag": "new",
+   "id": 4,
+   "u": 884,
+   "v": 462,
+   "gt": 2.1,
+   "pred": 2.020037352454602,
+   "err": -0.07996264754539828,
+   "sigma": 1.0192721449365532,
+   "frame_sd": 0.013690290733210006
+  },
+  {
+   "tag": "new",
+   "id": 5,
+   "u": 947,
+   "v": 430,
+   "gt": 2.888,
+   "pred": 0.3445607460172371,
+   "err": -2.543439253982763,
+   "sigma": 1.104097903783025,
+   "frame_sd": 0.006243551269715964
+  },
+  {
+   "tag": "new",
+   "id": 6,
+   "u": 887,
+   "v": 382,
+   "gt": 3.03,
+   "pred": 2.900766965334677,
+   "err": -0.12923303466532277,
+   "sigma": 2.9052343770258777,
+   "frame_sd": 0.014663359416643972
+  },
+  {
+   "tag": "new",
+   "id": 7,
+   "u": 912,
+   "v": 329,
+   "gt": 3.178,
+   "pred": 2.3746894988054557,
+   "err": -0.8033105011945443,
+   "sigma": 2.1935253850521614,
+   "frame_sd": 0.2312127931023381
+  },
+  {
+   "tag": "new",
+   "id": 8,
+   "u": 915,
+   "v": 280,
+   "gt": 3.3635,
+   "pred": 1.8995981862752893,
+   "err": -1.4639018137247108,
+   "sigma": 1.9260431900851682,
+   "frame_sd": 0.024007557964999992
+  },
+  {
+   "tag": "old",
+   "id": 2,
+   "u": 589,
+   "v": 552,
+   "gt": 0.76,
+   "pred": 0.748608029652599,
+   "err": -0.011391970347401026,
+   "sigma": 0.14221587330204985,
+   "frame_sd": 0.002413077300069239
+  },
+  {
+   "tag": "old",
+   "id": 3,
+   "u": 836,
+   "v": 519,
+   "gt": 1.66,
+   "pred": 1.6481992226122864,
+   "err": -0.011800777387713568,
+   "sigma": 0.5560675681374594,
+   "frame_sd": 0.005441637996545716
+  },
+  {
+   "tag": "old",
+   "id": 6,
+   "u": 1113,
+   "v": 606,
+   "gt": 0.72,
+   "pred": 0.6743609519723999,
+   "err": -0.045639048027600104,
+   "sigma": 0.1893887949052652,
+   "frame_sd": 0.0031737905186624365
+  }
+ ],
+ "mae": 0.5097225727461732,
+ "rmse": 0.9314036972833403,
+ "corr_pearson": 0.3174765386255104,
+ "corr_spearman": 0.7454545454545456,
+ "coverage_1sigma": 0.9090909090909091,
+ "coverage_2sigma": 0.9090909090909091,
+ "changes": [
+  "blend.sigma_support_var: three variance terms added to Stage 7c",
+  "disagreement  = w * |D_tof - D_net|      (how far the blend moves the depth)",
+  "support       = SUPPORT_FRAC * D * (angle_to_nearest_anchor - far_deg)/far_deg",
+  "spread        = w * |D_tof - local_mean(D_tof)|  (is this zone the odd one out?)"
+ ],
+ "before": {
+  "rank_corr": 0.655,
+  "coverage_1sigma": 0.818,
+  "failures": 2,
+  "worst_sigma_ratio": 3.86
+ },
+ "after": {
+  "rank_corr": 0.745,
+  "coverage_1sigma": 0.909,
+  "failures": 1,
+  "worst_sigma_ratio": 2.3
+ },
+ "cost_ms": 0.8,
+ "cost_method": "offline A/B on one logged frame, same engines, 25 iterations, per-stage timings: 82.10 ms with the terms vs 81.29 ms with the constants zeroed.",
+ "rescale_finding": "Step 4 (re-fit the sigma SCALE) is not applicable. Sweeping a single multiplier: 0.37x reaches coverage 0.727 but pushes the mixed-return marker to 6.23 sigma; 2.5x covers everything at 1.000. The errors are heavy-tailed -- most points far inside, one far outside -- so no single scale serves both ends. Coverage is WORSE after the change (0.818 -> 0.909) precisely because the dangerous case is now covered.",
+ "caveats": [
+  "n = 11. Three constants were tuned against these 11 points; overfitting risk is real.",
+  "The mixed-return marker improved 3.86 -> 2.30 sigma but still fails. Its neighbourhood is half-covered by the intruding bottle, so the zone is not a strong local outlier.",
+  "Rate was re-measured in the dark. 9.35 Hz, above the 8.3 Hz floor, but worth re-confirming lit.",
+  "Frame-to-frame variance (task 3) NOT implemented -- needs temporal state in the node."
+ ]
+}

@@ -87,7 +87,7 @@ breakdown and the reason the offline estimate was 38 ms optimistic are
 | `/depth`, `/depth_var`, `/cloud` | **10.3 Hz** default / **13.3 Hz** with blend+ROI off *(deployed node, incl. ROS + rectification)* |
 | Depth error, extrapolating away from the ToF | **0.034 m** median (`center` protocol, 200 held-out frames). The 600-frame moving-robot confirmation predates the 2026-08-03 field-of-view fix and needs re-running |
 | Depth error, interpolating between ToF zones | **0.014 m** median (`random` protocol) |
-| Uncertainty quality, `corr(σ, \|error\|)` | **0.943** *(at ToF anchor pixels only — see limits)* |
+| Uncertainty quality, `corr(σ, \|error\|)` | **0.943** *(at ToF anchor pixels — circular)*. Against **tape**: rank corr **+0.655**, coverage@1σ **0.818** vs a 0.683 target — see [LIVE-4](#is-the-uncertainty-trustworthy-live-4-2026-08-04) |
 | Backbone agreement with truth, ρ | **0.917** *(deployed config; the projection sweep's best row was 0.914)* |
 | CPU / GPU under full load | **32 % of 12 cores · 26 % GPU · 21.7 W** — neither is saturated |
 
@@ -281,10 +281,71 @@ both measured rather than assumed.**
 > up at the time as a probable ToF-vs-camera pitch error. It was a fitting artifact. The direct
 > test bounds any pitch **under ~2°** and cannot resolve it; `rotation_rpy_deg` stays `[0,0,0]`.
 >
-> **Still unverified:** the ToF↔camera *translation* (weakly constrained — an 80 mm `ty` sweep
-> changes nothing measurable), and **yaw and roll, never tested at all**.
+> **Where the extrinsics stand.** *Pitch* is bounded under ~2° (above). *Yaw* is bounded to
+> about **±1°** by the `fov_h` session, which is indirect but real: seven markers from −43° to
+> +48°, at depths from 0.63 to 2.03 m, all resolved to the correct zone — a yaw error beyond
+> half a zone pitch (~1.15°) would have picked the wrong column and returned a visibly wrong
+> distance. *Roll* has no direct evidence; it is assumed zero on the grounds that both sensors
+> share one mount and roll's effect vanishes near the optical centre. The *translation* is a
+> caliper measurement the data cannot see — an 80 mm `ty` sweep changes nothing measurable.
 
 Full detail: [`fov_v` verified against tape](ros2_ws/README.md#fov_v-verified-against-tape--2026-08-04).
+
+### Is the uncertainty trustworthy? LIVE-4, 2026-08-04
+
+Every depth pixel ships with **σ** — the system's own estimate of how wrong it might be, in
+metres. **σ is not a score; lower is not better.** Too small and the robot trusts a bad reading;
+too large and nothing is usable. It should simply *match* the error actually made: about 68 % of
+readings inside 1σ, and the large-σ pixels should be the wrong ones.
+
+Measured stationary against **11 tape points from 0.33 m to 3.36 m**, 15 frames averaged:
+
+| | result | target | |
+|---|---|---|---|
+| rank corr(σ, \|err\|) | **+0.655** | → +1 | usable |
+| coverage @1σ | **0.818** | 0.683 | too wide |
+| coverage @2σ | **0.818** | 0.954 | too narrow |
+| median \|err\| | **0.081 m** | — | |
+
+**σ works where it matters most and fails where it matters more.** Outside the ToF cone the
+pipeline is wrong by 1.07 m and 1.52 m — and reports σ of 2.10 and 1.84, correctly saying *"I am
+guessing."* But coverage is **0.818 at both 1σ and 2σ**: identical, meaning every point that
+escapes 1σ also escapes 2σ. The distribution has the wrong *shape*, so no rescaling fixes it.
+
+The blind spot is **mixed returns**. One marker sits on a banner 2.89 m back while its ToF zone
+clips a bottle 0.33 m away — the pipeline reports **0.34 m, off by 2.55 m, with σ of just 0.66**
+(3.9σ). *"Far surface with a near object in front"* is what an obstacle **is**, so this is the
+one case a ground robot cannot afford confidence in.
+
+Also found: at a marker 47.8° off-axis the **ToF zone reads 0.72 m against a 0.736 m tape —
+essentially exact — while the fused output says 1.20 m.** Fusion degrades a correct sensor
+reading outside the cone; the third independent sighting of that effect.
+
+**Then fixed, the same day.** All three failures were visible inside the blend stage and were
+being discarded. Three variance terms now feed on them — how far the blend moves the depth,
+how far away the nearest anchor is, and whether a zone disagrees with its neighbours:
+
+| | before | after |
+|---|---|---|
+| rank corr(σ, \|err\|) | +0.655 | **+0.745** |
+| points failing 1σ | 2 | **1** |
+| worst failure | 3.86σ | **2.30σ** |
+| out-of-cone marker | 2.04σ ❌ | **0.38σ** ✅ |
+
+**Cost 0.80 ms/frame** (offline A/B, 82.10 vs 81.29 ms); deployed rate 9.35 Hz, above the ToF's
+8.3 Hz floor.
+
+> **The one step that turned out to be impossible is the interesting one.** Re-fitting the σ
+> *scale* cannot work here: shrinking σ to hit the 0.683 coverage target pushes the mixed-return
+> case to **6.2σ**, while enlarging it covers everything at 1.000. The errors are heavy-tailed,
+> so no single multiplier serves both ends — coverage got *worse* (0.818 → 0.909) precisely
+> because the dangerous case is now covered. Proper calibration needs a heavier-tailed model,
+> not a constant.
+
+Full detail, including two wrong turns worth not repeating:
+[σ fixed](ros2_ws/README.md#σ-fixed--three-terms-the-blend-already-knew-2026-08-04).
+**n = 11, and three constants were tuned against those 11 points** — provisional until a larger
+session.
 
 ### On a public benchmark, with independent ground truth
 

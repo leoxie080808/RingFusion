@@ -1,0 +1,9 @@
+[0.000000] (-) TimerEvent: {}
+[0.000242] (-) JobUnselected: {'identifier': 'ringfusion_bringup'}
+[0.000574] (-) JobUnselected: {'identifier': 'ringfusion_drivers'}
+[0.000947] (-) JobUnselected: {'identifier': 'ringfusion_msgs'}
+[0.001166] (-) JobUnselected: {'identifier': 'ringfusion_tmf8829'}
+[0.001198] (ringfusion_perception) JobQueued: {'identifier': 'ringfusion_perception', 'dependencies': OrderedDict([('ringfusion_msgs', '/home/leroi-ultio/RingFusion/install/ringfusion_msgs')])}
+[0.001240] (ringfusion_perception) JobStarted: {'identifier': 'ringfusion_perception'}
+[0.012864] (ringfusion_perception) JobEnded: {'identifier': 'ringfusion_perception', 'rc': 1}
+[0.023786] (-) EventReactorShutdown: {}

@@ -195,6 +195,17 @@ def blend_apply_lowres(D_net, dist_r, D_tof_r, scale, near_px, far_px):
     return out.cpu().numpy(), wgt.cpu().numpy()
 
 
+def upsample_var(var_r, scale, h, w):
+    """Block-replicate a reduced-resolution variance map to full resolution.
+
+    blend.sigma_support_var builds its terms on the 1/scale grid the distance transform
+    already lives on; this is the only full-frame allocation it needs, and doing it here
+    keeps it off the CPU for the same reason blend_apply_lowres does.
+    """
+    t = _to_cuda(var_r, np.float32)
+    return _upsample_nearest(t, int(scale), int(h), int(w)).cpu().numpy()
+
+
 def roi_mask_and_sigma_floor(var, metric, K, plane, reach_max, height_max, stride, frac):
     """Stage 7d end to end on the GPU: build the ROI mask AND apply the sigma floor.
 

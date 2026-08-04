@@ -273,21 +273,204 @@ marker 8 at **UP 35.3°** has nothing nearer than **5.0°** (outside). The edge 
 > from −4° to +1° the marker MAE only moves between 2.6 and 4.5 cm, which is inside our
 > measurement precision. **No pitch change is justified. `rotation_rpy_deg` stays `[0,0,0]`.**
 
-**What is still NOT verified:** `translation_mm` is a physical measurement never checked
-against data (a 0→80 mm `ty` sweep changed nothing measurable, so it is weakly constrained),
-and **yaw and roll have never been tested at all** — today's session constrains pitch only.
+**Where each extrinsic stands after this session:**
+
+| | bound | from |
+|---|---|---|
+| pitch | under ~2° | this session — a −4°…+1° sweep moves marker MAE only 2.6→4.5 cm |
+| yaw | **±1°** | the `fov_h` session, indirectly — see below |
+| roll | none | assumed zero; both sensors share one mount |
+| translation | unconstrained by data | caliper measurement; an 80 mm `ty` sweep changes nothing measurable |
+
+The yaw bound is worth spelling out because it looks like nothing was done. The `fov_h` session
+resolved seven markers from −43° to +48°, at depths from 0.63 to 2.03 m, to the **correct zone
+every time** (MAE 0.010 m). Yaw rotates the whole grid horizontally, so an error beyond about
+half a zone pitch (**~1.15°**) would have selected the wrong column — and with those markers at
+sharply different depths, a wrong column returns a visibly wrong distance. It didn't, seven
+times. That is a real constraint, not an assumption.
+
+Roll is the one parameter with no evidence either way. It is left at zero deliberately: the two
+sensors share a mount, roll's displacement vanishes at the optical centre and stays small across
+a 567×443 px footprint, and nothing in either tape session shows the asymmetry it would produce.
 
 Two limitations found along the way, both worth keeping:
 
-- **Marker 5 failed** — 0.35 m against a 2.89 m tape, because its zone clips a water bottle in
-  the foreground and locks onto it. Identical partial-fill failure to the red pole. Excluded
-  from the fit rather than fudged.
+- **Marker 5 reads 0.35 m against a 2.89 m tape** — its zone clips a water bottle in the
+  foreground and locks onto the near surface. **This is kept in place deliberately, not
+  corrected.** It is a clean instance of the mixed-return problem at a depth discontinuity —
+  a far surface and a near object sharing one zone — with ground truth on both sides, and it
+  doubles as a ready-made LIVE-4 test: σ *should* be large there.
 - **The bold markers work to ~2.5 m, not 3.4 m.** At 3.36 m the 8.1 mm X ink subtends **0.9 px**
   — sub-pixel again. Template matching failed outright and was abandoned; positions were read
   by hand off gridded zooms. The redesign bought a **4×** range gain (0.5 m → ~2 m), not an
   unlimited one.
 
 Data: [`fov_v_session_2026-08-04.json`](../docs/demo/benchmarks/fov_v_session_2026-08-04.json).
+
+### LIVE-4 — is σ trustworthy? Measured against tape, 2026-08-04
+
+#### What σ is, and what "good" means
+
+Every pixel of `/depth` has a companion value in `/depth_var`. Take its square root and you get
+**σ** — the pipeline's own statement of *"how far off do I think this reading might be?"*, in
+metres. σ = 0.05 means "probably within about 5 cm". σ = 2.0 means "I am guessing."
+
+**σ is not a score, and lower is not better.** A depth estimate wants to be accurate; an
+uncertainty wants to be *honest*. Too small and the robot trusts a bad reading and drives into
+something. Too large and every reading looks unusable and the robot never moves. The target is
+that σ **matches the error it actually makes**, and that splits into three properties:
+
+| property | what it asks | how it's scored | target |
+|---|---|---|---|
+| **Ordering** | are the big-σ pixels the wrong ones? | rank correlation of σ vs \|err\| | as close to **+1** as possible |
+| **Coverage** | is \|err\| < 1σ about as often as it should be? | fraction inside 1σ | **0.683** (and 0.954 at 2σ) |
+| **Sharpness** | is σ small when the answer really is good? | σ on the clean points | small, *given* coverage holds |
+
+Ordering is the one that makes σ usable at all — a σ that ranks correctly but is mis-scaled can
+be fixed with a single multiplier. Coverage being wrong in a *shape*-dependent way cannot.
+
+#### The measurement
+
+Robot stationary (the tape describes a static scene, so motion would invalidate it), **15 frames
+averaged**, **11 tape points from 0.33 m to 3.36 m**: the 8 new bold markers plus 3 older thin
+ones proven undisturbed by cross-session drift under 3 mm.
+
+| # | tape | `/depth` | error | σ | \|err\|/σ | |
+|---|---|---|---|---|---|---|
+| new 3 | 0.33 m | 0.33 | **−0.007** | 0.048 | 0.14 | ✅ |
+| new 2 | 1.70 m | 1.71 | **+0.004** | 0.157 | 0.03 | ✅ |
+| old 3 | 1.66 m | 1.65 | **−0.006** | 0.152 | 0.04 | ✅ |
+| old 2 | 0.76 m | 0.75 | −0.012 | 0.145 | 0.08 | ✅ |
+| old 6 | 0.72 m | 0.68 | −0.044 | 0.139 | 0.32 | ✅ |
+| new 4 | 2.10 m | 2.02 | −0.081 | 0.850 | 0.10 | ✅ |
+| new 6 | 3.03 m | 2.91 | −0.124 | 2.908 | 0.04 | ✅ |
+| new 8 | 3.36 m | 1.85 | −1.518 | 1.844 | 0.82 | ✅ |
+| new 7 | 3.18 m | 2.11 | −1.071 | 2.103 | 0.51 | ✅ |
+| **new 1** | 0.74 m | 1.20 | **+0.469** | 0.230 | **2.04** | ❌ |
+| **new 5** | 2.89 m | 0.34 | **−2.548** | 0.660 | **3.86** | ❌ |
+
+```
+median |err|  0.081 m     MAE 0.535 m (four hard cases carry it)
+rank corr     +0.655      Pearson +0.281
+coverage @1σ  0.818       coverage @2σ  0.818
+```
+
+#### What works
+
+**σ correctly flags the out-of-cone markers.** Markers 7 and 8 sit above the ToF's vertical
+cone, where the pipeline has no anchor and must extrapolate. It is wrong by **1.07 m and
+1.52 m** there — and reports σ of **2.10 and 1.84**, so both fall inside 1σ. The system knows it
+is guessing. This is the first confirmation of that behaviour against real ground truth.
+
+**Ordering is decent: rank correlation +0.655.** σ is usable today for "trust this pixel more
+than that one," which is the property planning actually needs.
+
+**On clean in-cone points the pipeline is good** — seven of eleven land within 12 cm, four of
+them within 1.2 cm, across 0.33 m to 3.03 m.
+
+#### What fails — three distinct problems
+
+**1. σ is not calibrated, and the shape is the tell.** Coverage is **0.818 at 1σ and 0.818 at
+2σ — identical**. Every point that escapes 1σ also escapes 2σ; there is nothing in between. σ is
+far too wide on the easy points (seven of eleven have \|err\|/σ below 0.35, one as low as 0.03)
+and far too narrow on the failures. **A single scale factor cannot fix this** — the distribution
+has the wrong shape, not the wrong size.
+
+**2. The blind spot is mixed returns — the failure that matters most.** Marker 5 is off by
+**2.55 m with σ of only 0.66** (3.9σ). Its ToF zone straddles a bottle 0.33 m away while the
+marker itself is on a banner 2.89 m back, and the near surface wins. **"Far surface with a near
+object in front of it" is the definition of an obstacle**, so this is precisely the case a
+ground robot cannot afford to be confident about — and σ is.
+
+**3. The two axes are treated differently.** Marker 1 sits at −47.8° horizontally, outside the
+±36.75° cone, is wrong by 0.47 m, and reports σ of just **0.23** (2.0σ). Markers outside the
+cone *vertically* reported σ above 1.8 for comparable errors. Same geometric situation, an
+order of magnitude different confidence.
+
+> **And at marker 1, fusion makes a correct reading worse.** The ToF zone there reads **0.72 m**
+> against a **0.736 m** tape — essentially exact. The fused `/depth` says **1.20 m**. This is the
+> third independent sighting of the out-of-cone problem, after old marker #1 at −43° and v7's
+> regression at the same spot. It is no longer a single data point.
+
+One more signal going unused: marker 7's estimate varies **256 mm frame to frame** against a
+32 mm average across the set. Frame-to-frame instability is itself strong evidence of an
+unreliable pixel, and σ does not currently capture it.
+
+Data: [`live4_sigma_2026-08-04.json`](../docs/demo/benchmarks/live4_sigma_2026-08-04.json).
+n = 11 — enough to identify failure modes, not enough to certify a fix.
+
+### σ, fixed — three terms the blend already knew, 2026-08-04
+
+All three failures above are visible inside Stage 7c, and all three were being discarded.
+`blend.sigma_support_var` adds them, combined in quadrature with the existing analytic +
+learned variance (they only ever add uncertainty):
+
+| term | what it is | which failure |
+|---|---|---|
+| **disagreement** | `w · \|D_tof − D_net\|` — how far the blend moves the depth | mixed returns |
+| **support** | `frac · D · (angle_to_nearest_anchor − far_deg)/far_deg` | angle asymmetry |
+| **spread** | `w · \|D_tof − local_mean(D_tof)\|` — is this zone the odd one out? | mixed returns |
+
+**Result on the same 11 tape points:**
+
+| | before | after |
+|---|---|---|
+| rank corr(σ, \|err\|) | +0.655 | **+0.745** |
+| points failing 1σ | 2 | **1** |
+| worst failure | 3.86σ | **2.30σ** |
+| marker 1, out-of-cone horizontally | 2.04σ ❌ | **0.38σ** ✅ |
+| coverage @1σ | 0.818 | 0.909 |
+
+**Cost: 0.80 ms.** Measured by an offline A/B — one logged frame, same engines, 25 iterations,
+per-stage timings, terms on vs constants zeroed: **82.10 vs 81.29 ms**. Deployed rate 9.35 Hz,
+still above the ToF's 8.3 Hz floor.
+
+#### Three things learned the hard way
+
+**Step 4 — "re-fit the σ scale" — turned out to be impossible, and that is the finding.**
+Sweeping a single multiplier over the measured errors:
+
+| scale | coverage @1σ | worst point |
+|---|---|---|
+| 0.37 | 0.727 ✅ | **6.23σ** ❌ |
+| 1.00 | 0.909 | 2.30σ |
+| 2.50 | 1.000 | 0.92σ ✅ |
+
+The errors are heavy-tailed — most points far inside, one far outside — so no multiplier serves
+both ends. **Coverage got worse (0.818 → 0.909) precisely because the dangerous case is now
+covered**, which is the right trade for a robot. Fixing coverage properly needs a heavier-tailed
+model, not a constant.
+
+**ToF-vs-network disagreement alone was not enough.** The first attempt used only that term and
+moved the mixed-return marker from 3.9σ to 2.6σ. The reason it stalled: at that marker the
+*network* is also wrong (it reads ~1.06 m against a 2.89 m tape), so the two sources agree with
+each other while both being wrong. Zone-to-zone spread does not have that weakness — it needs no
+opinion from the network at all.
+
+**`max − min` over a window was the wrong spread statistic.** It fires on any pixel merely *near*
+an edge, which in a cluttered scene is most of the frame — it took a correct 2.02 m reading from
+σ 0.97 to 2.72. Deviation of a zone from its local mean asks the right question: *is this zone
+the odd one out?* And the first window was 3 reduced cells = 12 px, **smaller than one ToF zone
+(~17.7 px)**, so it could not see two zones disagree at all — it passed a synthetic test only
+because those anchors happened to be 20 px apart.
+
+#### Still open
+
+- **The mixed-return marker still fails at 2.30σ** (was 3.86σ). Its neighbourhood is roughly
+  half-covered by the intruding bottle, so the zone is not a strong local outlier.
+- **Frame-to-frame variance is not implemented.** Marker 7 varies 231 mm between frames against a
+  29 mm average — real information, but it needs temporal state in the node.
+- **n = 11, and three constants were tuned against those 11 points.** Overfitting risk is real;
+  treat the constants as provisional until a larger session.
+- The deployed rate was re-measured **in the dark**; worth re-confirming lit.
+
+> **A measurement caveat worth recording.** The first post-change rate readings were 6.7 Hz and
+> looked like a catastrophic regression. The cause was a `tof_overlay.py` diagnostic node left
+> running for 2h40m at 109 % CPU — and killing it was not enough, the perception node needed a
+> restart to recover. **Check what else is on the machine before trusting a rate number**, and do
+> not leave diagnostic nodes running.
+
+Data: [`live4_sigma_after_2026-08-04.json`](../docs/demo/benchmarks/live4_sigma_after_2026-08-04.json).
 
 ### Re-run results — where the correction actually landed
 

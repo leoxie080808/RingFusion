@@ -22,7 +22,7 @@ from . import anchoring as anc
 from . import gpu_ops
 from . import blend as blend_mod
 from . import roi
-from .blend import blend_depth
+from .blend import blend_depth, sigma_support_var as blend_sigma_var
 from .residual import MAX_DEPTH_M
 
 # Sigma floor outside the ROI, as a fraction of depth. 1.0 = "100% relative uncertainty",
@@ -233,8 +233,19 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
     if blend:
         Kf = np.asarray(K, np.float64).ravel()
         fx = Kf[0] if Kf.size == 4 else Kf.reshape(3, 3)[0, 0]
-        metric, _ = blend_depth(metric, anchor_depth, anchor_mask, fx=float(fx),
-                                near_deg=blend_near, far_deg=blend_far)
+        D_pre_blend = metric
+        metric, _, bfields = blend_depth(metric, anchor_depth, anchor_mask, fx=float(fx),
+                                         near_deg=blend_near, far_deg=blend_far,
+                                         return_fields=True)
+        # Stage 7c-sigma -- the two terms LIVE-4 (2026-08-04) showed were missing. The
+        # blend already knows how far it moved the depth and how far away the nearest
+        # anchor is; both were discarded. See blend.sigma_support_var for the measurements
+        # that motivate each. Uses the PRE-blend network depth, because the question is how
+        # much the two sources disagreed, and post-blend depth has already absorbed one.
+        if var is not None and bfields is not None:
+            dist_r, tof_r, bscale = bfields
+            var = var + blend_sigma_var(D_pre_blend, dist_r, tof_r, bscale, float(fx),
+                                        near_deg=blend_near, far_deg=blend_far)
 
     _t('7c_blend')
 
