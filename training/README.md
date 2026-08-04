@@ -151,9 +151,18 @@ so supervising there teaches the identity. Instead each frame's valid zones are 
 an **anchor set** drives the fit + feeds the net (exactly as the robot runs), and a
 disjoint **hold-out set** becomes a sparse target at pixels the net had *no* input for.
 That's true generalization signal, in-environment, real error stats. (`build_real_supervision`
-guarantees the two sets are pixel-disjoint — no target leakage.) The ToF FOV (~61°×45°)
+guarantees the two sets are pixel-disjoint — no target leakage.) The ToF FOV (~73.5°×60.5°)
 is narrower than the fisheye, so the periphery gets no supervision and B safely stays
 identity there — acceptable, since that's exactly where it has no information anyway.
+
+> ⚠ **Network B must be re-trained (2026-08-03).** `build_real_supervision` places anchors
+> via `geo.zone_directions(cols, rows, calib['fov_h'], calib['fov_v'])`, and every existing
+> checkpoint was trained with `fov_h` at 45° — a value tape measurement has since put at
+> **73.5°**. Two of B's four inputs, `anchor_depth` and `anchor_mask`, are now generated
+> differently at inference than they were in training: a train/deploy mismatch, not just a
+> stale number. Also update `anchoring_bridge.default_calib`, which still defaults to
+> `tof_fov=(61.0, 45.0)`. See
+> [`ros2_ws/README.md`](../ros2_ws/README.md#tof-field-of-view-measured-against-tape).
 
 Capture format (matched by stem; produced by the paired ToF+image logger):
 ```

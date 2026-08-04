@@ -61,13 +61,18 @@ The uncertainty channel — previously saturated and *most confident where it wa
 wrong* — now tracks actual error at **ρ 0.943**, and σ is small at the anchors (0.078 m)
 while staying large where the net extrapolates. That is the correct shape.
 
-**What is still not trustworthy.** The ToF only covers **7.5% of the frame**, so the other
-92.5% of every depth map is monocular extrapolation carrying the affine fit — a geometry
+**What is still not trustworthy.** The ToF covers **12.4% of the frame**, so the other
+87.6% of every depth map is monocular extrapolation carrying the affine fit — a geometry
 limit, not a bug, but it bounds what can be believed. Every number in this file is also
 **scored against the ToF we anchor to**, a closed loop that cannot detect a ToF bias and
-says nothing about the 92.5%; independent tape ground truth is
-[planned](../docs/VALIDATION_PLAN.md) and not yet collected. Design details live in
+says nothing about the 87.6%. Design details live in
 `RingFusion_technical_reference_updateP2.md`.
+
+> ⚠ **Every benchmark below predates the 2026-08-03 ToF field-of-view correction** — see
+> [ToF field of view, measured against tape](#tof-field-of-view-measured-against-tape).
+> The horizontal FOV was wrong by a factor of ~1.6, so anchors were paired with the wrong
+> disparities in every fit. The numbers below are not wrong *as recorded*, but they describe
+> a rig that no longer exists. See [what needs re-running](#what-needs-re-running).
 
 ## Reading the benchmarks — what each one asks, and what it answered
 
@@ -85,7 +90,234 @@ key to the rest.
 | **Held-out re-distill** | Were the absolute numbers inflated because Network A trained on the eval set? | held-out ToF zones, on 200 frames Network A never saw | **Yes, by ~5 %.** Rankings unchanged. Numbers now clean. |
 | **Timing** | Does it run in real time, and how does that compare fairly? | wall clock on this Orin | **10.4 Hz measured on the robot**, 14.1 Hz for `pipeline.run()` alone, both at 1640×1232 with every stage on; **3.1× faster than DEPTHOR-Small** at their resolution, our whole pipeline against their network alone. |
 | **Blend A/B, driving** | Does Stage 7c help on a *moving* robot, or only on saved frames? | held-out ToF zones, 600 frames | **5.4 % better MAE against 5.8 % predicted offline.** It improves the tail, not the median. No added flicker. |
-| **Tape ground truth** | Is the **ToF itself** right? | a tape measure | ⬜ **NOT DONE.** The one thing nothing else can substitute for. |
+| **Tape ground truth** | Is the **ToF itself** right? | a tape measure | ✅ **Pilot done 2026-08-03, and it found a calibration error.** The ToF is accurate (1 cm) but its horizontal field of view was wrong by 1.6×, so readings were attributed to the wrong pixels. Correcting it cut pipeline MAE **0.427 → 0.192 m** and the median error **9.8×**. See below. |
+
+### ToF field of view, measured against tape
+
+The first open-loop measurement in this project immediately found something no
+ToF-scored benchmark could see: **`fov_h` was 45.0° and the real value is ~73.5°.**
+
+Seven markers were placed spanning −43° to +48° off the optical axis and hand-measured with
+a tape. Scoring by *direction lookup* — for each marker, ask which ToF zone points that way
+and compare that zone's reading to the tape — gives:
+
+| | fov_h 45.0° | **fov_h 73.5°** |
+|---|---|---|
+| MAE, ToF zone vs tape | 0.472 m | **0.010 m** |
+| markers the cone reaches | 3 of 7 | 5 of 7 |
+
+The clearest single case is the marker on the red pole at +8.1°, tape **2.03 m**. At 45° the
+direction lookup lands on zone (10,21), which reads **0.64 m** — that is the water bottle, a
+different object. At 73.5° it lands on (10,19), reading **2.03 m**.
+
+**End-to-end effect.** Same scene, same markers, same tape numbers, only the config changed:
+
+| # | on | tape | before | after |
+|---|---|---|---|---|
+| 1 | wall, −43° | 1.80 | −0.43 | −0.33 |
+| 2 | yellow discs, −33° | 0.76 | +0.75 | **−0.01** |
+| 3 | white barrier, −0.5° | 1.66 | −0.01 | −0.01 |
+| 4 | red pole, +8° | 2.03 | +0.75 | +0.78 |
+| 5 | water bottle, +12° | 0.63 | +0.79 | **−0.01** |
+| 6 | blue block, +36° | 0.72 | +0.10 | **−0.02** |
+| 7 | red stool, +48° | 0.89 | −0.16 | −0.19 |
+
+| | before | after |
+|---|---|---|
+| **all 7** | 0.427 m | **0.193 m** |
+| **inside the ToF cone** | 0.479 m | **0.166 m** (2.9×) |
+| outside the cone | 0.297 m | 0.260 m |
+
+**How well pinned:** anything in **66–82°** scores ~1 cm, because the outer markers span
+several ToF columns. Above 84° is excluded. 73.5° sits mid-band. `fov_v` is **not**
+independently confirmed — every marker sat within −10..+9° vertically.
+
+**What the correction does not fix.** #4 (the red pole) is unchanged at +0.78 m. Its own zone
+reads 2.03 m correctly, but neighbouring zones see the banner 2.78 m behind and the mix wins.
+That is a thin-object partial-fill failure, not a calibration one. #1 and #7 sit outside the
+cone even at 73.5° and remain monocular extrapolation.
+
+**σ did not improve.** At #3 it reports 0.649 m for a 7 mm error; at #1, 0.094 m for a 0.335 m
+error. Still uncorrelated with actual error — see the σ discussion below.
+
+Data: [`docs/demo/benchmarks/live3_pilot_2026-08-03.json`](../docs/demo/benchmarks/live3_pilot_2026-08-03.json).
+Pilot scale — 14 tape points over two sessions, 0.39–2.03 m, no far field. Directional, not
+a certified number.
+
+### What needs re-running
+
+The FOV controls **where each ToF zone lands in the image**. Anything downstream of that is
+invalidated; anything that never touches it is fine. The raw logs are all still good — no
+data needs re-collecting, only re-processing.
+
+**Tier 1 — re-score offline. Cheap, no retraining, do first.**
+
+Every evaluation scored at ToF zone locations, because the zones moved:
+
+| file | what it is |
+|---|---|
+| `baselines.json`, `baselines_valsplit.json` | B1–B5 baseline table |
+| `score_v3_last`, `score_v4_*`, `score_v5_*` | residual scoring, all protocols |
+| `heldout_v4.json`, `heldout_v4_bothclean.json` | the clean re-distill numbers |
+| `ceiling_ours.json` | ceiling analysis |
+
+The `insample` / `random` / `center` hold-out protocols all pick zones and score there, so
+every number in [Reading the benchmarks](#reading-the-benchmarks--what-each-one-asks-and-what-it-answered)
+that judges "against ToF zones" moves.
+
+**Tier 2 — retrain. This is the expensive one.**
+
+**Network B (the residual) must be re-trained.** [`train_residual.py`](../training/train_residual.py)
+builds its supervision through `anchoring_bridge.build_real_supervision`, which calls
+`geo.zone_directions(cols, rows, calib['fov_h'], calib['fov_v'])` — so `anchor_depth` and
+`anchor_mask`, two of its four inputs, were generated at 45°. It now receives anchors placed
+at 73.5° at inference. That is a **train/deploy mismatch**, not just a stale number, and it
+applies to the variance head too — which may be part of why σ is uninformative.
+
+> Note: `anchoring_bridge.default_calib` still defaults to `tof_fov=(61.0, 45.0)`, the old
+> reversed guess. It only affects synthetic/non-`--real` runs, but it should be updated.
+
+**Tier 3 — re-measure on the robot.**
+
+- **Blend A/B** (`blend_ab_live.json`) — the blend acts near anchors, and the anchors moved.
+- **LIVE-3 / LIVE-4 proper.** Now worth doing: the pilot was measuring a rig with a broken
+  extrinsic. A full session should wait for the marker redesign (see below) so the far field
+  is reachable.
+
+**Tier 4 — unaffected. Do not re-run.**
+
+- **ZJU-L5** (`zjul5_*.json`) and the **DEPTHOR head-to-head** (`depthor_*.json`) — external
+  datasets with their own rigs and dense RealSense GT. `calibration.yaml` never enters.
+  These stay valid, which matters: they are the comparisons against published work.
+- **Camera intrinsics** — a separate calibration, untouched.
+- **Timing / throughput** (`profile_node_*`, `rate_live_*`, `timing_*`) — stage structure is
+  unchanged. The ToF box is larger so blend and ROI cover more area; worth one cheap
+  confirmation run, but no result is expected to move much.
+
+**Not a benchmark, but blocking a real LIVE-3:** the printed markers are unreadable past
+~2 m. The X stroke is 1.43 mm, sub-pixel beyond 0.5 m, and the border is 0.25 mm, invisible
+everywhere — so four-corner clicking never works and the 3–4.5 m band cannot be measured at
+all. `make_markers.py` needs a pattern whose features scale with the marker (a 2×2
+checkerboard) before the far field is reachable.
+
+### Re-run results — where the correction actually landed
+
+Done 2026-08-03/04. Every config was run **twice with everything else identical**, so each
+delta isolates one change. 1,234 recorded frames, no new data collected.
+
+**Stage 1 — calibration only** (`fov_h` 45.0 → 73.5, residual untouched):
+
+| method | before | after | |
+|---|---|---|---|
+| **B4 affine** (2-param fit, no learning) | 0.068 m | **0.055 m** | −19 % |
+| B1 nearest-zone | 0.010 m | 0.018 m | worse |
+| B5 ringfusion (`center`) | 0.047 m | 0.055 m | worse |
+
+The geometry improved and everything else got worse, for two separate reasons. **B4 improves**
+because anchors now span a wider field, so the 2-parameter fit is better conditioned.
+**B1/B2/B6 degrade** because the same 1,024 zones now cover 12.4 % of the frame instead of
+7 % — anchors are *sparser per unit image area*, so local interpolation has a harder job.
+That is a harder task, not a regression. **B5 degrades** because Network B was trained against
+anchors at the old projection: a train/deploy mismatch.
+
+**Stage 2 — retrain Network B** on the re-projected supervision (`residual_v6_fov73`, same
+architecture at 463,971 params, same hyperparameters, 40 epochs):
+
+| medAE, 1234 frames | before | after |
+|---|---|---|
+| B4 affine, `random` | 0.068 m | **0.055 m** |
+| **B5 ringfusion, `random`** | **0.101 m** | **0.050 m** |
+| B5 ringfusion, `center` | 0.047 m | **0.045 m** |
+| B6 blend, `center` | 0.043 m | **0.042 m** |
+
+**The finding that matters is not the size of the gain — it is a sign flip.** Network B's whole
+justification is that B5 beats B4. On the `random` protocol it did not:
+
+```
+BEFORE:  B5 0.101  vs  B4 0.068   ->  the 0.46M network HURT by 0.033 m
+AFTER :  B5 0.050  vs  B4 0.055   ->  it HELPS by 0.005 m
+```
+
+A 463,971-parameter refiner was making depth **48 % worse** than the 2-parameter closed form
+it exists to improve, on the interpolation regime, and shipped that way. It had learned to
+correct a fit against supervision that did not line up with the image. On `center` — the
+extrapolation protocol that reflects deployment — B5 always helped, so the architecture's
+core claim was never wrong; it was being undermined near the anchors.
+
+Training also improved on its own terms: best val NLL **−0.1183** vs v4's −0.1055, and it was
+**still improving at epoch 39** where v4 had plateaued — 40 epochs may now be under-trained.
+
+> **These are all ToF-scored, and the ToF projection is exactly what changed** — anchors and
+> evaluation targets moved together, so this is a closed loop and cannot certify the
+> improvement. The non-circular evidence is the tape: **0.427 → 0.193 m**, measured before
+> the retrain.
+
+Files: `baselines.json`, `baselines_valsplit.json`, `heldout_v6.json` hold the deployed
+configuration. `*_pre_fov_fix.json` are the originals; `*_fov73_residualv4.json` are the
+intermediate stage-1 runs. Training log: `train_v6_fov73.log`.
+
+**RMSE moves the same way**, which matters because it is tail-sensitive — a gain that only
+improved the median while growing outliers would show up here as a regression:
+
+| | before | after | |
+|---|---|---|---|
+| **tape, 7 markers** (non-circular) | 0.530 m | **0.321 m** | −39 % |
+| B5 ringfusion, `random` | 0.895 m | **0.413 m** | −54 % |
+| B5 ringfusion, `center` | 0.503 m | **0.451 m** | −10 % |
+| B6 blend, `center` | 0.486 m | **0.439 m** | −10 % |
+
+Max error is the exception: 0.788 → 0.774 m, essentially unchanged, because it is marker #4
+(the thin pole) which neither fix addresses.
+
+#### Deployed system vs tape — the headline table
+
+Same seven markers, same tape numbers, scene never moved. Old = `fov_h 45.0 +
+residual_v4_last`. New = `fov_h 73.5 + residual_v6_fov73`, what is running now.
+
+| # | marker | **measured (tape)** | old system | old err | **new system** | **new err** | change |
+|---|---|---|---|---|---|---|---|
+| 1 | leftmost wall, −43° | 1.80 m | 1.37 m | −0.43 | **1.60 m** | **−0.20** | −0.23 ✅ |
+| 2 | yellow discs, −33° | 0.76 m | 1.51 m | +0.75 | **0.75 m** | **−0.01** | −0.74 ✅ |
+| 3 | white barrier, −0.5° | 1.66 m | 1.65 m | −0.01 | 1.64 m | −0.02 | +0.01 — |
+| 4 | red pole, +8° | 2.03 m | 2.78 m | +0.75 | 2.80 m | +0.77 | +0.03 ❌ |
+| 5 | water bottle, +12° | 0.63 m | 1.42 m | +0.79 | **0.61 m** | **−0.02** | −0.77 ✅ |
+| 6 | blue block, +36° | 0.72 m | 0.82 m | +0.10 | **0.68 m** | **−0.04** | −0.06 ✅ |
+| 7 | red stool, +48° | 0.89 m | 0.73 m | −0.16 | 1.17 m | +0.28 | +0.12 ❌ |
+
+| | old | new | |
+|---|---|---|---|
+| **MAE** | 0.427 m | **0.192 m** | −2.2× |
+| **median \|err\|** | 0.431 m | **0.044 m** | **−9.8×** |
+| **RMSE** | 0.530 m | **0.321 m** | −1.7× |
+| max \|err\| | 0.788 m | 0.774 m | unchanged |
+
+Four of seven markers went from 0.10–0.79 m of error to **within 4 cm**. The median moves
+~10× and the mean only 2.2×, because two markers still carry large errors: **#4** (thin pole,
+partial fill — untouched by either fix) and **#7** (outside the cone at +48°, unsupported
+extrapolation, and it got worse). Max error is unchanged for the same reason.
+
+> **Almost all of this came from the calibration, not the retrain.** Calibration alone gave
+> 0.427 → 0.193 m; adding the retrained Network B gave 0.193 → **0.192 m**, i.e. nothing.
+> The retrain is a large win on the ToF-scored benchmarks (B5 medAE halved) and ~zero against
+> independent ground truth. That gap is the entire argument for tape measurement.
+
+**σ became informative for the first time.** `corr(|error|, σ)` rose from **+0.14 to +0.755**
+with the retrain. Still uncalibrated — 19× too wide at #3, 3× too narrow at #7 — but the
+*ordering* is now broadly right, which it never was. n=7, so this is a lead for LIVE-4 rather
+than a result.
+
+**Throughput is unaffected — measured, not assumed** (`rate_live_fov73_v6.json`):
+
+| | before | after |
+|---|---|---|
+| `/depth` | 10.37 Hz | **10.31 Hz** |
+| `/cloud` | 10.37 Hz | 10.28 Hz |
+| latency | 128.5 ms | 132.9 ms |
+
+Within noise. The residual is the same architecture and engine size, and the wider footprint
+puts more anchors in frame without changing the stage structure. **The timing session does not
+need re-running.** The blend A/B *does* — it acts near anchors, the anchors moved, and there
+are now more of them in frame.
 
 ### What "good" looks like for each one
 
@@ -117,7 +349,7 @@ imprecise, it was optimistic in a way that hid a failed target.
 ### The single most important thing to understand
 
 **Six of those seven score against the ToF we anchor to.** That is a closed loop: it cannot
-detect a bias in the ToF, and it says nothing about the 92.5 % of the frame the ToF never sees.
+detect a bias in the ToF, and it says nothing about the 87.6 % of the frame the ToF never sees.
 Only ZJU-L5 (and, when it exists, the tape) breaks that loop.
 
 This is why `random` and `center` disagree about whether the neural stack is worth having, and
@@ -232,7 +464,7 @@ Median error by angular distance from the nearest anchor, `center` protocol:
 > path does not, and that flatness *is* the argument for having a camera at all.
 
 Nearest-neighbour degrades **9×** across the range; the camera path is **flat**. They
-cross at 3–6°, and past 10° the camera wins 3–5×. Since the ToF covers 7.5 % of the frame
+cross at 3–6°, and past 10° the camera wins 3–5×. Since the ToF covers 12.4 % of the frame
 and the rest is far outside 30°, the right-hand columns are the ones that predict
 deployment behaviour. This is the first direct measurement of that claim.
 
@@ -338,7 +570,7 @@ correction bolted on to compensate for a weak network** — it is the part of th
 decides *which source to believe where*, and it is meant to stay.
 
 The system has two estimators with opposite failure modes. The ToF measures true distance but only
-at ~1024 points covering 7 % of the frame. The network covers every pixel but knows only
+at ~1024 points covering 12.4 % of the frame. The network covers every pixel but knows only
 relative geometry and inherits whatever the affine fit gets wrong. Neither is right everywhere,
 so something has to arbitrate — and doing that by distance to the nearest real measurement is
 the principled rule, not a heuristic.
@@ -466,7 +698,7 @@ mirrored or transposed grid would recur.
 | | ZJU-L5 | ours |
 |---|---|---|
 | zones | 8×8, median **41 valid**/frame | 32×32, ~830 valid |
-| frame coverage | **~50 %** (zones tile it) | 7.5 % |
+| frame coverage | **~50 %** (zones tile it) | 12.4 % |
 | depth range | 0.33–3.24 m | 0.15–6.5 m |
 | ground truth | dense, RealSense 435i | sparse, the same ToF we anchor to |
 
@@ -929,8 +1161,8 @@ problem. Temporal fusion is the only candidate that acquires the missing informa
   to 0.15 improved accuracy, so the optimum is probably lower still. Sweep it.
 - **The v2→v3 win is not attributable** — v3 changed the geometry *and* the structure weight
   together. A control run at `--struct-weight 0.3` on corrected geometry would separate them.
-- **ToF covers only 7.5% of the frame** — the 32×32 zone grid projects into a 447×340 px box
-  in the middle of the 1640×1232 rectified image. The remaining 92.5% has no metric support,
+- **ToF covers only 12.4 % of the frame** — the 32×32 zone grid projects into a 567×443 px box
+  in the middle of the 1640×1232 rectified image. The remaining 87.6% has no metric support,
   so it is monocular extrapolation carrying the affine fit. This is a **geometry/FOV
   limitation, not a bug**, but it bounds how much of the depth map can be believed.
 - **Checkpoint selection is noisy** — `--val-frac` defaults to 0.05, i.e. ~62 samples against
@@ -950,7 +1182,7 @@ problem. Temporal fusion is the only candidate that acquires the missing informa
 
   | Limitation | Consequence measured on-robot |
   |---|---|
-  | hold-out is ~175 zones/frame, all inside the **7.5% ToF box** | 92.5% of each frame is never supervised → far field runs free |
+  | hold-out is ~175 zones/frame, all inside the **12.4% ToF box** | 87.6% of each frame is never supervised → far field runs free |
   | `max_range = 5.0 m` gate | B has **never seen a target beyond 5 m** → 6.29 m and 20 m-clamp pixels are pure extrapolation |
   | `min_range = 0.15 m` gate | near floor below 15 cm unsupervised → ground-plane under-read |
   | targets land on the **13 px anchor lattice** | plausibly the 13 px component B injects and A lacks |
@@ -984,7 +1216,7 @@ problem. Temporal fusion is the only candidate that acquires the missing informa
 | 8c | ~~Fix the ToF↔camera projection~~ | — | **DONE 2026-07-28** — mirror + FOV swap; ρ 0.737 → 0.917 |
 | 8d | **Sweep `--struct-weight` below 0.15 + control run at 0.3 on fixed geometry** ← **you are here** | 8b, 8c | v3 still only deviates 0.019 m from A; and its win confounds two changes |
 | 8e | Widen `--val-frac`, then recalibrate σ | 8d | ~62 val samples is too few to select on; coverage 0.590 vs 0.683 ideal |
-| 9 | Ground-truth collection (synthetic/LiDAR/OAK-D) | — | only for the 92.5% outside the ToF box; **not** a prerequisite for 7–8 |
+| 9 | Ground-truth collection (synthetic/LiDAR/OAK-D) | — | only for the 87.6 % outside the ToF box; **not** a prerequisite for 7–8 |
 | 10 | ~~Re-test on a non-repeating scene to separate texture banding from anchor-pitch artefacts~~ | — | **DONE** (two-scene control, below — both effects confirmed and separated) |
 | 11 | Re-distill Network A on the full ~15–20k set | 2 | now known **not** to be the bottleneck — the 0.75 teacher ceiling was a projection artefact |
 
@@ -1726,7 +1958,7 @@ breaks halfway through costs the whole session and the room has to be booked aga
 - [`tape_eval.py`](../tools/diagnostics/tape_eval.py) — compares the two and reports the
   score **split by whether the point was inside the ToF's field of view or outside it**.
 
-That split is the whole point. The ToF only covers 7.5% of the image; the other 92.5% is the
+That split is the whole point. The ToF only covers 12.4% of the image; the other 87.6% is the
 camera guessing, stretched to fit the ToF's calibration. Nothing so far tells us how good
 that guess is. **A large gap between inside and outside is a genuine result worth publishing,
 not a failure** — it would put a number on a limitation this file currently only describes in
@@ -1859,7 +2091,7 @@ Changes made:
 | # | Change | File |
 |---|---|---|
 | 1 | `MIRROR_COLUMNS = True` — `np.fliplr` on the assembled map, so `/tof` is correct for *every* consumer | `ringfusion_drivers/tof_source.py` |
-| 2 | `fov_h_deg` 61→**45**, `fov_v_deg` 45→**61**; stale `cols: 48`→32 | `ringfusion_bringup/config/calibration.yaml` |
+| 2 | `fov_h_deg` 61→**45**, `fov_v_deg` 45→**61**; stale `cols: 48`→32 *(the FOV half of this was superseded 2026-08-03 — see [ToF field of view, measured against tape](#tof-field-of-view-measured-against-tape). The column mirror stands.)* | `ringfusion_bringup/config/calibration.yaml` |
 | 3 | One-time migration of the 1234 pre-fix paired logs (backed up, idempotent) | `tools/migrate_tof_logs.py` |
 
 **No new data collection was needed.** `paired_logger` stores the *raw* 32×32 ToF map plus the
@@ -1988,6 +2220,8 @@ separately measures ρ 0.917. The backbone was never the bottleneck.
 2. `calibration.yaml` — `fov_h_deg: 45.0`, `fov_v_deg: 61.0` (currently 61.0 / 45.0).
    Also `tof.cols: 48` is stale; the flashed mode is 32×32 (harmless — the live packet
    overrides it — but misleading).
+   > **Superseded 2026-08-03.** The 45.0 here was still wrong; tape measurement puts
+   > `fov_h` at **73.5°**. See [ToF field of view, measured against tape](#tof-field-of-view-measured-against-tape).
 
 **Consequence: Network B must be retrained after this.** B was trained on logged data pushed
 through the *same* broken projection (`anchoring_bridge` reuses the deployed geometry), so its
@@ -2091,8 +2325,8 @@ Mean \|B−A\| **0.264 m**, max \|B−A\| **14.4 m**. B/A ratio: median 1.27×, 
 
 **Three findings.**
 
-1. **ToF footprint is small.** The 32×32 grid projects into a **447×340 px box** (x 616–1063,
-   y 395–735) — **7.5% of the frame**. Everything else is monocular extrapolation. Depth
+1. **ToF footprint is small.** The 32×32 grid projects into a **567×443 px box** (x 616–1063,
+   y 395–735) — **12.4 % of the frame**. Everything else is monocular extrapolation. Depth
    outside that box should not be treated as metric.
 2. **B's far field is unbounded.** B drives 0.30% of pixels past 5 m and reaches the 20 m
    clamp in a room the ToF measures at ≤2.80 m. Because the residual is a *log-ratio*

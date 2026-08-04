@@ -28,14 +28,25 @@ rectify:
   fov_scale: 1.0      # >1 zooms in (narrower FOV, less extreme edge stretch)
 
 tof:
-  # Measured 2026-07-28, NOT the datasheet 4:3 assumption. The old 61 h / 45 v was a
-  # guess ("~80 deg diagonal -> ~61 h at 4:3") and had the axes backwards: the module
-  # sees TALLER than it is wide. Found by sweeping the projection and scoring each
-  # candidate by how well backbone disparity tracks true inverse depth at the projected
-  # anchors -- rho 0.879 at 61x45 vs 0.914 at 45x61 (both with the column mirror fixed
-  # in tof_source.MIRROR_COLUMNS). Anchor MAE 0.319 -> 0.252 m overall.
-  fov_h_deg: 45.0
-  fov_v_deg: 61.0
+  # Measured 2026-08-03 against TAPE ground truth -- seven markers spanning -43 to +48 deg
+  # off axis, each at a hand-measured distance. Scored by direction lookup: for each marker
+  # ask which zone points that way (invert zone_directions) and compare that zone's reading
+  # to the tape. MAE 0.010 m at these values.
+  #
+  # The clearest single case is the marker on the red pole at +8.1 deg, tape 2.03 m: the
+  # zone pointing that way reads 2.03 m.
+  #
+  # HOW WELL PINNED: anything in 66-82 deg scores ~1 cm, because the outer markers span
+  # several ToF columns and neighbouring FOV values pick columns that read the same thing.
+  # Above 84 deg is excluded (the -43 deg marker comes on-grid and reads badly). 73.5 sits
+  # mid-band. Narrowing it further needs small targets at more distinct angles.
+  #
+  # fov_v is NOT independently confirmed -- every marker in that session sat within
+  # -10..+9 deg vertically, so there is almost no leverage on the vertical angle.
+  #
+  # The footprint is 567 x 443 px, 12.4% of the 1640x1232 frame.
+  fov_h_deg: 73.5
+  fov_v_deg: 60.5
   # cols/rows come from the live packet; these are defaults for offline tests.
   # The flashed focal-plane mode is 32x32 (CMD_LOAD_CFG_32X32), so cols is 32 -- the
   # old 48 was stale and only ever showed up in offline tests.

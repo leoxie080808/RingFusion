@@ -53,7 +53,7 @@ ESP32-C6 ──▶ TMF8829 32×32 ToF ──▶ project zones to pixels ──�
 ```
 
 **Network A** predicts *relative* disparity — good structure, no scale. **The ToF** supplies
-scale but only 1024 sparse zones covering **7.5 % of the frame**. A robust 2-parameter fit
+scale but only 1024 sparse zones covering **12.4 % of the frame**. A robust 2-parameter fit
 maps disparity → inverse depth using those zones as anchors; that step is pure geometry and
 has no learned parameters, so the system produces valid metric depth even with Network B
 switched off. **Network B** then applies a learned per-pixel correction plus a variance
@@ -145,7 +145,7 @@ measurement,
 | RingFusion v3 | 0.064 | 0.073 | 0.078 | **0.062** | **0.047** |
 
 Nearest-neighbour degrades **9×** as it leaves the measurements; the camera path stays flat
-and wins 3–5× past 10°. Since the ToF covers 7.5 % of the frame, that is the regime the
+and wins 3–5× past 10°. Since the ToF covers 12.4 % of the frame, that is the regime the
 robot actually runs in.
 
 ### Two fixes this produced
@@ -192,10 +192,10 @@ is the cost of distilling the backbone down for real-time use; see Known limits.
 
 ### Known limits
 
-- **ToF covers 7.5 % of the frame.** The other 92.5 % is monocular extrapolation carrying the
+- **ToF covers 12.4 % of the frame.** The other 87.6 % is monocular extrapolation carrying the
   affine fit. A geometry limit, not a bug, but it bounds what can be trusted.
 - **Every number in the tables above is scored against the ToF we anchor to** — a closed
-  loop. It cannot detect a ToF bias and says nothing about the 92.5 % of frame the ToF never
+  loop. It cannot detect a ToF bias and says nothing about the 87.6 % of frame the ToF never
   sees. Independent tape ground truth is [planned](docs/VALIDATION_PLAN.md), not yet
   collected. The one open-loop result we do have is on
   [ZJU-L5](ros2_ws/README.md#zju-l5--the-first-open-loop-evaluation-and-what-it-exposed).
@@ -261,7 +261,7 @@ covers the **camera's FOV cone** (denser than LiDAR — ~125k pts/frame — but 
 all-around coverage needs the multi-module **ring** (future) or driving/turning to sweep.
 
 **Depth confirmation coverage.** The ToF is a **32×32 = 1024-zone grid** over its central
-~61°×45° cone (≈830 valid zones/frame in practice), so it ground-truths **many objects at
+~73.5°×60.5° cone (≈830 valid zones/frame in practice), so it ground-truths **many objects at
 once across the center**, not a single point. The wider camera **periphery** is dense but
 **mono-estimated** (scaled by the global fit, not ToF-confirmed) — which is exactly what
 **Network B** refines and assigns calibrated uncertainty. Held-out ToF anchors are how we

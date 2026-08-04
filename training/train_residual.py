@@ -191,6 +191,17 @@ def main():
                     help='max global grad norm; 0 disables. Tames NLL gradient blowups.')
     ap.add_argument('--workers', type=int, default=4)
     ap.add_argument('--val-frac', type=float, default=0.05)
+    # Early stopping. Without it --epochs has to be guessed: v4 plateaued well before 40 and
+    # burned the rest, while v6 was still setting a new best on each of its last six epochs
+    # and was cut off mid-descent. Set --epochs generously and let patience decide.
+    ap.add_argument('--patience', type=int, default=0,
+                    help='stop after this many epochs with no meaningful val improvement; '
+                         '0 = run all epochs')
+    # Improvements smaller than this do not reset the counter, so val noise cannot keep a
+    # plateaued run alive forever. v6 improved by 0.0002-0.0016/epoch while genuinely still
+    # descending, so the default sits an order of magnitude below that.
+    ap.add_argument('--min-delta', type=float, default=1e-4,
+                    help='val improvement below this counts as no improvement')
     ap.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
     args = ap.parse_args()
 
@@ -234,6 +245,7 @@ def main():
         opt, lambda s: 0.5 * (1 + math.cos(math.pi * s / max(1, total))))
 
     best_val = float('inf')
+    stale = 0                      # consecutive epochs without a > --min-delta improvement
     for epoch in range(args.epochs):
         residual.train()
         run = cov_run = n = 0.0
@@ -272,9 +284,20 @@ def main():
 
         torch.save(residual.state_dict(), os.path.join(args.out, 'residual_last.pth'))
         if vl < best_val:
+            # The checkpoint always tracks the true best, but only a move larger than
+            # --min-delta resets patience -- otherwise a run creeping along at 1e-6 per
+            # epoch would never trigger the stop.
+            meaningful = (best_val - vl) >= args.min_delta
             best_val = vl
             torch.save(residual.state_dict(), os.path.join(args.out, 'residual_best.pth'))
             print(f"  new best (val {vl:.4f}) -> residual_best.pth")
+            stale = 0 if meaningful else stale + 1
+        else:
+            stale += 1
+        if args.patience and stale >= args.patience:
+            print(f"  EARLY STOP: {stale} epochs with no improvement > {args.min_delta:g} "
+                  f"(best val {best_val:.4f}); {args.epochs - epoch - 1} epochs skipped")
+            break
 
     print(f"done. best val {best_val:.4f}")
 

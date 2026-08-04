@@ -1,0 +1,397 @@
+{
+ "captured": "2026-08-03",
+ "instrument": "tape, quoted to the nearest cm (~+-0.02 m)",
+ "status": "PILOT + FOV CALIBRATION. Session A (7 pts) and B (7 pts) both 2026-08-03. Session B established fov_h 73.5 deg and re-measured end to end. 0.39-2.03 m, no far field, two poses. Directional, not certified.",
+ "rig": {
+  "K_rect": [
+   379.5650222083104,
+   379.5209950039814,
+   839.2090884521944,
+   548.8733051010782
+  ],
+  "image": [
+   1640,
+   1232
+  ],
+  "tof_footprint_px": [
+   681,
+   325,
+   996,
+   772
+  ],
+  "backbone": "student_v4_heldout_fp16.engine",
+  "residual": "residual_v4_last_fp16.engine"
+ },
+ "note": "gt_slant_m and pred_* are SLANT RANGE from the optical centre, not axis depth.",
+ "points": [
+  {
+   "id": 1,
+   "u": 512,
+   "v": 550,
+   "gt_slant_m": 1.82,
+   "pred_blend_on_m": 1.2720071309369652,
+   "pred_blend_off_m": 1.2823399069078978,
+   "sigma_m": 0.2332261724406207,
+   "inside_tof": false,
+   "pose": "A"
+  },
+  {
+   "id": 2,
+   "u": 625,
+   "v": 539,
+   "gt_slant_m": 0.77,
+   "pred_blend_on_m": 1.2412427020155237,
+   "pred_blend_off_m": 1.2401405112852812,
+   "sigma_m": 0.2287460284810319,
+   "inside_tof": false,
+   "pose": "A"
+  },
+  {
+   "id": 3,
+   "u": 848,
+   "v": 523,
+   "gt_slant_m": 1.53,
+   "pred_blend_on_m": 1.6549225379316033,
+   "pred_blend_off_m": 1.5092719499213834,
+   "sigma_m": 0.7163732210040119,
+   "inside_tof": true,
+   "pose": "A"
+  },
+  {
+   "id": 4,
+   "u": 906,
+   "v": 475,
+   "gt_slant_m": 1.96,
+   "pred_blend_on_m": 0.4412575442184702,
+   "pred_blend_off_m": 1.174125303436414,
+   "sigma_m": 0.6637000962755691,
+   "inside_tof": true,
+   "pose": "A"
+  },
+  {
+   "id": 5,
+   "u": 976,
+   "v": 598,
+   "gt_slant_m": 0.42,
+   "pred_blend_on_m": 1.3131171115173434,
+   "pred_blend_off_m": 0.5684506719008918,
+   "sigma_m": 0.862822059704812,
+   "inside_tof": true,
+   "pose": "A"
+  },
+  {
+   "id": 6,
+   "u": 1143,
+   "v": 604,
+   "gt_slant_m": 0.69,
+   "pred_blend_on_m": 0.7006334104784712,
+   "pred_blend_off_m": 0.7367233370862297,
+   "sigma_m": 0.24647731749786309,
+   "inside_tof": false,
+   "pose": "A"
+  },
+  {
+   "id": 7,
+   "u": 1544,
+   "v": 625,
+   "gt_slant_m": 0.84,
+   "pred_blend_on_m": 0.7510268632543444,
+   "pred_blend_off_m": 0.7075278270880329,
+   "sigma_m": 0.11951592497488749,
+   "inside_tof": false,
+   "pose": "A"
+  },
+  {
+   "id": 8,
+   "u": 872,
+   "v": 599,
+   "gt_slant_m": 0.39,
+   "pred_blend_on_m": 0.393,
+   "pred_blend_off_m": null,
+   "sigma_m": 1.143,
+   "inside_tof": true,
+   "pose": "B",
+   "note": "marker centred in ToF; geometry 0.380 m, ToF median 0.391 m over 58 zones"
+  }
+ ],
+ "findings": {
+  "blend_harmful_inside_tof": {
+   "mae_on_m": 0.846,
+   "mae_off_m": 0.318,
+   "n": 3,
+   "detail": "inside the ToF footprint the shipped config is 2.7x worse; outside the two arms are identical (0.280 vs 0.297). corr(GT,pred) -0.08 on, +0.74 off."
+  },
+  "inside_worse_than_outside": {
+   "absrel_inside_on": 0.994,
+   "absrel_outside_on": 0.259,
+   "detail": "inverts the README framing: the ToF-covered region is 3.8x worse than the extrapolation region, because the blend acts only there."
+  },
+  "sigma_uninformative": {
+   "corr_err_sigma": 0.14,
+   "coverage_1sigma": 0.5,
+   "coverage_2sigma": 0.625,
+   "n": 8,
+   "detail": "sigma too small where errors are large (#1,#2,#4) and 23-381x too large where the pipeline is nearly exact (#6,#8). Not a scale error."
+  },
+  "calibration_is_sound": {
+   "detail": "point 8: tape 0.390, ToF 0.391, pipeline 0.393, marker-size geometry 0.380 - four independent methods inside 13 mm. Intrinsics, extrinsics and zone projection are correct; the failures are positional, not global."
+  },
+  "marker_ink_too_thin": {
+   "detail": "X stroke is 1.43 mm, sub-pixel beyond 0.5 m; border 0.25 mm, invisible everywhere. Markers unusable past ~2 m and 4-corner clicking never works. Needs a checkerboard pattern before a real far-field session."
+  }
+ },
+ "session_B_fov_calibration": {
+  "captured": "2026-08-03",
+  "pose": "C",
+  "instrument": "tape, nearest cm",
+  "what": "same 7 markers, same scene, measured before and after the ToF fov_h correction 45.0 -> 73.5 deg. Only the config changed between the two columns.",
+  "tof_footprint_px_after": [
+   555,
+   327,
+   1122,
+   770
+  ],
+  "frame_coverage_after": 0.124,
+  "points": [
+   {
+    "id": 1,
+    "u": 484,
+    "v": 557,
+    "on": "leftmost wall",
+    "angle_deg": -43.10148258596803,
+    "gt_slant_m": 1.8,
+    "err_before_m": -0.43111505089773083,
+    "err_after_m": -0.3346729880322885,
+    "inside_tof_after": false
+   },
+   {
+    "id": 2,
+    "u": 589,
+    "v": 552,
+    "on": "yellow discs",
+    "angle_deg": -33.39285256147382,
+    "gt_slant_m": 0.76,
+    "err_before_m": 0.7529012295606738,
+    "err_after_m": -0.00743823028605306,
+    "inside_tof_after": true
+   },
+   {
+    "id": 3,
+    "u": 836,
+    "v": 519,
+    "on": "white barrier",
+    "angle_deg": -0.4844040752354258,
+    "gt_slant_m": 1.66,
+    "err_before_m": -0.005934908637848846,
+    "err_after_m": -0.007304005967618599,
+    "inside_tof_after": true
+   },
+   {
+    "id": 4,
+    "u": 893,
+    "v": 476,
+    "on": "red pole",
+    "angle_deg": 8.066087395957862,
+    "gt_slant_m": 2.03,
+    "err_before_m": 0.7467577277299111,
+    "err_after_m": 0.7803224009396419,
+    "inside_tof_after": true
+   },
+   {
+    "id": 5,
+    "u": 920,
+    "v": 582,
+    "on": "water bottle",
+    "angle_deg": 12.016156756154254,
+    "gt_slant_m": 0.63,
+    "err_before_m": 0.787538799042076,
+    "err_after_m": -0.01481173484650311,
+    "inside_tof_after": true
+   },
+   {
+    "id": 6,
+    "u": 1113,
+    "v": 606,
+    "on": "blue block",
+    "angle_deg": 35.80397016948803,
+    "gt_slant_m": 0.72,
+    "err_before_m": 0.10132600897987065,
+    "err_after_m": -0.02111830429017758,
+    "inside_tof_after": true
+   },
+   {
+    "id": 7,
+    "u": 1262,
+    "v": 612,
+    "on": "red stool",
+    "angle_deg": 48.08375499847383,
+    "gt_slant_m": 0.89,
+    "err_before_m": -0.16266946596188825,
+    "err_after_m": -0.18517499227498702,
+    "inside_tof_after": false
+   }
+  ],
+  "mae": {
+   "all_before": 0.427,
+   "all_after": 0.193,
+   "inside_before": 0.479,
+   "inside_after": 0.166,
+   "outside_before": 0.297,
+   "outside_after": 0.26
+  },
+  "fov_scoring": {
+   "method": "direction lookup - invert zone_directions, compare that zone to tape",
+   "mae_at_45deg": 0.472,
+   "mae_at_73p5deg": 0.01,
+   "plateau_deg": [
+    66,
+    82
+   ],
+   "excluded_above_deg": 84,
+   "fov_v_confirmed": false
+  },
+  "residual_failures": {
+   "marker_4_red_pole": "+0.78 m, unchanged by the fix. Its own zone reads 2.03 m correctly but neighbouring zones see the banner at 2.78 m; the mix wins. Thin-object partial fill, not calibration.",
+   "markers_1_and_7": "outside the cone even at 73.5 deg (-43 and +48 deg); pure monocular.",
+   "sigma": "still uncorrelated with error - 0.649 m claimed on a 7 mm error at #3, 0.094 m claimed on a 0.335 m error at #1."
+  }
+ },
+ "session_C_deployed": {
+  "captured": "2026-08-04",
+  "instrument": "tape, nearest cm",
+  "what": "the SAME 7 markers and tape numbers as session B, re-measured after both fixes: fov_h 45.0->73.5 AND Network B retrained on the re-projected supervision (residual_v6_fov73). Scene never moved.",
+  "old_system": "fov_h 45.0 + residual_v4_last",
+  "new_system": "fov_h 73.5 + residual_v6_fov73",
+  "points": [
+   {
+    "id": 1,
+    "on": "leftmost wall",
+    "angle_deg": -43.1,
+    "gt_slant_m": 1.8,
+    "old_pred_m": 1.369,
+    "old_err_m": -0.431,
+    "new_pred_m": 1.602,
+    "new_err_m": -0.198,
+    "improvement_m": 0.233
+   },
+   {
+    "id": 2,
+    "on": "yellow discs",
+    "angle_deg": -33.4,
+    "gt_slant_m": 0.76,
+    "old_pred_m": 1.513,
+    "old_err_m": 0.753,
+    "new_pred_m": 0.746,
+    "new_err_m": -0.014,
+    "improvement_m": 0.739
+   },
+   {
+    "id": 3,
+    "on": "white barrier",
+    "angle_deg": -0.5,
+    "gt_slant_m": 1.66,
+    "old_pred_m": 1.654,
+    "old_err_m": -0.006,
+    "new_pred_m": 1.644,
+    "new_err_m": -0.016,
+    "improvement_m": -0.01
+   },
+   {
+    "id": 4,
+    "on": "red pole",
+    "angle_deg": 8.1,
+    "gt_slant_m": 2.03,
+    "old_pred_m": 2.777,
+    "old_err_m": 0.747,
+    "new_pred_m": 2.804,
+    "new_err_m": 0.774,
+    "improvement_m": -0.027
+   },
+   {
+    "id": 5,
+    "on": "water bottle",
+    "angle_deg": 12.0,
+    "gt_slant_m": 0.63,
+    "old_pred_m": 1.418,
+    "old_err_m": 0.788,
+    "new_pred_m": 0.614,
+    "new_err_m": -0.016,
+    "improvement_m": 0.771
+   },
+   {
+    "id": 6,
+    "on": "blue block",
+    "angle_deg": 35.8,
+    "gt_slant_m": 0.72,
+    "old_pred_m": 0.821,
+    "old_err_m": 0.101,
+    "new_pred_m": 0.676,
+    "new_err_m": -0.044,
+    "improvement_m": 0.058
+   },
+   {
+    "id": 7,
+    "on": "red stool",
+    "angle_deg": 48.1,
+    "gt_slant_m": 0.89,
+    "old_pred_m": 0.727,
+    "old_err_m": -0.163,
+    "new_pred_m": 1.174,
+    "new_err_m": 0.284,
+    "improvement_m": -0.121
+   }
+  ],
+  "aggregate": {
+   "mae_before": 0.427,
+   "mae_after": 0.192,
+   "median_abs_before": 0.431,
+   "median_abs_after": 0.044,
+   "rmse_before": 0.53,
+   "rmse_after": 0.321,
+   "max_abs_before": 0.788,
+   "max_abs_after": 0.774
+  },
+  "notes": {
+   "retrain_effect_on_tape": "the retrain moved tape MAE 0.193 -> 0.192 m, i.e. nothing. It is a large win on ToF-scored benchmarks and ~zero against independent GT.",
+   "marker_4": "thin red pole, +0.77 m unchanged by either fix (partial fill)",
+   "marker_7": "outside the cone at +48 deg, got worse (-0.19 -> +0.28) - unsupported extrapolation, n=2 on that side, no trend claimed",
+   "sigma": "corr(|err|, sigma) rose from +0.14 to +0.755 with the retrain. Still uncalibrated (19x too wide at #3, 3x too narrow at #7) but the ordering is broadly right for the first time. n=7 - a lead for LIVE-4, not a result."
+  }
+ },
+ "benchmarks_tof_scored": {
+  "note": "1234 frames, ToF-scored, therefore CLOSED LOOP - anchors and eval targets both moved.",
+  "medae": {
+   "B4_affine_random": {
+    "before": 0.068,
+    "after": 0.055
+   },
+   "B5_ringfusion_random": {
+    "before": 0.101,
+    "after": 0.05
+   },
+   "B5_ringfusion_center": {
+    "before": 0.047,
+    "after": 0.045
+   },
+   "B6_blend_center": {
+    "before": 0.043,
+    "after": 0.042
+   }
+  },
+  "rmse": {
+   "B5_ringfusion_random": {
+    "before": 0.895,
+    "after": 0.413
+   },
+   "B5_ringfusion_center": {
+    "before": 0.503,
+    "after": 0.451
+   },
+   "B6_blend_center": {
+    "before": 0.486,
+    "after": 0.439
+   }
+  },
+  "sign_flip": "On the random protocol the 0.46M residual HURT vs the 2-param fit before (B5 0.101 vs B4 0.068) and HELPS after (B5 0.050 vs B4 0.055)."
+ }
+}
