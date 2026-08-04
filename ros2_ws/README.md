@@ -12,10 +12,11 @@ Recommended launch:
 ```bash
 ros2 launch ringfusion_bringup single_module.launch.py port:=/dev/ttyACM1 \
     backbone_engine:=$HOME/RingFusion/student_v3_fp16.engine \
-    residual_engine:=$HOME/RingFusion/residual_v4_last_fp16.engine
+    residual_engine:=$HOME/RingFusion/residual_v6_fov73_fp16.engine
 ```
 
-`residual_v4_last` is the recommended residual — see
+`residual_v6_fov73` is the recommended residual (retrained 2026-08-04 at the corrected
+`fov_h`; `residual_v4_last` is mismatched to the current calibration) — see
 [Network B v4](#network-b-v4--the-training-protocol-was-the-limitation). Stage 7c blend and the
 ROI/σ stages are on by default and cost 19.8 ms together at full resolution *offline* — but
 measured on the robot they first added 70.7 ms and dropped the deployed rate to 7.2 Hz, below
@@ -518,7 +519,9 @@ The blend beats **both** sources it mixes, including raw ToF on interpolation
 cancels noise neither cancels alone. It also settles v4-vs-v5: with the blend, interpolation
 is *identical* between them (the ToF supplies it), and v4 wins extrapolation by 19 %.
 
-**Recommended configuration: `student_v3` + `residual_v4_last` + blend.**
+**Recommended configuration: `student_v4_heldout` + `residual_v6_fov73` + blend.**
+*(This line previously read `student_v3` + `residual_v4_last`; both predate the
+2026-08-03 field-of-view fix.)*
 
 > **Confirmed live, 2026-07-30 — and the offline number held.** 600 frames while driving,
 > both arms computed from **one** backbone+residual pass per frame so the only difference is
@@ -627,7 +630,7 @@ Network B's 61-frame validation split, so one set is unseen by both), reaching
 distillation target is the *teacher's disparity*, not ToF depth, and the student scores *below*
 its teacher even on frames it trained on (ρ 0.737 vs 0.750), so it had not memorised them.
 
-Scored with `student_v4_heldout` + `residual_v4_last` + blend:
+Scored with `student_v4_heldout` + `residual_v4_last` + blend *(pre-2026-08-03 calibration — superseded)*:
 
 | protocol *(all metrics ↓ lower is better)* | B1 nearest-zone | B4c closed-form | B5 Network B | **B6 + blend** |
 |---|---|---|---|---|
@@ -650,6 +653,9 @@ ToF exactly (0.059 / 0.010) — correctly deferring to the sensor where the sens
 > set (only the 61-frame intersection is clean for *both* networks). Re-scored on those 61:
 > B4c 0.063, B5 0.043, **B6 0.041** medAE — marginally *better* than the 200-frame figures, so
 > Network B's own overlap is not inflating anything here.
+>
+> *(Superseded 2026-08-04: Network B was retrained as `residual_v6_fov73` after the
+> field-of-view fix. The reasoning below explains why v4 was reused at the time.)*
 >
 > **Why `residual_v4_last` is reused unchanged with the new backbone:** it was trained against
 > `student_v3` disparity, but corr(v3, v4) over the held-out frames is **0.99944** (min 0.98963).
@@ -2055,7 +2061,7 @@ missing one of the two halves, so typing the option had no effect and gave no er
 # the deployed configuration
 ros2 launch ringfusion_bringup single_module.launch.py \
      backbone_engine:=student_v4_heldout_fp16.engine \
-     residual_engine:=residual_v4_last_fp16.engine
+     residual_engine:=residual_v6_fov73_fp16.engine
 
 # the A/B arm, and the fallback if the live rate disappoints
 ros2 launch ringfusion_bringup single_module.launch.py … blend:=false roi_enable:=false

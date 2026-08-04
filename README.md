@@ -59,7 +59,7 @@ has no learned parameters, so the system produces valid metric depth even with N
 switched off. **Network B** then applies a learned per-pixel correction plus a variance
 estimate, supervised on held-out ToF zones.
 
-## Status — 2026-07-30
+## Status — 2026-08-04
 
 **Running live end-to-end on the Orin with both real networks.** The rate depends on whether
 the two optional stages (Stage 7c blend, Stage 4b/7d ROI) are on — both default to **on**:
@@ -81,13 +81,13 @@ breakdown and the reason the offline estimate was 38 ms optimistic are
 | | value |
 |---|---|
 | `/depth`, `/depth_var`, `/cloud` | **10.4 Hz** default / **13.3 Hz** with blend+ROI off *(deployed node, incl. ROS + rectification)* |
-| Depth error, extrapolating away from the ToF | **0.044 m** median (`center` protocol), confirmed on a moving robot over 600 frames |
+| Depth error, extrapolating away from the ToF | **0.044 m** median (`center` protocol, 1,234 frames). The 600-frame moving-robot confirmation predates the 2026-08-03 field-of-view fix and needs re-running |
 | Depth error, interpolating between ToF zones | **0.010 m** median (`random` protocol) |
 | Uncertainty quality, `corr(σ, \|error\|)` | **0.943** *(at ToF anchor pixels only — see limits)* |
 | Backbone agreement with truth, ρ | **0.917** *(deployed config; the projection sweep's best row was 0.914)* |
 
-*Configuration: `student_v4_heldout` + `residual_v4_last` + Stage 7c blend. Scored on **200
-frames Network A never trained on** — the first uncontaminated absolute numbers in the project.
+*Configuration: `student_v4_heldout` + `residual_v6_fov73` + Stage 7c blend, at the corrected
+`fov_h 73.5`. Scored on **200 frames Network A never trained on** — the first uncontaminated absolute numbers in the project.
 Previously published 0.042 / 0.009 were inflated by train/test overlap; the correction is
 **+5 %**, see [contamination](ros2_ws/README.md#traintest-contamination-quantified).*
 
@@ -96,11 +96,21 @@ Previously published 0.042 / 0.009 were inflated by train/test overlap; the corr
 > that protocol. Corrected 2026-07-28; see
 > [Benchmarks](ros2_ws/README.md#benchmarks-vs-trivial-baselines).
 
-### A calibration bug dominated everything before this date
+### Calibration bugs have dominated this project twice
 
-The ToF grid was **horizontally mirrored** relative to the camera *and* `fov_h`/`fov_v` were
-**swapped**. Every anchor landed on the wrong pixel, corrupting the affine fit and every
-metric downstream of it.
+**2026-07-28.** The ToF grid was **horizontally mirrored** relative to the camera *and*
+`fov_h`/`fov_v` were **swapped**. Every anchor landed on the wrong pixel, corrupting the
+affine fit and every metric downstream of it.
+
+**2026-08-03.** `fov_h` was *still* wrong — set to 45° against a true ~73.5°, so the grid was
+squeezed into the middle two-thirds of its real field. The July fix had chosen between two
+candidates (61×45 and 45×61) rather than sweeping a continuum, so the less-bad of two poor
+options won and was recorded as measured. **No ToF-scored benchmark could see this**, because
+the anchors and the evaluation targets are the same points — it took a tape measure. See
+[Measured against a tape measure](#measured-against-a-tape-measure-on-our-own-rig).
+
+The pattern is the point: both were found by an *independent* measurement, and neither was
+visible to any closed-loop metric.
 
 <table>
 <tr>
@@ -129,10 +139,11 @@ table):
 
 | MAE | `random` *(interpolate, anchors ~1.7 cm away)* | `center` *(extrapolate outward)* |
 |---|---|---|
-| nearest-zone lookup *(0 params, no camera)* | **0.056 m** | 0.232 m |
-| bilinear ToF upsample *(0 params)* | 0.058 m | *cannot extrapolate* |
-| closed-form + clamp *(2 params)* | 0.283 m | 0.359 m |
-| **RingFusion v3** *(~0.46 M params)* | **0.148 m** | **0.331 m** |
+| nearest-zone lookup *(0 params, no camera)* | **0.073 m** | 0.232 m |
+| bilinear ToF upsample *(0 params)* | 0.059 m | *cannot extrapolate* |
+| closed-form + clamp *(2 params)* | 0.262 m | 0.314 m |
+| **RingFusion** *(~0.46 M params)* | 0.190 m | **0.198 m** |
+| **+ Stage 7c blend** | **0.060 m** | **0.188 m** |
 
 **A zero-parameter lookup table beats the full pipeline when the ToF is dense nearby** — and
 that is the honest reading of the protocol every earlier number used. The architecture earns
@@ -157,23 +168,65 @@ interpolation — and scored *tied with having no network at all* on extrapolati
 argument, same architecture and data) took it to **0.045 m, a 30 % win over the closed-form**.
 
 **Neither source wins everywhere.** Raw ToF is ~2× better within 3° of an anchor; the
-network is ~6× better past 15°. Stage 7c blends them by angular distance and **beats both**:
+network is ~5× better past 15°. Stage 7c blends them by angular distance and **beats both**:
 
 | medAE | 0–3° | 3–6° | 6–10° | 10–15° | 15–30° |
 |---|---|---|---|---|---|
-| nearest-zone ToF | **0.025** | 0.070 | 0.123 | 0.188 | 0.244 |
-| Network B v4 | 0.048 | 0.047 | 0.052 | 0.042 | 0.038 |
-| **blend** | **0.028** | **0.046** | **0.052** | **0.042** | **0.038** |
+| nearest-zone ToF | **0.027** | 0.063 | 0.104 | 0.163 | 0.204 |
+| Network B (v6) | 0.046 | 0.042 | 0.046 | **0.045** | **0.044** |
+| **blend** | **0.027** | **0.041** | **0.046** | **0.045** | **0.044** |
+
+*(1,234 frames, `center` protocol, current build — `fov_h 73.5` + `residual_v6_fov73`.)*
 
 Also fixed: the closed-form path was **missing the 20 m clamp** the residual path applies,
 so the Network-B-off fallback could publish 10,000 m into `/cloud` — worth 18.092 m →
 0.359 m. Full detail: [Benchmarks](ros2_ws/README.md#benchmarks-vs-trivial-baselines).
 
+### Measured against a tape measure, on our own rig
+
+Every table above is scored against the ToF the pipeline anchors to — a closed loop. The first
+time we broke it, with markers on the field and a tape measure, **it immediately found a
+calibration error nothing else could see: the ToF's horizontal field of view was set to 45°
+and the true value is ~73.5°.** Readings were correct but attributed to the wrong pixels.
+
+Seven markers, −43° to +48° off axis, hand-measured. Same scene before and after:
+
+| # | marker | **tape** | before | err | **after** | **err** |
+|---|---|---|---|---|---|---|
+| 1 | leftmost wall, −43° | 1.80 m | 1.37 m | −0.43 | 1.60 m | −0.20 |
+| 2 | yellow discs, −33° | 0.76 m | 1.51 m | +0.75 | **0.75 m** | **−0.01** |
+| 3 | white barrier, −0.5° | 1.66 m | 1.65 m | −0.01 | 1.64 m | −0.02 |
+| 4 | red pole, +8° | 2.03 m | 2.78 m | +0.75 | 2.80 m | +0.77 |
+| 5 | water bottle, +12° | 0.63 m | 1.42 m | +0.79 | **0.61 m** | **−0.02** |
+| 6 | blue block, +36° | 0.72 m | 0.82 m | +0.10 | **0.68 m** | **−0.04** |
+| 7 | red stool, +48° | 0.89 m | 0.73 m | −0.16 | 1.17 m | +0.28 |
+
+| | before | after | |
+|---|---|---|---|
+| **MAE** | 0.427 m | **0.192 m** | −2.2× |
+| **median \|err\|** | 0.431 m | **0.044 m** | **−9.8×** |
+| **RMSE** | 0.530 m | **0.321 m** | −1.7× |
+
+Four of seven markers went from 0.10–0.79 m of error to **within 4 cm**. Two did not: **#4**
+is a thin pole whose ToF zone reads 2.03 m correctly while its neighbours see the wall 2.78 m
+behind — partial fill, not calibration; **#7** sits outside the ToF cone entirely and is
+unsupported extrapolation.
+
+**The honest split:** the calibration fix delivered 0.427 → 0.193 m. Retraining Network B on
+the re-projected supervision then delivered 0.193 → **0.192 m** — nothing — while *halving*
+its score on the ToF-scored benchmarks. That gap between a closed-loop metric and a tape
+measure is the entire reason this workstream exists.
+
+Full detail, per-marker data and the field-of-view derivation:
+[ToF field of view, measured against tape](ros2_ws/README.md#tof-field-of-view-measured-against-tape).
+Pilot scale — 14 tape points, 0.39–2.03 m, no far field. Directional, not a certified number.
+
 ### On a public benchmark, with independent ground truth
 
 [ZJU-L5](ros2_ws/README.md#zju-l5--the-first-open-loop-evaluation-and-what-it-exposed) ships
 dense RealSense ground truth, so it is the one evaluation here that is not scored against our
-own ToF. Against published results on it:
+own ToF. **Unaffected by the calibration fix** — the dataset supplies its own per-zone pixel
+rectangles, so `calibration.yaml` never enters. Against published results on it:
 
 | method | params | δ₁ ↑ | Rel ↓ | RMSE ↓ |
 |---|---|---|---|---|
@@ -194,11 +247,16 @@ is the cost of distilling the backbone down for real-time use; see Known limits.
 
 - **ToF covers 12.4 % of the frame.** The other 87.6 % is monocular extrapolation carrying the
   affine fit. A geometry limit, not a bug, but it bounds what can be trusted.
-- **Every number in the tables above is scored against the ToF we anchor to** — a closed
+- **Most numbers in the tables above are scored against the ToF we anchor to** — a closed
   loop. It cannot detect a ToF bias and says nothing about the 87.6 % of frame the ToF never
-  sees. Independent tape ground truth is [planned](docs/VALIDATION_PLAN.md), not yet
-  collected. The one open-loop result we do have is on
-  [ZJU-L5](ros2_ws/README.md#zju-l5--the-first-open-loop-evaluation-and-what-it-exposed).
+  sees. The two open-loop exceptions are
+  [ZJU-L5](ros2_ws/README.md#zju-l5--the-first-open-loop-evaluation-and-what-it-exposed) and
+  the tape session above — which found a 1.6× field-of-view error that every closed-loop
+  metric had been blind to for weeks.
+- **The tape session is a pilot, not a validation.** 14 points, 0.39–2.03 m, two poses, no
+  far field. It is enough to have caught a gross calibration error and to show the direction
+  of travel; it is not enough to certify a number. A full session is blocked on the printed
+  markers, whose ink goes sub-pixel past ~0.5 m and is unreadable beyond ~2 m.
 - **Network A does not transfer to another camera.** On ZJU-L5, `student_v3` scores
   ρ 0.417 against 0.917 on our own sensor, and the pipeline then loses to every trivial
   baseline. It was distilled on ~2,000 of our own fisheye frames, so it learned to be its
