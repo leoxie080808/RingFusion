@@ -89,7 +89,7 @@ breakdown and the reason the offline estimate was 38 ms optimistic are
 | `/depth`, `/depth_var`, `/cloud` | **9.38 Hz** default / **13.3 Hz** with blend+ROI off *(deployed node, incl. ROS + rectification)* |
 | Depth error, extrapolating away from the ToF | **0.034 m** median (`center` protocol, 200 held-out frames). ✅ **Confirmed on the moving robot 2026-08-04** after the field-of-view fix — 600 frames, blend −6.3 % MAE, see below |
 | Depth error, interpolating between ToF zones | **0.014 m** median (`random` protocol) |
-| Uncertainty quality, `corr(σ, \|error\|)` | **0.943** *(at ToF anchor pixels — circular)*. Against **tape**: rank corr **+0.655**, coverage@1σ **0.818** vs a 0.683 target — see [LIVE-4](#is-the-uncertainty-trustworthy-live-4-2026-08-04) |
+| Uncertainty quality, `corr(σ, \|error\|)` | **0.943** *(at ToF anchor pixels — circular)*. Against **tape**, n=15 over 5 captures: rank corr **+0.723**, coverage@1σ **0.760** vs a 0.683 target, **nothing above 2σ** — see [LIVE-4](#is-the-uncertainty-trustworthy-live-4-2026-08-04) and [the n=15 re-test](#the-σ-fix-tested-for-overfitting--n15-2026-08-05) |
 | Backbone agreement with truth, ρ | **0.917** *(deployed config; the projection sweep's best row was 0.914)* |
 | CPU / GPU under full load | **32 % of 12 cores · 26 % GPU · 21.7 W** — neither is saturated |
 
@@ -353,8 +353,36 @@ how far away the nearest anchor is, and whether a zone disagrees with its neighb
 
 Full detail, including two wrong turns worth not repeating:
 [σ fixed](ros2_ws/README.md#σ-fixed--three-terms-the-blend-already-knew-2026-08-04).
-**n = 11, and three constants were tuned against those 11 points** — provisional until a larger
-session.
+### The σ fix, tested for overfitting — n=15, 2026-08-05
+
+Three constants fitted to eleven tape points could easily have been describing those eleven
+rather than the real failure modes. So the marker set was rebuilt **to break the fit**: 4 points
+outside the ToF cone (out to 38.9°), 3 straddling its edge, 4 on depth discontinuities, σ
+spanning 0.06–3.3 m, tape distances 0.33–4.03 m.
+
+Scored over **five independent captures**, because one is not enough at this n — two captures
+minutes apart on a motionless scene gave rank correlations of 0.525 and 0.654, a 0.13 swing from
+noise alone.
+
+| | n=11 *(what the constants were tuned on)* | n=15 | n=13 *(two disputed points dropped)* |
+|---|---|---|---|
+| rank corr(σ,\|err\|) ↑ | 0.745 | 0.613 | **0.723** *(0.665–0.786)* |
+| coverage @1σ *(target 0.683)* | 0.909 | **0.760** | 0.877 |
+| coverage @2σ *(target 0.954)* | 0.909 | **1.000** | **1.000** |
+| worst failure ↓ | 2.30σ | 1.71σ | **1.30σ** |
+
+**The constants generalise — 0.723 ± 0.05 against 0.745**, indistinguishable on a larger and
+harder set. Worst case fell from 2.30σ to 1.30σ and **nothing exceeded 2σ in any capture**
+(it was 3.86σ before the fix). Coverage moved from an over-conservative 0.909 toward the 0.683
+target rather than away from it.
+
+> Two points are reported both ways. #14 and #15 survived a re-click to within **3 px**, so
+> their pixels are certain — but zoomed crops show both sit on the checkered wall band rather
+> than a printed marker, and #14's tape is within 3 cm of a verified marker 55 px away. The
+> pixel is confirmed; the tape target is not. Reported both ways rather than picking the
+> flattering one.
+
+`docs/demo/benchmarks/live4_sigma_n15_2026-08-05.json`.
 
 ### The blend, re-tested on the moving robot — 2026-08-04
 
@@ -427,10 +455,16 @@ is the cost of distilling the backbone down for real-time use; see Known limits.
   [ZJU-L5](ros2_ws/README.md#zju-l5--the-first-open-loop-evaluation-and-what-it-exposed) and
   the tape session above — which found a 1.6× field-of-view error that every closed-loop
   metric had been blind to for weeks.
-- **The tape session is a pilot, not a validation.** 14 points, 0.39–2.03 m, two poses, no
-  far field. It is enough to have caught a gross calibration error and to show the direction
-  of travel; it is not enough to certify a number. A full session is blocked on the printed
-  markers, whose ink goes sub-pixel past ~0.5 m and is unreadable beyond ~2 m.
+- **The tape ground truth is now a session, not a pilot — but it is still one room.** The
+  original limit here read "14 points, 0.39–2.03 m, two poses, no far field, blocked on markers
+  whose ink goes sub-pixel past ~0.5 m." All three parts have since been addressed: the markers
+  were **redesigned** (the stroke width was being set in *points* and printing at 1.4 mm instead
+  of 4 mm — a 4× range gain once fixed), and the current set is **15 points spanning
+  0.33–4.03 m**, 4 of them outside the ToF cone to 38.9°, scored over 5 repeat captures. That
+  was enough to confirm `fov_v` three independent ways and to show the σ constants generalise.
+  **What it still is not:** one room, one lighting condition, one robot pose, and static. It
+  cannot speak to a different scene, and the moving-robot evidence remains the ToF-scored blend
+  A/B rather than tape.
 - **Network A does not transfer to another camera.** On ZJU-L5, `student_v3` scores
   ρ 0.417 against 0.917 on our own sensor, and the pipeline then loses to every trivial
   baseline. It was distilled on ~2,000 of our own fisheye frames, so it learned to be its

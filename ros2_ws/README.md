@@ -230,7 +230,7 @@ checkerboard) before the far field is reachable.
 | ✅ | Blend A/B re-run | done 2026-08-04 — **−6.3 % MAE; the 10–15° bin reversed sign** |
 | ✅ | Rate re-confirmation under lights | done 2026-08-04 — **9.38 Hz** vs 9.35 Hz in the dark |
 | ✅ | σ rework did not alter depth | done 2026-08-04 — **bitwise identical** over 60 real frames |
-| ⬜ | LIVE-4 σ evaluation, n > 11 | needs lights — three constants tuned on 11 points |
+| ✅ | LIVE-4 σ evaluation, n > 11 | done 2026-08-05 at **n=15** — the constants generalise |
 | ✅ | 4-panel demo clip re-record | done 2026-08-04 — `drive_4panel_v7.mp4`, 675 frames at the corrected fov |
 | ⬜ | Marker redesign (checkerboard) | blocks the 3–4.5 m band |
 | ⬜ | EMC / memory-bandwidth measurement | this `tegrastats` build does not emit `EMC_FREQ` |
@@ -456,11 +456,29 @@ with explicit CUDA syncs:
 
 **The cost is not where it looks like it should be.** The obvious suspect is the 2 MP GPU
 download, and that is 1.84 ms. The real driver is the *reduced-grid* numpy at 6.26 ms — on a
-308×410 grid, which is 126 k elements. The culprit is `np.degrees(np.arctan(dist_px / fx))`:
-transcendentals over the full reduced grid, evaluated every frame, to produce a value that is
-then only ever compared against `far_deg`. **That comparison can be moved into pixel space
-against a precomputed threshold and the `arctan` deleted entirely** — the monotonicity makes it
-exact, not an approximation. Not yet done; it is the cheapest few milliseconds on the table.
+308×410 grid, which is only 126 k elements. Broken down further:
+
+| piece | ms |
+|---|---|
+| weight (smoothstep + `where`) | 0.72 |
+| **angle — `degrees(arctan(dist_px / fx))` + clip** | **2.06** |
+| spread — 2× `cv2.blur` + `where` | 1.59 |
+
+> **Correction.** An earlier version of this section claimed the `arctan` could be deleted
+> outright, because the angle "is only ever compared against `far_deg`" and `tan` is monotonic.
+> **That is wrong.** Line 175 uses the angle's *value* as a ratio — `(ang − far_deg)/far_deg` —
+> not its sign. The threshold is exact in pixel space and costs 0.048 ms, but it computes a
+> different quantity. Nor does evaluating the transcendental only where it can be nonzero help:
+> **96 % of the reduced grid lies past `far_px`**, so the mask covers nearly everything and the
+> fancy indexing makes it *slower* (2.34 ms). The best exact-ish variant — float32 with folded
+> constants — saves **0.2 ms** at 2.9e-6 of error. Not worth the edit, and any change to `short`
+> shifts σ, which would invalidate the n=11 tuning the constants rest on.
+
+**The real optimisation is the GPU, not the algebra.** The whole reduced-grid block is 126 k
+elements, and `var_r` already crosses to the GPU for upsampling — computing it there instead
+would move ~4 ms off the CPU for one extra ~1.5 MB upload. That needs a new `gpu_ops` kernel and
+a proof that σ is unchanged, so it is deliberately queued **behind** enlarging the LIVE-4
+calibration set rather than in front of it.
 The terms are worth their cost — LIVE-4's worst failure went 3.86σ → 2.30σ — but the honest
 price is **13× what was first reported**, and it is the single largest stage cost added to this
 pipeline since the ROI work. Still above the ToF's 8.3 Hz floor.
@@ -504,9 +522,86 @@ because those anchors happened to be 20 px apart.
   half-covered by the intruding bottle, so the zone is not a strong local outlier.
 - **Frame-to-frame variance is not implemented.** Marker 7 varies 231 mm between frames against a
   29 mm average — real information, but it needs temporal state in the node.
-- **n = 11, and three constants were tuned against those 11 points.** Overfitting risk is real;
-  treat the constants as provisional until a larger session.
-- The deployed rate was re-measured **in the dark**; worth re-confirming lit.
+- ~~**n = 11, and three constants were tuned against those 11 points.**~~ ✅ **Resolved
+  2026-08-05 at n=15 — see below. The constants generalise.**
+- ~~The deployed rate was re-measured **in the dark**~~ ✅ re-confirmed lit: **9.38 Hz** vs
+  9.35 Hz dark.
+
+#### The overfitting risk, tested — n=15, 2026-08-05
+
+Three constants fitted to eleven points is thin enough that they could be describing those
+eleven rather than the failure modes. So the set was rebuilt **to break the fit** rather than
+to grow it: 4 points outside the ToF cone (out to 38.9°), 3 straddling its edge, 4 on depth
+discontinuities, σ spanning 0.06–3.3 m. Fifteen tape distances, 0.33–4.03 m.
+
+**Five independent captures**, because a single one is not trustworthy at this n: two captures
+minutes apart on a stationary scene scored rank correlation 0.525 and 0.654. That 0.13 swing is
+pure pipeline noise, and quoting either alone would have been quoting luck.
+
+| | n=11 (tuned on) | **n=15, 5 captures** | n=13, disputed dropped |
+|---|---|---|---|
+| rank corr(σ,\|err\|) ↑ | 0.745 | 0.613 *(0.586–0.654)* | **0.723** *(0.665–0.786)* |
+| coverage @1σ *(target 0.683)* | 0.909 | **0.760** | 0.877 |
+| coverage @2σ *(target 0.954)* | 0.909 | **1.000** | **1.000** |
+| worst failure ↓ | 2.30σ | 1.71σ | **1.30σ** *(1.04–1.47)* |
+
+**The ordering property generalises.** On the 13 undisputed points, 0.723 ± 0.05 against 0.745
+— indistinguishable on a larger and deliberately harder set. The constants were not fitting
+their own calibration data.
+
+**Worst case improved and stayed bounded.** 3.86σ before the fix, 2.30σ at n=11, now
+1.04–1.47σ — and **nothing exceeded 2σ in any of the five captures**, on a set built to contain
+the cases that break it.
+
+**Calibration moved toward the target, not away.** 0.909 @1σ was over-conservative — σ too big.
+0.760 is much closer to 0.683. The blend terms are sized about right.
+
+> **Two points are reported both ways, and the reason is worth recording.** #14 and #15 were
+> flagged by an automated mis-click check — "large error, but a pixel within 45 px matches the
+> tape". Re-clicking put both within **3 px** of the originals, so the pixels are confirmed.
+> Zoomed crops then showed why the check fired: both pins sit on the **checkered wall band**
+> rather than on a printed marker, and #14's tape (0.71 m) is within 3 cm of #12's (0.68 m, a
+> verified marker 55 px away) while the pipeline reads 1.69 m there. **The pixel is certain;
+> the tape target is not.** The check cannot separate a genuine occlusion failure from a pin
+> beside its marker, because in both cases the correct depth *is* nearby — so both variants are
+> reported rather than picking the flattering one.
+
+**The 15 points, one representative capture.** `n_sig` = |err| / σ; anything above 1.0 is a
+point σ failed to cover.
+
+| # | what | cone | tape | pred | err | σ | n_sig |
+|---|---|---|---|---|---|---|---|
+| 1 | thin X, band far left | out | 1.700 | 1.435 | −0.265 | 1.932 | 0.14 |
+| 2 | floor marker, low left | edge | 0.370 | 0.368 | −0.002 | 0.055 | 0.04 |
+| 3 | upright marker on the discs | in | 0.730 | 0.713 | −0.017 | 0.332 | 0.05 |
+| 4 | card under the checker band | in | 1.490 | 1.496 | +0.006 | 0.566 | 0.01 |
+| 5 | thin X on the band | in | 1.720 | 1.669 | −0.051 | 0.627 | 0.08 |
+| 6 | centre-dot marker on the bottle | in | 0.330 | 0.321 | −0.009 | 0.107 | 0.08 |
+| 7 | banner near 2024 | in | 2.020 | 2.037 | +0.017 | 1.507 | 0.01 |
+| 8 | banner, PROVINCIAL CHAMPIONSHIP | in | 2.845 | 2.804 | −0.041 | 2.804 | 0.01 |
+| 9 | banner, right of Excellence Award | in | 3.010 | 2.909 | −0.101 | 2.909 | 0.03 |
+| 10 | banner top, on the cone edge | edge | 3.150 | 2.591 | −0.559 | 2.604 | 0.21 |
+| 11 | above the cone, HIGH STAKES banner | out | 4.031 | 1.960 | **−2.071** | 1.962 | 1.06 |
+| 12 | thick marker on the brown box | edge | 0.680 | 0.680 | +0.000 | 0.158 | 0.00 |
+| 13 | far right, blue rings, 38.9° out | out | 0.815 | 1.346 | +0.531 | 3.274 | 0.16 |
+| 14 | thin X on the band, right ⚠️ | in | 0.710 | 1.688 | +0.978 | 0.567 | 1.72 |
+| 15 | last marker, left wall ⚠️ | out | 1.860 | 1.334 | −0.526 | 0.468 | 1.12 |
+
+Nine of fifteen land within 10 cm, including every point where a real ToF zone is nearby.
+The failures are exactly where the design predicts: **#11 at 2.07 m error** is above the cone
+with no anchor to blend toward, and **#13** is 38.9° outside it — the out-of-cone regression,
+which σ 3.27 flags loudly enough that it never becomes a coverage failure.
+
+> **#8 is bistable, and it is what makes the metric noisy.** In this capture it reads
+> **2.804 m against a 2.845 m tape** — near exact. In other captures the same pixel reads
+> **0.34 m**, because a bottle stands directly in front of that part of the banner and the zone
+> flips between the two surfaces. A single point swinging by 2.5 m moves rank correlation by
+> ~0.13 on its own, which is precisely the run-to-run spread observed. It is not measurement
+> sloppiness — it is one genuinely ambiguous pixel, and it is the strongest argument in this
+> table for **frame-to-frame variance as a fourth σ term**: the instability is visible in the
+> data, and nothing currently reports it.
+
+`docs/demo/benchmarks/live4_sigma_n15_2026-08-05.json`.
 
 > **A measurement caveat worth recording.** The first post-change rate readings were 6.7 Hz and
 > looked like a catastrophic regression. The cause was a `tof_overlay.py` diagnostic node left
