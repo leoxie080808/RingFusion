@@ -103,7 +103,7 @@ key to the rest.
 | **DEPTHOR head-to-head** | How do we compare to published SOTA on identical data, identical metric code, identical regions? | dense RealSense GT | **4–8 % behind DEPTHOR-Small on Rel, uniformly across regions**, with *zero learned fusion* against their 6 M head. |
 | **Held-out re-distill** | Were the absolute numbers inflated because Network A trained on the eval set? | held-out ToF zones, on 200 frames Network A never saw | **Yes, by ~5 %.** Rankings unchanged. Numbers now clean. |
 | **Timing** | Does it run in real time, and how does that compare fairly? | wall clock on this Orin | **10.4 Hz measured on the robot**, 14.1 Hz for `pipeline.run()` alone, both at 1640×1232 with every stage on; **3.1× faster than DEPTHOR-Small** at their resolution, our whole pipeline against their network alone. |
-| **Blend A/B, driving** | Does Stage 7c help on a *moving* robot, or only on saved frames? | held-out ToF zones, 600 frames | **5.4 % better MAE against 5.8 % predicted offline.** It improves the tail, not the median. No added flicker. |
+| **Blend A/B, driving** | Does Stage 7c help on a *moving* robot, or only on saved frames? | held-out ToF zones, 600 frames | ✅ **Re-run on v7 after the fov fix, 2026-08-04: −6.3 % MAE, −10.7 % medAE, wins every metric.** The 10–15° bin reversed sign — the blend used to make it *worse* and now cuts it 94 %. See below. |
 | **Tape ground truth** | Is the **ToF itself** right? | a tape measure | ✅ **Pilot done 2026-08-03, and it found a calibration error.** The ToF is accurate (1 cm) but its horizontal field of view was wrong by 1.6×, so readings were attributed to the wrong pixels. Correcting it cut pipeline MAE **0.427 → 0.192 m** and the median error **9.8×**. See below. |
 
 ### ToF field of view, measured against tape
@@ -227,9 +227,11 @@ checkerboard) before the far field is reachable.
 | ✅ | **`fov_v` verification** | done 2026-08-04 — **confirmed correct**, see below |
 | ✅ | Tape re-measure on v7 | done — v7 ≈ v6 in-cone; one out-of-cone regression |
 | ⬜ | Marker #5 re-placement | its zone clips a foreground bottle; move it and re-tape |
-| ⬜ | Blend A/B re-run | needs lights **+ driving** |
-| ⬜ | LIVE-4 σ evaluation, n > 7 | needs lights |
-| ⬜ | 4-panel demo clip re-record | needs lights — `live2_4panel.mp4` still shows the 45° cone |
+| ✅ | Blend A/B re-run | done 2026-08-04 — **−6.3 % MAE; the 10–15° bin reversed sign** |
+| ✅ | Rate re-confirmation under lights | done 2026-08-04 — **9.38 Hz** vs 9.35 Hz in the dark |
+| ✅ | σ rework did not alter depth | done 2026-08-04 — **bitwise identical** over 60 real frames |
+| ⬜ | LIVE-4 σ evaluation, n > 11 | needs lights — three constants tuned on 11 points |
+| ✅ | 4-panel demo clip re-record | done 2026-08-04 — `drive_4panel_v7.mp4`, 675 frames at the corrected fov |
 | ⬜ | Marker redesign (checkerboard) | blocks the 3–4.5 m band |
 | ⬜ | EMC / memory-bandwidth measurement | this `tegrastats` build does not emit `EMC_FREQ` |
 | ⬜ | `anchoring_bridge.default_calib` still `(61.0, 45.0)` | synthetic runs only, but stale |
@@ -421,9 +423,51 @@ learned variance (they only ever add uncertainty):
 | marker 1, out-of-cone horizontally | 2.04σ ❌ | **0.38σ** ✅ |
 | coverage @1σ | 0.818 | 0.909 |
 
-**Cost: 0.80 ms.** Measured by an offline A/B — one logged frame, same engines, 25 iterations,
-per-stage timings, terms on vs constants zeroed: **82.10 vs 81.29 ms**. Deployed rate 9.35 Hz,
-still above the ToF's 8.3 Hz floor.
+**Cost: 10.6 ms — and the first answer to this question, 0.80 ms, was wrong.**
+
+The original A/B turned the terms "off" by setting `DISAGREE_K = SUPPORT_FRAC = SPREAD_K = 0`.
+That looks like a clean way to isolate them without touching the call path, and it is not: the
+reduced-grid fields, the `cv2.blur` pair, the GPU upsample and the full-frame `var + …` all
+still run, and only the *values* flowing through them change. It measured arithmetic values,
+not arithmetic. The 0.80 ms it reported was noise.
+
+The deployed rate is what exposed it — **10.29 Hz before the terms, 9.38 Hz after** — a 9.4 ms
+gap that 0.80 ms cannot explain. Re-measured by bypassing the block entirely rather than
+neutering it, 40 real frames × 3 reps on the deployed engines:
+
+| | median |
+|---|---|
+| blend only | 15.90 ms |
+| blend + σ terms | 26.54 ms |
+| **added** | **10.64 ms** |
+
+97.2 ms + 10.6 ms predicts **9.27 Hz** against **9.38 Hz** measured live, which closes the loop.
+
+A total that cannot be accounted for is not trustworthy, so the internals were timed separately
+with explicit CUDA syncs:
+
+| step | ms |
+|---|---|
+| decimate `D_net` (2 MP strided read) | 0.45 |
+| **reduced-grid math + `cv2.blur` pair** | **6.26** |
+| GPU upsample → 2 MP download | 1.84 |
+| full-frame `var + …` (2 MP add) | 1.69 |
+| **sum** | **10.24** |
+
+**The cost is not where it looks like it should be.** The obvious suspect is the 2 MP GPU
+download, and that is 1.84 ms. The real driver is the *reduced-grid* numpy at 6.26 ms — on a
+308×410 grid, which is 126 k elements. The culprit is `np.degrees(np.arctan(dist_px / fx))`:
+transcendentals over the full reduced grid, evaluated every frame, to produce a value that is
+then only ever compared against `far_deg`. **That comparison can be moved into pixel space
+against a precomputed threshold and the `arctan` deleted entirely** — the monotonicity makes it
+exact, not an approximation. Not yet done; it is the cheapest few milliseconds on the table.
+The terms are worth their cost — LIVE-4's worst failure went 3.86σ → 2.30σ — but the honest
+price is **13× what was first reported**, and it is the single largest stage cost added to this
+pipeline since the ROI work. Still above the ToF's 8.3 Hz floor.
+
+> **The general lesson: zeroing a constant is not the same as skipping the work.** Any "off"
+> arm that leaves the code path intact measures the wrong thing. Bypass the branch.
+> `sigma_cost2.py` does; `ab_sigma_cost.py` did not.
 
 #### Three things learned the hard way
 
@@ -597,6 +641,11 @@ Within noise. The residual is the same architecture and engine size, and the wid
 puts more anchors in frame without changing the stage structure. **The timing session does not
 need re-running.** The blend A/B *does* — it acts near anchors, the anchors moved, and there
 are now more of them in frame.
+
+> **Re-run 2026-08-04, and the concern was justified.** The blend's advantage grew (MAE −5.4 %
+> → −6.3 %), and the 10–15° bin — the one closest to the anchors, i.e. the one most exposed to
+> the anchors being in the wrong place — flipped from the blend making it *worse* to cutting
+> it 94 %. See [the re-run](#re-run-on-v7-after-the-field-of-view-fix--2026-08-04).
 
 ### Network B v7 — v6 was stopped mid-descent
 
@@ -953,6 +1002,59 @@ is *identical* between them (the ToF supplies it), and v4 wins extrapolation by 
 > [`blend_ab_live.py`](../tools/diagnostics/blend_ab_live.py),
 > `docs/demo/benchmarks/blend_ab_live.json`, and a visual readout at
 > [`docs/demo/live2_readout.html`](../docs/demo/live2_readout.html).
+
+#### Re-run on v7 after the field-of-view fix — 2026-08-04
+
+The 2026-07-30 result above was measured **before** the field-of-view correction, and the
+blend acts near anchors, so moving the anchors invalidated it. Re-run on the same protocol:
+600 frames driving, one shared backbone+residual pass per frame, central island anchors only,
+386 681 held-out zones scored outside it.
+
+| `center`, held-out zones | MAE ↓ | medAE ↓ | p95 ↓ | AbsRel ↓ | δ<1.25 ↑ |
+|---|---|---|---|---|---|
+| network alone | 0.2640 m | 0.0726 m | 1.0228 m | 0.2392 | 0.687 |
+| **+ blend** | **0.2474 m** | **0.0648 m** | **0.9768 m** | **0.2273** | **0.707** |
+| | −6.3 % | −10.7 % | −4.5 % | −5.0 % | +2.0 pp |
+
+**The blend wins on every metric, and by a wider margin than before** (MAE −6.3 % against
+−5.4 % on 2026-07-30). Temporal stability now improves rather than merely holding: median
+frame-to-frame |Δdepth| 0.0100 m blended vs 0.0106 m not, p90 0.0375 vs 0.0400 m. Neither arm
+puts a point beyond the ToF's range.
+
+**The headline result is in the 10–15° bin, and it is a sign reversal.**
+
+| medAE ↓ by angle from the island | 10–15° | 15–30° | 30–90° |
+|---|---|---|---|
+| *before fov fix* — network alone | 0.0336 | 0.0426 | 0.0502 |
+| *before fov fix* — + blend | **0.0375** ❌ | 0.0417 | 0.0502 |
+| *after fov fix* — network alone | 0.1261 | 0.0900 | 0.0616 |
+| *after fov fix* — + blend | **0.0075** ✅ | 0.0692 | 0.0616 |
+
+Before the fix the blend made the band nearest the island **worse** — 0.0375 against 0.0336.
+That is small enough to have been dismissed as noise, and it was: the 2026-07-30 write-up
+above reports the medians as barely moving and does not flag it. It was not noise. It is the
+signature of anchors splatting to the wrong pixels — the blend was pulling depth toward ToF
+readings projected beside where they belonged. After the fix the same band reads **0.0075 m**,
+a 94 % reduction against its own no-blend arm and the best figure anywhere in the table. At
+30–90° both arms are bit-identical at 0.0616, which is the correct behaviour where no anchor
+is near enough to blend toward.
+
+> **The absolute levels are NOT comparable across the two runs, and look worse.** MAE 0.167 →
+> 0.264 for the no-blend arm. Different drive, different day, different route — and this one
+> was harder and faster: frame-to-frame motion ran ~4× the earlier session (0.0106 vs 0.0028 m).
+> The tool is built around exactly this fact, which is why both arms come from one pass on one
+> frame. **Only the within-run gap is a controlled comparison.** Reading down the columns
+> across the horizontal rule would manufacture a regression that did not happen.
+
+Rate re-confirmed the same session with the lights on, since 9.35 Hz had been measured in a
+dark room: **9.38 Hz** `/depth` and `/cloud`, `/image` 30.14 Hz, `/tof` 15.95 Hz, maps 143.6 ms
+stale at the median. Scene content does not move the rate — the network's cost is fixed — and
+the ToF supplying 15.95 Hz against a 9.38 Hz output confirms the pipeline is still the
+constraint, which is what makes it a measurement of compute.
+
+`docs/demo/benchmarks/blend_ab_live_v7_2026-08-04.json`,
+`rate_live_v7_lights_2026-08-04.json`. Clip from the same drive:
+[`docs/demo/clips/drive_4panel_v7.mp4`](../docs/demo/clips/drive_4panel_v7.mp4).
 
 #### Intent: the blend is architecture, not a patch
 
@@ -2397,7 +2499,9 @@ top-down*, recorded from the deployed node by
 
 | file | what it shows |
 |---|---|
-| `live2_4panel.mp4` | **2026-07-30, current build** — 35 s driving, 421 frames, blend + ROI on, after all seven speed fixes. The clip that matches every number in this file. |
+| `drive_4panel_v7.mp4` | **2026-08-04, current build** — 45 s driving, 675 frames, `student_v4_heldout` + `residual_v7`, at the corrected 73.5°×60.5° field of view and with the σ rework in. Recorded on the same drive as the blend A/B re-run. **The clip that matches every number in this file.** |
+| `drive_4panel_v7_small.mp4` | the same, downscaled for embedding |
+| `live2_4panel.mp4` | 2026-07-30 — 35 s driving, 421 frames. **Superseded**: recorded before the field-of-view fix, so its ToF cone is drawn at the wrong 45° width |
 | `live2_4panel_small.mp4` | the same, downscaled for embedding |
 | `drive_4panel.mp4` | 2026-07-28, **pre-dates** the blend, the ROI stage and the GPU rewrites |
 | `static_4panel.mp4` | 2026-07-28, stationary |
@@ -2413,7 +2517,10 @@ top-down*, recorded from the deployed node by
 
 | file | measurement |
 |---|---|
-| `blend_ab_live.json` | LIVE-2 — blend A/B, 600 frames driving |
+| `blend_ab_live_v7_2026-08-04.json` | **current** — blend A/B on v7 after the fov fix, 600 frames driving |
+| `rate_live_v7_lights_2026-08-04.json` | **current** — deployed rate under lights, 9.38 Hz |
+| `blend_depth_equality_2026-08-04.json` | proof the σ rework left depth bitwise unchanged |
+| `blend_ab_live.json` | LIVE-2 — blend A/B, 600 frames driving, **pre-fov-fix** |
 | `rate_live_on_verified.json` | deployed rate as first shipped — 7.16 Hz |
 | `rate_live_after_fix.json` | after the blend GPU rewrite — 7.41 Hz |
 | `rate_live_roigpu.json` | after the ROI GPU rewrite — 10.36 Hz |

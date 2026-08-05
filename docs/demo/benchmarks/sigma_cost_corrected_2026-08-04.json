@@ -1,0 +1,24 @@
+{
+ "date": "2026-08-04",
+ "question": "True per-frame cost of the Stage 7c sigma terms",
+ "supersedes": "ab_sigma_cost.py / the 0.80 ms figure",
+ "why_first_answer_wrong": "The off arm zeroed DISAGREE_K/SUPPORT_FRAC/SPREAD_K, which leaves the reduced-grid fields, both cv2.blur calls, the GPU upsample and the full-frame var add still running. It measured arithmetic values, not arithmetic.",
+ "method": "Bypass the block entirely vs run it. 40 real logged frames x 3 reps, deployed engines, 1640x1232.",
+ "blend_only_ms": {
+  "median": 15.901,
+  "mean": 16.09
+ },
+ "blend_plus_sigma_ms": {
+  "median": 26.544,
+  "mean": 26.642
+ },
+ "added_cost_ms": {
+  "median": 10.643,
+  "mean": 10.553
+ },
+ "rate_before_terms_hz": 10.29,
+ "rate_after_terms_hz": 9.38,
+ "predicted_after_hz": 9.27,
+ "verdict": "Cost is 10.6 ms, 13x the originally reported 0.80 ms. Prediction matches the live measurement, closing the loop.",
+ "lesson": "Zeroing a constant is not the same as skipping the work; an off arm must bypass the branch."
+}

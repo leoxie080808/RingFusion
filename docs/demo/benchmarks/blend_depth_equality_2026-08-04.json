@@ -1,0 +1,23 @@
+{
+ "date": "2026-08-04",
+ "question": "Did the sigma commit (b4e438a) change the DEPTH the blend produces?",
+ "why": "blend.py sits on the depth path. Every v7 depth number in the READMEs was measured BEFORE b4e438a. If depth moved, those numbers are stale and the blend A/B would be scoring a silently-changed blend.",
+ "method": "Pre-sigma blend_depth extracted from ab25f0d and the current one called on byte-identical real inputs (deployed engines, real logged frames, center-island anchor split). Bitwise comparison, not allclose.",
+ "engines": {
+  "backbone": "student_v4_heldout_fp16.engine",
+  "residual": "residual_v7_fov73_fp16.engine"
+ },
+ "frames_compared": 60,
+ "frames_skipped": 0,
+ "source": "ros2_ws/data/real (1234 frames, every 20th taken so the sample spans the whole log)",
+ "paths_tested": [
+  "return_fields=False (every offline scorer)",
+  "return_fields=True (the deployed node)"
+ ],
+ "worst_abs_diff_m": 0.0,
+ "weight_map_identical": true,
+ "verdict": "BITWISE IDENTICAL",
+ "conclusion": "All v7 depth numbers stand unchanged. The sigma work is additive: it raises var and leaves depth untouched.",
+ "code_evidence": "git diff ab25f0d b4e438a on blend.py touches the depth path only by appending a third return element behind a default-False kwarg; pipeline.py assigns metric identically and only adds a term to var. gpu_ops.py gains one new function and modifies none.",
+ "unit_tests": "7/7 perception tests pass"
+}

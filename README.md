@@ -66,12 +66,14 @@ the two optional stages (Stage 7c blend, Stage 4b/7d ROI) are on — both defaul
 
 | configuration | measured on the robot |
 |---|---|
-| blend + ROI **on** (default) | **10.3 Hz** ✅ above the ToF's 8.3 Hz |
+| blend + ROI **on**, **+ σ terms** (default, current) | **9.38 Hz** ✅ above the ToF's 8.3 Hz |
+| blend + ROI **on**, before the σ terms | **10.29 Hz** |
 | blend + ROI **off** | **13.3 Hz** ✅ |
 
-*(10.29 Hz on the current `residual_v7` build, 2026-08-04. Figures of **10.4 Hz** elsewhere in
-these docs are the 2026-07-30 measurement; the 1 % difference is run-to-run noise, not a
-regression — the residual is the same architecture and engine size across v4/v6/v7.)*
+*(9.38 Hz measured 2026-08-04 under lights, and 9.35 Hz in the dark — scene content does not
+move it. The drop from 10.29 Hz is the Stage 7c σ terms, which cost a measured
+**10.6 ms/frame**; see the correction below. Figures of **10.4 Hz** elsewhere in these docs are
+the 2026-07-30 measurement, before both.)*
 
 Measured 2026-07-30 with [`rate_live.py`](tools/diagnostics/rate_live.py); earlier figures of
 13.7 Hz predate these stages and correspond to the second row; the default configuration was
@@ -84,8 +86,8 @@ breakdown and the reason the offline estimate was 38 ms optimistic are
 
 | | value |
 |---|---|
-| `/depth`, `/depth_var`, `/cloud` | **10.3 Hz** default / **13.3 Hz** with blend+ROI off *(deployed node, incl. ROS + rectification)* |
-| Depth error, extrapolating away from the ToF | **0.034 m** median (`center` protocol, 200 held-out frames). The 600-frame moving-robot confirmation predates the 2026-08-03 field-of-view fix and needs re-running |
+| `/depth`, `/depth_var`, `/cloud` | **9.38 Hz** default / **13.3 Hz** with blend+ROI off *(deployed node, incl. ROS + rectification)* |
+| Depth error, extrapolating away from the ToF | **0.034 m** median (`center` protocol, 200 held-out frames). ✅ **Confirmed on the moving robot 2026-08-04** after the field-of-view fix — 600 frames, blend −6.3 % MAE, see below |
 | Depth error, interpolating between ToF zones | **0.014 m** median (`random` protocol) |
 | Uncertainty quality, `corr(σ, \|error\|)` | **0.943** *(at ToF anchor pixels — circular)*. Against **tape**: rank corr **+0.655**, coverage@1σ **0.818** vs a 0.683 target — see [LIVE-4](#is-the-uncertainty-trustworthy-live-4-2026-08-04) |
 | Backbone agreement with truth, ρ | **0.917** *(deployed config; the projection sweep's best row was 0.914)* |
@@ -332,8 +334,15 @@ how far away the nearest anchor is, and whether a zone disagrees with its neighb
 | worst failure | 3.86σ | **2.30σ** |
 | out-of-cone marker | 2.04σ ❌ | **0.38σ** ✅ |
 
-**Cost 0.80 ms/frame** (offline A/B, 82.10 vs 81.29 ms); deployed rate 9.35 Hz, above the ToF's
+**Cost 10.6 ms/frame** — measured 2026-08-04 by bypassing the block, 40 real frames: blend only
+15.90 ms, blend + σ terms 26.54 ms. Deployed rate **10.29 → 9.38 Hz**, still above the ToF's
 8.3 Hz floor.
+
+> **This corrects an earlier claim of 0.80 ms in this file.** That A/B turned the terms off by
+> zeroing their constants, which leaves every allocation, both `cv2.blur` calls, the GPU
+> upsample and the full-frame add still running — it measured arithmetic *values*, not
+> arithmetic. The deployed rate exposed it: a 9.4 ms drop that 0.80 ms could not explain. The
+> corrected figure predicts 9.27 Hz against 9.38 Hz measured.
 
 > **The one step that turned out to be impossible is the interesting one.** Re-fitting the σ
 > *scale* cannot work here: shrinking σ to hit the 0.683 coverage target pushes the mixed-return
@@ -346,6 +355,45 @@ Full detail, including two wrong turns worth not repeating:
 [σ fixed](ros2_ws/README.md#σ-fixed--three-terms-the-blend-already-knew-2026-08-04).
 **n = 11, and three constants were tuned against those 11 points** — provisional until a larger
 session.
+
+### The blend, re-tested on the moving robot — 2026-08-04
+
+![four-panel drive, v7](docs/demo/gifs/drive_4panel_v7.gif)
+
+*Camera · ToF 32×32 · fused depth · top-down, from the 45 s drive. Full clip:
+[`drive_4panel_v7.mp4`](docs/demo/clips/drive_4panel_v7.mp4).*
+
+The 2026-07-30 blend A/B predated the field-of-view fix, and the blend acts near anchors, so
+moving the anchors invalidated it. Re-run on the same protocol — 600 frames driving, both arms
+from **one** backbone+residual pass per frame, blend fed only the central island, 386 681
+held-out zones scored outside it:
+
+| `center`, held-out zones | MAE ↓ | medAE ↓ | p95 ↓ | δ<1.25 ↑ |
+|---|---|---|---|---|
+| network alone | 0.2640 m | 0.0726 m | 1.0228 m | 0.687 |
+| **+ blend** | **0.2474 m** | **0.0648 m** | **0.9768 m** | **0.707** |
+| | −6.3 % | −10.7 % | −4.5 % | +2.0 pp |
+
+**The blend wins on every metric, by a wider margin than before** (−6.3 % MAE against −5.4 %),
+and now improves temporal stability rather than merely not hurting it (0.0100 vs 0.0106 m
+frame-to-frame).
+
+**The result that matters is a sign reversal.** Split by angular distance from the ToF island,
+the 10–15° bin — the one closest to the anchors, hence most exposed to anchors being in the
+wrong place — read **0.0375 m blended against 0.0336 m unblended before the fix**. The blend was
+making it *worse*, and the original write-up dismissed it as the medians barely moving. It was
+not noise. After the fix the same bin reads **0.0075 m**, a 94 % improvement over its own
+no-blend arm. At 30–90° both arms are identical, which is correct where no anchor is near.
+
+> **The raw error levels are worse than the 2026-07-30 run and that is not a regression.**
+> Different drive, different route, and this one ran ~4× faster in frame-to-frame motion. Error
+> depends far more on the scene than on any setting — which is precisely why both arms come from
+> one pass on one frame. **Only the within-run gap is controlled.**
+
+Rate re-confirmed the same session with the lights on, since 9.35 Hz had been measured in the
+dark: **9.38 Hz**. Scene content does not move it.
+
+`blend_ab_live_v7_2026-08-04.json`, `rate_live_v7_lights_2026-08-04.json`.
 
 ### On a public benchmark, with independent ground truth
 
