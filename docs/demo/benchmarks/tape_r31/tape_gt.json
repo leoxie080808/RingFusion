@@ -1,0 +1,9 @@
+{
+ "captured": "2026-09-14 11:33:30",
+ "origin_offset_m": 0.0,
+ "instrument": "laser",
+ "role": "heldout",
+ "edge_deg": 3.0,
+ "note": "range_m is SLANT RANGE from the optical centre; tape_eval.py converts to axis depth via z = r*cos(theta)",
+ "points": []
+}
