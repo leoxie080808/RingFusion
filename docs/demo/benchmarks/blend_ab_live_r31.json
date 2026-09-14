@@ -1,0 +1,125 @@
+{
+ "frames": 600,
+ "metrics": {
+  "A_noblend": {
+   "n_eval": 415368,
+   "coverage": 1.0,
+   "mae": 0.16099549364587779,
+   "medae": 0.034214301663413146,
+   "p95": 0.8859594460811101,
+   "rmse": 0.35597048572624734,
+   "absrel": 0.18093068095850018,
+   "bias": -0.040771968022882334,
+   "d1": 0.7889798925290344,
+   "d2": 0.8911904624333121,
+   "d3": 0.9402457579784673
+  },
+  "B_blend": {
+   "n_eval": 415368,
+   "coverage": 1.0,
+   "mae": 0.15260215270562635,
+   "medae": 0.033115486070825095,
+   "p95": 0.8491228838302277,
+   "rmse": 0.34390401106477153,
+   "absrel": 0.1765794147140939,
+   "bias": -0.03669771540572213,
+   "d1": 0.7998786618131392,
+   "d2": 0.8965110456270102,
+   "d3": 0.9428410469752123
+  },
+  "paired": {
+   "mae": {
+    "stat_a": 0.16099549364587779,
+    "stat_b": 0.15260215270562635,
+    "point": -0.008393340940251431,
+    "lo": -0.009331110177803012,
+    "hi": -0.007514464822799155,
+    "p_two_sided": 0.0,
+    "B": 2000,
+    "n_groups": 600
+   },
+   "medae": {
+    "stat_a": 0.034214301663413146,
+    "stat_b": 0.033115486070825095,
+    "point": -0.001098815592588051,
+    "lo": -0.0012923380075845765,
+    "hi": -0.0009085050006299791,
+    "p_two_sided": 0.0,
+    "B": 2000,
+    "n_groups": 600
+   }
+  }
+ },
+ "binned_medae": {
+  "A_noblend": [
+   NaN,
+   NaN,
+   NaN,
+   0.016946992163397234,
+   0.036850644978766,
+   0.032632022994416365
+  ],
+  "B_blend": [
+   NaN,
+   NaN,
+   NaN,
+   0.009940787647462646,
+   0.0342439693139579,
+   0.032632022994416365
+  ]
+ },
+ "edges_deg": [
+  0,
+  3,
+  6,
+  10,
+  15,
+  30,
+  90
+ ],
+ "jump": {
+  "A_noblend": 0.008161455392837524,
+  "B_blend": 0.007801175117492676
+ },
+ "env": {
+  "note": "blend_ab_live",
+  "captured_utc": "2026-09-14T03:29:04Z",
+  "uptime": "up 1 day, 6 hours, 2 minutes",
+  "versions": {
+   "l4t": [
+    "# R36 (release), REVISION: 5.0, GCID: 43688277, BOARD: generic, EABI: aarch64, DATE: Fri Jan 16 03:50:45 UTC 2026"
+   ],
+   "tensorrt": "10.3.0.30-1+cuda12.5",
+   "cuda": "12.6.68",
+   "cudnn": "9.3.0.75-1",
+   "jetpack_metapackage": ""
+  },
+  "clocks": {
+   "cpu_governor": "schedutil",
+   "cpu_min_khz": "2201600",
+   "cpu_max_khz": "2201600",
+   "gpu_governor": "nvhost_podgov",
+   "gpu_min_hz": "1300500000",
+   "gpu_max_hz": "1300500000",
+   "gpu_cur_hz": "1300500000",
+   "nvpmodel": "NV Power Mode: MAXN 0",
+   "cpu_locked": true,
+   "gpu_locked": true,
+   "jetson_clocks_applied": true
+  },
+  "thermal_c": {
+   "cpu-thermal": 49.1,
+   "gpu-thermal": 43.7,
+   "soc0-thermal": 46.0,
+   "soc1-thermal": 45.5,
+   "soc2-thermal": 45.9,
+   "tj-thermal": 49.1
+  },
+  "engines": {},
+  "git": {
+   "commit": "aba5edd20e511a13ad916ff89ce50c4445d06073",
+   "dirty": true,
+   "branch": "main"
+  }
+ }
+}

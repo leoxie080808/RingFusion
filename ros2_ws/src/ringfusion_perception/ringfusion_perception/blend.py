@@ -141,12 +141,23 @@ def apply_scene_cap(D, anchor_depth, anchor_mask, k=SCENE_CAP_K,
 
 
 def sigma_support_var(D_net, dist_r, tof_r, scale, fx,
-                      near_deg=NEAR_DEG, far_deg=FAR_DEG):
+                      near_deg=NEAR_DEG, far_deg=FAR_DEG,
+                      disagree_k=DISAGREE_K, support_frac=SUPPORT_FRAC,
+                      spread_k=SPREAD_K):
     """Extra VARIANCE (m^2, full resolution) from the two blend-visible failure modes.
 
     Computed on the REDUCED grid and block-replicated up, the same trick blend_apply_lowres
     uses: both terms vary over the ~20 px blend ramp, so 1/scale resolution loses nothing
     and costs 1/scale^2 of the arithmetic.
+
+    The three K constants default to the module values, so the deployed call is
+    unchanged. They are arguments so a term can be zeroed WITHOUT editing the
+    module -- the reviewer asked for uncertainty estimation to be ablated, and
+    editing constants would mean re-running the whole capture once per arm.
+    Zeroing is the right control for an ACCURACY ablation; it is the wrong one
+    for a COST measurement, where the arithmetic still runs (see
+    sigma_cost_corrected_2026-08-04.json, which is why the cost is 10.6 ms and
+    not the 0.80 ms a zeroed-constant A/B first reported).
 
     disagreement -- w * |D_tof - D_net|, the distance the blend actually moves the depth.
         Weighted by the blend weight because that is how much of the move is real: far from
@@ -169,11 +180,11 @@ def sigma_support_var(D_net, dist_r, tof_r, scale, fx,
     wgt = 1.0 - t * t * (3.0 - 2.0 * t)
     wgt = _np.where(tof_r > 0, wgt, 0.0).astype(_np.float32)
 
-    disagree = DISAGREE_K * wgt * _np.abs(tof_r - net_r)
+    disagree = disagree_k * wgt * _np.abs(tof_r - net_r)
 
     ang = _np.degrees(_np.arctan(dist_px / max(float(fx), 1e-6)))
     short = _np.clip((ang - float(far_deg)) / max(float(far_deg), 1e-6), 0.0, None)
-    support = SUPPORT_FRAC * _np.maximum(net_r, 0.0) * short
+    support = support_frac * _np.maximum(net_r, 0.0) * short
 
     # Disagreement between NEIGHBOURING zones. tof_r is the nearest-anchor field, so it is
     # piecewise constant over Voronoi cells; a large max-min across a small window means
@@ -192,7 +203,7 @@ def sigma_support_var(D_net, dist_r, tof_r, scale, fx,
     den = _cv.blur(valid, kw)
     local = _np.where(den > 1e-6, num / _np.maximum(den, 1e-6), tof_r)
     spread = _np.where(tof_r > 0, _np.abs(tof_r - local), 0.0)
-    spread = SPREAD_K * wgt * spread.astype(_np.float32)
+    spread = spread_k * wgt * spread.astype(_np.float32)
 
     var_r = (disagree ** 2 + support ** 2 + spread ** 2).astype(_np.float32)
 

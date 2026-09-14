@@ -30,6 +30,9 @@ import statistics
 import time
 
 import numpy as np
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import envinfo                                                # noqa: E402
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image, PointCloud2
@@ -84,6 +87,12 @@ def summarise(ts):
     d = np.diff(ts) * 1e3
     return {'n': len(ts), 'hz': (len(ts) - 1) / span if span > 0 else float('nan'),
             'median_ms': float(np.median(d)), 'p90_ms': float(np.percentile(d, 90)),
+            # Section V-A quotes a 5th-95th percentile RATE, which is the 95th and 5th
+            # percentile of the PERIOD inverted -- a long period is a low rate. Both
+            # ends are stored so the interval can be quoted without re-running.
+            'p05_ms': float(np.percentile(d, 5)), 'p95_ms': float(np.percentile(d, 95)),
+            'hz_p05': float(1000.0 / np.percentile(d, 95)),
+            'hz_p95': float(1000.0 / np.percentile(d, 5)),
             'max_ms': float(d.max())}
 
 
@@ -118,7 +127,8 @@ def main():
             print(f'{k:<10}{"-- no messages --":>45}')
             continue
         print(f'{k:<10}{r["n"]:>6}{r["hz"]:>9.2f}{r["median_ms"]:>9.1f}m'
-              f'{r["p90_ms"]:>9.1f}m{r["max_ms"]:>9.1f}m')
+              f'{r["p90_ms"]:>9.1f}m{r["max_ms"]:>9.1f}m'
+              f'   [{r["hz_p05"]:.2f}-{r["hz_p95"]:.2f} Hz p05-p95]')
 
     d, t = res['depth'], res['tof']
     if d is None:
@@ -130,7 +140,9 @@ def main():
     lat = None
     if n.lat:
         lat = {'median_ms': float(np.median(n.lat) * 1e3),
+               'p05_ms': float(np.percentile(n.lat, 5) * 1e3),
                'p90_ms': float(np.percentile(n.lat, 90) * 1e3),
+               'p95_ms': float(np.percentile(n.lat, 95) * 1e3),
                'max_ms': float(np.max(n.lat) * 1e3)}
         print(f'\n/depth age on arrival (how stale each map is):')
         print(f'  median {lat["median_ms"]:.1f} ms   p90 {lat["p90_ms"]:.1f} ms   '
@@ -158,8 +170,12 @@ def main():
           f'{"PASS" if d["hz"] >= 8.3 else "FAIL"}')
 
     if a.out:
+        # env goes in the file, not just the label. rate_live_on_final.json was
+        # mislabelled at capture and only caught later by reading back the node's
+        # parameters; a capture that carries its own machine state cannot drift.
         json.dump({'label': a.label, 'secs': a.secs, 'expect_hz': a.expect_hz,
-                   'topics': res, 'depth_latency': lat},
+                   'topics': res, 'depth_latency': lat,
+                   'env': envinfo.capture(note='rate_live')},
                   open(a.out, 'w'), indent=1)
         print(f'\nwrote {a.out}')
     rclpy.shutdown()

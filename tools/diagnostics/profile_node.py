@@ -22,6 +22,9 @@ import json
 import time
 
 import numpy as np
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import envinfo                                                # noqa: E402
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image, PointCloud2
@@ -176,6 +179,8 @@ def main():
 
     if a.out:
         json.dump({'blend': a.blend, 'roi_enable': a.roi_enable, 'n': len(n.rows),
+                   'env': envinfo.capture([a.backbone_engine, a.residual_engine],
+                                          note='profile_node'),
                    'frame_total_ms': tot, 'pipeline_total_ms': pipe, 'stages': report},
                   open(a.out, 'w'), indent=1)
         print(f'wrote {a.out}')

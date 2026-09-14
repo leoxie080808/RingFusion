@@ -29,6 +29,10 @@ import sys
 import time
 
 import numpy as np
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+from bootstrap import paired_diff                             # noqa: E402
+import envinfo                                                # noqa: E402
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
@@ -177,6 +181,25 @@ def main():
         report[name] = mm
     print(M.format_table(rows))
 
+    # --- is the difference real? ---------------------------------------------------------
+    # The two arms score the SAME frames, so the claim "MAE falls from X to Y" is a paired
+    # comparison and has to be tested as one: bootstrapping each arm separately and
+    # eyeballing whether the intervals overlap discards the pairing and will call a real
+    # effect insignificant. One frame draw, applied to both arms, per resample.
+    grp = {nm: [np.abs(np.asarray(p) - np.asarray(g))
+                for p, g in zip(n.rows[nm]['p'], n.rows[nm]['g'])] for nm in ('A_noblend', 'B_blend')}
+    grp = {nm: [e[np.isfinite(e)] for e in v] for nm, v in grp.items()}
+    report['paired'] = {}
+    for stat_name, fn in (('mae', np.mean), ('medae', np.median)):
+        d = paired_diff(grp['A_noblend'], grp['B_blend'], stat=fn, B=2000)
+        report['paired'][stat_name] = d
+        sign = 'blend better' if d['point'] < 0 else 'blend worse'
+        verdict = 'resolvable' if (d['lo'] < 0) == (d['hi'] < 0) else 'NOT resolvable'
+        print(f"  paired {stat_name:<6} {d['stat_a']:.4f} -> {d['stat_b']:.4f}  "
+              f"delta {d['point']:+.4f} [{d['lo']:+.4f}, {d['hi']:+.4f}]  "
+              f"p={d['p_two_sided']:.3f}  {sign}, {verdict}")
+    print(f"  ({report['paired']['mae']['n_groups']} frames resampled, B=2000)")
+
     # binned by angle -- the blend can only help near its anchors, so the interesting
     # question is how far out its influence reaches before the two arms converge
     EDGES = [0, 3, 6, 10, 15, 30, 90]
@@ -211,7 +234,17 @@ def main():
     if a.out:
         json.dump({'frames': got, 'metrics': report, 'binned_medae': binned,
                    'edges_deg': EDGES,
-                   'jump': {k: float(np.median(v)) for k, v in n.jump.items() if v}},
+                   'jump': {k: float(np.median(v)) for k, v in n.jump.items() if v},
+                   # Persisted, not just printed: median max depth is the only record of how
+                   # DEEP the driven scene was, and the blend's benefit scales with that --
+                   # without it a later reader cannot tell a 2.5 m run from a 4.6 m one.
+                   # frac_beyond_tof_range says whether the far-field regime was reached at all.
+                   'far_field': {k: {'max_depth_median_m': float(np.median(np.array(v)[:, 0])),
+                                     'frac_beyond_tof_range': float(np.median(np.array(v)[:, 1]))}
+                                 for k, v in n.far.items() if v},
+                   'tof_range_gate_m': [MIN_RANGE, MAX_RANGE],
+                   'env': envinfo.capture([a.backbone_engine, a.residual_engine],
+                                          note='blend_ab_live')},
                   open(a.out, 'w'), indent=1)
         print(f'\nwrote {a.out}')
     rclpy.shutdown()

@@ -1,0 +1,138 @@
+{
+ "frames": 600,
+ "metrics": {
+  "A_noblend": {
+   "n_eval": 406223,
+   "coverage": 1.0,
+   "mae": 0.19842551641824802,
+   "medae": 0.045529514270033156,
+   "p95": 0.8724527343616981,
+   "rmse": 0.3618905733342313,
+   "absrel": 0.14387724778826796,
+   "bias": 0.03783224095746434,
+   "d1": 0.8218761616156643,
+   "d2": 0.9385362227151097,
+   "d3": 0.974715858038565
+  },
+  "B_blend": {
+   "n_eval": 406223,
+   "coverage": 1.0,
+   "mae": 0.1850286844106567,
+   "medae": 0.04431675446726424,
+   "p95": 0.8420386714755644,
+   "rmse": 0.3460695262912388,
+   "absrel": 0.13822876867659065,
+   "bias": 0.03315452124079364,
+   "d1": 0.8362057293653978,
+   "d2": 0.9416379673233667,
+   "d3": 0.9751171154759825
+  },
+  "paired": {
+   "mae": {
+    "stat_a": 0.19842551641824802,
+    "stat_b": 0.1850286844106567,
+    "point": -0.013396832007591314,
+    "lo": -0.01399694606180952,
+    "hi": -0.012791616604888778,
+    "p_two_sided": 0.0,
+    "B": 2000,
+    "n_groups": 600
+   },
+   "medae": {
+    "stat_a": 0.045529514270033156,
+    "stat_b": 0.04431675446726424,
+    "point": -0.0012127598027689146,
+    "lo": -0.0018168514502517768,
+    "hi": -0.0007213032838024229,
+    "p_two_sided": 0.0,
+    "B": 2000,
+    "n_groups": 600
+   }
+  }
+ },
+ "binned_medae": {
+  "A_noblend": [
+   NaN,
+   NaN,
+   NaN,
+   NaN,
+   0.07345195048320174,
+   0.03700503609198602
+  ],
+  "B_blend": [
+   NaN,
+   NaN,
+   NaN,
+   NaN,
+   0.05541338518888844,
+   0.03700503609198602
+  ]
+ },
+ "edges_deg": [
+  0,
+  3,
+  6,
+  10,
+  15,
+  30,
+  90
+ ],
+ "jump": {
+  "A_noblend": 0.004932671785354614,
+  "B_blend": 0.0046091824769973755
+ },
+ "env": {
+  "note": "blend_ab_live",
+  "captured_utc": "2026-09-14T03:49:29Z",
+  "uptime": "up 1 day, 6 hours, 22 minutes",
+  "versions": {
+   "l4t": [
+    "# R36 (release), REVISION: 5.0, GCID: 43688277, BOARD: generic, EABI: aarch64, DATE: Fri Jan 16 03:50:45 UTC 2026"
+   ],
+   "tensorrt": "10.3.0.30-1+cuda12.5",
+   "cuda": "12.6.68",
+   "cudnn": "9.3.0.75-1",
+   "jetpack_metapackage": ""
+  },
+  "clocks": {
+   "cpu_governor": "schedutil",
+   "cpu_min_khz": "2201600",
+   "cpu_max_khz": "2201600",
+   "gpu_governor": "nvhost_podgov",
+   "gpu_min_hz": "1300500000",
+   "gpu_max_hz": "1300500000",
+   "gpu_cur_hz": "1300500000",
+   "nvpmodel": "NV Power Mode: MAXN 0",
+   "cpu_locked": true,
+   "gpu_locked": true,
+   "jetson_clocks_applied": true
+  },
+  "thermal_c": {
+   "cpu-thermal": 50.5,
+   "gpu-thermal": 44.6,
+   "soc0-thermal": 46.9,
+   "soc1-thermal": 46.4,
+   "soc2-thermal": 46.9,
+   "tj-thermal": 50.4
+  },
+  "engines": {
+   "student_v4_heldout_fp16.engine": {
+    "path": "/home/leroi-ultio/RingFusion/student_v4_heldout_fp16.engine",
+    "exists": true,
+    "bytes": 9573020,
+    "sha256_1mb": "8ce50916693373a7"
+   },
+   "residual_v7_fov73_fp16.engine": {
+    "path": "/home/leroi-ultio/RingFusion/residual_v7_fov73_fp16.engine",
+    "exists": true,
+    "bytes": 1207732,
+    "sha256_1mb": "1e2f6e51e6a8cc97"
+   }
+  },
+  "git": {
+   "commit": "aba5edd20e511a13ad916ff89ce50c4445d06073",
+   "dirty": true,
+   "branch": "main"
+  }
+ }
+}

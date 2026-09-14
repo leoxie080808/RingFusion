@@ -1,0 +1,86 @@
+{
+ "1640x1232_blend0_roi0": {
+  "median_ms": 50.326001499342965,
+  "p90_ms": 52.4812427971483,
+  "hz": 19.870444108559976
+ },
+ "1640x1232_blend1_roi0": {
+  "median_ms": 73.34175350115402,
+  "p90_ms": 73.6394121995545,
+  "hz": 13.63479808243561
+ },
+ "1640x1232_blend1_roi1": {
+  "median_ms": 79.02407549772761,
+  "p90_ms": 79.47393919930619,
+  "hz": 12.654371388739065
+ },
+ "640x480_blend0_roi0": {
+  "median_ms": 20.075970998732373,
+  "p90_ms": 20.14959229854867,
+  "hz": 49.81079122216014
+ },
+ "640x480_blend1_roi0": {
+  "median_ms": 25.567080001565046,
+  "p90_ms": 25.66008590038109,
+  "hz": 39.11279660949888
+ },
+ "640x480_blend1_roi1": {
+  "median_ms": 28.1566310004564,
+  "p90_ms": 28.241431200513034,
+  "hz": 35.515612644985495
+ },
+ "env": {
+  "note": "time_pipeline",
+  "captured_utc": "2026-09-13T05:11:35Z",
+  "uptime": "up 7 hours, 44 minutes",
+  "versions": {
+   "l4t": [
+    "# R36 (release), REVISION: 5.0, GCID: 43688277, BOARD: generic, EABI: aarch64, DATE: Fri Jan 16 03:50:45 UTC 2026"
+   ],
+   "tensorrt": "10.3.0.30-1+cuda12.5",
+   "cuda": "12.6.68",
+   "cudnn": "9.3.0.75-1",
+   "jetpack_metapackage": ""
+  },
+  "clocks": {
+   "cpu_governor": "schedutil",
+   "cpu_min_khz": "2201600",
+   "cpu_max_khz": "2201600",
+   "gpu_governor": "nvhost_podgov",
+   "gpu_min_hz": "1300500000",
+   "gpu_max_hz": "1300500000",
+   "gpu_cur_hz": "1300500000",
+   "nvpmodel": "NV Power Mode: MAXN 0",
+   "cpu_locked": true,
+   "gpu_locked": true,
+   "jetson_clocks_applied": true
+  },
+  "thermal_c": {
+   "cpu-thermal": 46.2,
+   "gpu-thermal": 41.6,
+   "soc0-thermal": 43.7,
+   "soc1-thermal": 42.9,
+   "soc2-thermal": 43.5,
+   "tj-thermal": 46.2
+  },
+  "engines": {
+   "student_v4_heldout_fp16.engine": {
+    "path": "/home/leroi-ultio/RingFusion/student_v4_heldout_fp16.engine",
+    "exists": true,
+    "bytes": 9573020,
+    "sha256_1mb": "8ce50916693373a7"
+   },
+   "residual_v7_fov73_fp16.engine": {
+    "path": "/home/leroi-ultio/RingFusion/residual_v7_fov73_fp16.engine",
+    "exists": true,
+    "bytes": 1207732,
+    "sha256_1mb": "1e2f6e51e6a8cc97"
+   }
+  },
+  "git": {
+   "commit": "aba5edd20e511a13ad916ff89ce50c4445d06073",
+   "dirty": true,
+   "branch": "main"
+  }
+ }
+}

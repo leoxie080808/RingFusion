@@ -49,13 +49,32 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from anchoring_bridge import build_residual_inputs, calib_from_yaml   # noqa: E402
 from ringfusion_perception import geometry as geo                     # noqa: E402
+from ringfusion_perception import roi                                  # noqa: E402
+from bootstrap import frame_bootstrap, paired_diff                    # noqa: E402
 from ringfusion_perception.blend import blend_depth, apply_scene_cap                   # noqa: E402
 import metrics as M                                                   # noqa: E402
+import envinfo                                                        # noqa: E402
 
 MIN_RANGE, MAX_RANGE = 0.15, 6.5      # same gate as build_real_supervision
 ANG_EDGES = [0.0, 3.0, 6.0, 10.0, 15.0, 30.0]
 METHODS = ('B0_const', 'B1_nearest', 'B2_bilinear', 'B3_medscale',
-           'B4_affine', 'B4c_affine_cl', 'B5_ringfusion', 'B6_blend')
+           'W0_uniform_norobust', 'W1_rangep1', 'W2_rangep2', 'W3_roi', 'W0_uniform',
+           'B4_affine', 'B4c_affine_cl')
+
+# The W* rows exist because the paper's Method section and the deployed code disagree
+# about the anchor weighting. Section IV-C says "we use w_i ~ z_i"; anchoring.py has
+# RANGE_WEIGHT_P = 0.0 and pipeline.run folds in the geometric ROI gate from roi.py
+# instead. All five run on the SAME anchors and the SAME held-out zones, differing only
+# in w_i, so the column is a clean weighting ablation rather than five separate configs:
+#
+#   W0_uniform_norobust  w = 1, no Huber pass      <- the table's reference row
+#   W1_rangep1           w = z      (what the paper claims)
+#   W2_rangep2           w = z^2    (what error propagation predicts)
+#   W3_roi               geometric ROI gate        (what actually ships)
+#   W0_uniform           w = 1, one Huber pass     <- isolates the robust pass alone
+#
+# W0_uniform should reproduce B4c_affine_cl; they take different code paths to the same
+# fit, so a gap between them is a bug and the report prints it as a consistency check.
 
 # B4 and B5 do NOT share a far-field policy: anchoring.to_metric_depth clamps inverse
 # depth at min_disp=1e-4, so B4 can emit 10,000 m, while ResidualRefiner.refine caps at
@@ -66,9 +85,53 @@ METHODS = ('B0_const', 'B1_nearest', 'B2_bilinear', 'B3_medscale',
 CLAMP_M = 20.0
 
 
-def split_zones(valid, protocol, rng, frac=0.25, island=16):
+def zone_step(dist, valid):
+    """Per-zone |depth - median of its valid 8-neighbours|, in metres. 0 where isolated.
+
+    A zone whose reading differs sharply from its neighbours is straddling a depth edge:
+    the surface it sees is not the surface the zones around it see. That is exactly the
+    case a nearest-anchor copy gets wrong and the one the 'random'/'center' protocols
+    cannot expose, because both score at zone centres where the neighbourhood is smooth.
+    """
+    rows, cols = dist.shape
+    step = np.zeros((rows, cols), np.float64)
+    for r in range(rows):
+        for c in range(cols):
+            if not valid[r, c]:
+                continue
+            r0, r1 = max(0, r - 1), min(rows, r + 2)
+            c0, c1 = max(0, c - 1), min(cols, c + 2)
+            nb = dist[r0:r1, c0:c1][valid[r0:r1, c0:c1]]
+            nb = nb[nb != dist[r, c]] if nb.size > 1 else nb
+            if nb.size:
+                step[r, c] = abs(float(dist[r, c]) - float(np.median(nb)))
+    return step
+
+
+def split_zones(valid, protocol, rng, frac=0.25, island=16, dist=None, edge_thresh=0.15):
     """-> (anchor_mask, holdout_mask), both (rows,cols) bool subsets of `valid`."""
     rows, cols = valid.shape
+    if protocol == 'edge':
+        # Hold out the zones sitting ON a depth step, anchor on the smooth remainder.
+        # Requires a real step (edge_thresh) rather than just taking the top quartile,
+        # so a frame with no discontinuity is SKIPPED rather than contributing a
+        # quartile of smooth zones relabelled as edges. That keeps the protocol
+        # measuring what it claims to measure, at the cost of scoring fewer frames.
+        if dist is None:
+            raise ValueError("protocol 'edge' needs the depth map")
+        step = zone_step(dist, valid)
+        cand = valid & (step > edge_thresh)
+        n_cand = int(cand.sum())
+        if n_cand == 0:
+            return np.zeros_like(valid), np.zeros_like(valid)
+        cap = max(1, int(round(int(valid.sum()) * frac)))
+        if n_cand > cap:                      # keep the sharpest steps
+            flat = np.flatnonzero(cand.ravel())
+            keep = flat[np.argsort(-step.ravel()[flat])[:cap]]
+            cand = np.zeros(valid.size, bool)
+            cand[keep] = True
+            cand = cand.reshape(valid.shape)
+        return valid & ~cand, cand
     if protocol == 'random':
         idx = np.flatnonzero(valid.ravel())
         rng.shuffle(idx)
@@ -110,14 +173,58 @@ def angular_coords(flat_idx, cols, pitch_h, pitch_v):
     return np.stack([c * pitch_h, r * pitch_v], 1)      # degrees
 
 
+def parse_engines(specs):
+    """['NAME=PATH' | 'PATH'] -> ordered {name: path}.
+
+    More than one refiner can be scored in a SINGLE run because the reviewer's objection
+    to Table V is that its rows came from different runs on different splits: the analytic
+    output appears as 0.055 m in the table and 0.064 m in the scattered-hold-out paragraph.
+    Loading every engine at once means all of them see the same frames, the same per-frame
+    anchor/hold-out split and the same backbone pass, so the rows are directly comparable
+    by construction rather than by hoping two runs matched.
+
+    A bare path keeps the old single-engine behaviour and the old row names.
+    """
+    out = {}
+    for spec in specs or []:
+        if not spec:
+            continue
+        name, sep, path = spec.partition('=')
+        if not sep:
+            name, path = 'ringfusion', name
+        if name in out:
+            sys.exit(f'--residual-engine: duplicate name {name!r}')
+        if not os.path.exists(path):
+            sys.exit(f'--residual-engine: no such engine {path!r}')
+        out[name] = path
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--rgb-dir', required=True)
     ap.add_argument('--tof-dir', required=True)
     ap.add_argument('--calib', required=True)
     ap.add_argument('--backbone-engine', required=True)
-    ap.add_argument('--residual-engine', default='')
-    ap.add_argument('--protocol', nargs='+', default=['random', 'center'])
+    # Repeatable. 'NAME=PATH' scores that engine as its own row pair; a bare PATH keeps
+    # the legacy names. The supervision-geometry comparison the table needs is
+    #   --residual-engine v7=... scattered=residual_v3_best_fp16.engine \
+    #                            island=residual_v4_best_fp16.engine
+    # with --deployed-engine v7, which puts the scattered and island rows beside the
+    # deployed one on a single split.
+    ap.add_argument('--residual-engine', nargs='*', default=[],
+                    help="repeatable; 'NAME=PATH' or a bare PATH")
+    # The deployed engine keeps the canonical B5_ringfusion / B6_blend row names so the
+    # numbers already cited elsewhere stay findable; every other engine is suffixed.
+    ap.add_argument('--deployed-engine', default='',
+                    help='name of the engine that ships (default: the first one given)')
+    ap.add_argument('--protocol', nargs='+', default=['random', 'center'],
+                    choices=['random', 'center', 'edge', 'insample'])
+    # 'edge' holds out zones straddling a depth step. 0.15 m is above the sensor's own
+    # ~0.01 m tape-verified accuracy by more than an order of magnitude, so a zone over
+    # this is a real surface change rather than measurement noise.
+    ap.add_argument('--edge-thresh', type=float, default=0.15,
+                    help='metres of local depth step that defines an edge zone')
     ap.add_argument('--island', type=int, default=16)
     ap.add_argument('--limit', type=int, default=0, help='0 = all frames')
     # B5 is a TRAINED net and these 1234 pairs are its training set, so scoring it on all
@@ -128,6 +235,10 @@ def main():
     ap.add_argument('--stems-file', default='', help='newline-separated stems to restrict to')
     ap.add_argument('--seed', type=int, default=0)
     ap.add_argument('--out', default='')
+    # Frame-level, not pixel-level: errors inside a frame are strongly correlated, so
+    # resampling pixels would return an interval far too tight to be honest. 0 = skip.
+    ap.add_argument('--bootstrap', type=int, default=1000,
+                    help='bootstrap resamples over FRAMES for the overall metrics')
     # A 2-param fit needs spread in disparity. The 'center' island concentrates anchors,
     # which can degrade conditioning -- if it does, B4/B5 would look bad for a reason
     # unrelated to extrapolation. Drop those frames and report how many.
@@ -141,6 +252,12 @@ def main():
     # delta1 drops materially, k is too tight and it is mangling normal pixels.
     ap.add_argument('--sweep-k', type=float, nargs='*', default=[],
                     help='e.g. --sweep-k 1.25 1.5 2 3 4')
+    # Two rows scored on the SAME frames are paired data, and overlapping marginal CIs are
+    # not the test for them -- frame-to-frame difficulty is common to both arms, so the
+    # marginal intervals are inflated by variation the comparison should difference out.
+    # Each pair here is re-tested with one shared frame draw applied to both arms.
+    ap.add_argument('--paired', nargs='*', default=[],
+                    help="'A:B' row pairs, e.g. B5_scattered:B5_island")
     a = ap.parse_args()
 
     import cv2
@@ -166,14 +283,36 @@ def main():
     print(f'{len(stems)} frames at {w}x{h}  |  ToF fov {calib["fov_h"]}x{calib["fov_v"]} deg')
 
     backbone = TensorRTBackbone(a.backbone_engine)
-    residual = None
-    if a.residual_engine:
-        from ringfusion_perception.residual import ResidualRefiner
-        residual = ResidualRefiner(a.residual_engine)
 
-    methods = list(METHODS) + [f'B4k{k:g}' for k in a.sweep_k]
+    eng_paths = parse_engines(a.residual_engine)
+    deployed = a.deployed_engine or (next(iter(eng_paths)) if eng_paths else '')
+    if deployed and deployed not in eng_paths:
+        sys.exit(f'--deployed-engine {deployed!r} is not one of {list(eng_paths)}')
+
+    def b5(name):
+        return 'B5_ringfusion' if name == deployed else f'B5_{name}'
+
+    def b6(name):
+        return 'B6_blend' if name == deployed else f'B6_{name}'
+
+    refiners = {}
+    if eng_paths:
+        from ringfusion_perception.residual import ResidualRefiner
+        for nm, pth in eng_paths.items():
+            print(f'  refiner {nm:<12} {os.path.basename(pth)}'
+                  f'{"   <- deployed" if nm == deployed else ""}')
+            refiners[nm] = ResidualRefiner(pth)
+
+    methods = list(METHODS) + ['B6_analytic']
+    for nm in refiners:
+        methods += [b5(nm), b6(nm)]
+    methods += [f'B4k{k:g}' for k in a.sweep_k]
     acc = {p: {m: {'pred': [], 'gt': [], 'ang': []} for m in methods} for p in a.protocol}
     skipped = {p: {'nosplit': 0, 'nofit': 0, 'illcond': 0} for p in a.protocol}
+    # The robust pass DOWNWEIGHTS rather than rejects, so both numbers are kept: the
+    # fraction past the Huber threshold and the weight mass actually removed.
+    robust = {p: {'downweighted': [], 'mass_removed': [], 'n_anchors': []} for p in a.protocol}
+    no_plane = {p: 0 for p in a.protocol}
     t0 = time.time()
 
     for n, stem in enumerate(stems):
@@ -190,7 +329,8 @@ def main():
 
         for proto in a.protocol:
             rng = np.random.default_rng(a.seed + n)     # same split for every method
-            am_z, hm_z = split_zones(valid, proto, rng, island=a.island)
+            am_z, hm_z = split_zones(valid, proto, rng, island=a.island,
+                                     dist=d, edge_thresh=a.edge_thresh)
             if am_z.sum() < 32 or hm_z.sum() < 16:
                 skipped[proto]['nosplit'] += 1
                 continue
@@ -226,19 +366,65 @@ def main():
                 'B4_affine': info['D0'][vh, uh],
                 'B4c_affine_cl': np.clip(info['D0'][vh, uh], None, CLAMP_M),
             }
-            D_net = info['D0']
-            if residual is not None:
-                D, _ = residual.refine(rgb, info['D0'], disp, info['anchor_depth'],
-                                       info['anchor_mask'], info['a'], info['b'])
-                pred['B5_ringfusion'] = D[vh, uh]
-                D_net = D
+
+            # --- weighting ablation: same anchors, same targets, different w_i --------
+            inv_at = 1.0 / za
+            disp_h = disp[vh, uh]
+            ones = np.ones_like(inv_at)
+            variants = {
+                'W0_uniform_norobust': (ones, 0),
+                'W0_uniform': (ones, 1),
+                'W1_rangep1': (anc.range_weights(inv_at, ones, p=1.0), 1),
+                'W2_rangep2': (anc.range_weights(inv_at, ones, p=2.0), 1),
+            }
+            # The deployed gate is geometric, so it needs 3D points and a ground plane --
+            # the same construction pipeline.run does at stage 4b. A frame whose floor
+            # is not visible gets no plane and simply contributes no W3 row, rather than
+            # silently falling back to uniform and diluting the comparison.
+            pts_a = roi.backproject(ua, va, za, calib['K'])
+            plane = roi.fit_ground_plane(pts_a)
+            if plane is not None:
+                variants['W3_roi'] = (roi.roi_weights(pts_a, plane, ones), 1)
+            else:
+                no_plane[proto] += 1
+
+            for wname, (wts, it) in variants.items():
+                rinfo = {} if it else None
+                wfit = anc.solve_robust(disp_a, inv_at, wts, iters=it, info=rinfo)
+                if wfit is None:
+                    continue
+                aw, bw = wfit
+                pred[wname] = np.clip(anc.to_metric_depth(disp_h, aw, bw), None, CLAMP_M)
+                if rinfo and wname == 'W0_uniform':
+                    robust[proto]['downweighted'].append(rinfo['downweighted_frac'])
+                    robust[proto]['mass_removed'].append(rinfo['weight_mass_removed_frac'])
+                    robust[proto]['n_anchors'].append(rinfo['n_anchors'])
             # B6: neither source wins everywhere (see blend.py) -- ToF near the anchors,
             # network far from them, smoothstep between.
             Kv = np.asarray(calib['K'], np.float64).ravel()
-            D_bl, _ = blend_depth(D_net, info['anchor_depth'], info['anchor_mask'],
-                                  fx=float(Kv[0]), near_deg=a.blend_near,
-                                  far_deg=a.blend_far)
-            pred['B6_blend'] = D_bl[vh, uh]
+
+            def _blend(D_src):
+                D_bl, _ = blend_depth(D_src, info['anchor_depth'], info['anchor_mask'],
+                                      fx=float(Kv[0]), near_deg=a.blend_near,
+                                      far_deg=a.blend_far)
+                return D_bl[vh, uh]
+
+            # Arbitration over the ANALYTIC map, no refiner in the path. This is the
+            # topology Table VI actually printed while being labelled as deployed, so it
+            # gets its own row: the deployed row below blends over the refiner instead,
+            # and the two can no longer be mistaken for one another.
+            # Stage 7b (far-field clamp) runs BEFORE 7c (blend) in pipeline.py, so every
+            # arbitration row blends over CLAMPED depth. Blending the raw D0 instead lets
+            # the unclamped far-field artefact through and destroys MAE (10.9 m vs 0.15 m
+            # on 'center') while barely moving the median -- exactly the medAE/MAE
+            # signature that caught the missing clamp originally.
+            pred['B6_analytic'] = _blend(np.clip(info['D0'], None, CLAMP_M))
+            for nm, ref in refiners.items():
+                D, _ = ref.refine(rgb, info['D0'], disp, info['anchor_depth'],
+                                  info['anchor_mask'], info['a'], info['b'])
+                D = np.clip(D, None, CLAMP_M)
+                pred[b5(nm)] = D[vh, uh]
+                pred[b6(nm)] = _blend(D)
             # Scene-bounded cap applied to the closed-form output, one row per k.
             for kk in a.sweep_k:
                 Dk, _, _ = apply_scene_cap(info['D0'], info['anchor_depth'],
@@ -253,7 +439,31 @@ def main():
         if (n + 1) % 100 == 0:
             print(f'  {n+1}/{len(stems)}  ({(time.time()-t0)/(n+1)*1e3:.0f} ms/frame)', flush=True)
 
-    report = {'frames': len(stems), 'size': [h, w], 'island': a.island, 'protocols': {}}
+    report = {
+        'label': 'r31 component ablation -- one run, one split, every row',
+        'env': envinfo.capture([a.backbone_engine] + list(eng_paths.values()),
+                               note='baselines'),
+        'frames': len(stems), 'size': [h, w], 'island': a.island,
+        'config': {
+            'rgb_dir': os.path.abspath(a.rgb_dir), 'tof_dir': os.path.abspath(a.tof_dir),
+            'calib': os.path.abspath(a.calib),
+            'stems_file': os.path.abspath(a.stems_file) if a.stems_file else '',
+            'protocols': list(a.protocol), 'seed': a.seed, 'bootstrap': a.bootstrap,
+            'edge_thresh': a.edge_thresh, 'island': a.island, 'max_cond': a.max_cond,
+            'blend_deg': [a.blend_near, a.blend_far], 'clamp_m': CLAMP_M,
+            'range_gate_m': [MIN_RANGE, MAX_RANGE],
+        },
+        'refiners': {nm: {'path': os.path.abspath(pth), 'b5_row': b5(nm),
+                          'b6_row': b6(nm), 'deployed': nm == deployed}
+                     for nm, pth in eng_paths.items()},
+        'one_split_note': (
+            'Every row comes from ONE run over ONE split: the same frames, the same '
+            'per-frame anchor/hold-out zone split, and one shared backbone pass, with all '
+            'refiners resident at once. Rows are therefore comparable to each other '
+            'directly. B6_analytic is arbitration with NO refiner; the deployed row '
+            'blends over the refiner named in "refiners".'),
+        'protocols': {},
+    }
     for proto in a.protocol:
         rows_out = []
         print(f'\n{"="*len(M.HEADER)}\nPROTOCOL: {proto}'
@@ -270,6 +480,19 @@ def main():
             per_method[m] = {'overall': mm, 'by_angle': [
                 {'lo': lo, 'hi': hi, 'n': nn, **({} if r is None else r)}
                 for lo, hi, nn, r in M.binned(p, g, x, ANG_EDGES)]}
+            if a.bootstrap:
+                # One group per frame. NaNs come from B2 outside its convex hull, where
+                # the method genuinely has no prediction -- dropping them keeps the
+                # interval consistent with the point estimate instead of propagating NaN.
+                grp = []
+                for pp, gg in zip(acc[proto][m]['pred'], acc[proto][m]['gt']):
+                    e = np.abs(np.asarray(pp) - np.asarray(gg))
+                    e = e[np.isfinite(e)]
+                    if e.size:
+                        grp.append(e)
+                per_method[m]['ci'] = {
+                    'medae': frame_bootstrap(grp, np.median, B=a.bootstrap, seed=a.seed),
+                    'mae': frame_bootstrap(grp, np.mean, B=a.bootstrap, seed=a.seed)}
         print(M.format_table(rows_out))
 
         # Bins holding a handful of points are noise, not signal -- under 'random' the
@@ -290,7 +513,70 @@ def main():
                 cells += (f'{v:.3f}' if (np.isfinite(v) and b['n'] >= MIN_BIN_N)
                           else '  -  ').rjust(11)
             print(f'  {m:<14}{cells}')
-        report['protocols'][proto] = {'skipped': skipped[proto], 'methods': per_method}
+        # --- robust pass: what it actually does to the anchors ----------------------
+        rb = robust[proto]
+        rb_summary = None
+        if rb['downweighted']:
+            rb_summary = {
+                'frames': len(rb['downweighted']),
+                'median_anchors': float(np.median(rb['n_anchors'])),
+                'downweighted_frac_median': float(np.median(rb['downweighted'])),
+                'downweighted_frac_mean': float(np.mean(rb['downweighted'])),
+                'weight_mass_removed_median': float(np.median(rb['mass_removed'])),
+                'note': ('Huber DOWNWEIGHTS, it does not reject. downweighted_frac is '
+                         'the share of anchors past the threshold; weight_mass_removed '
+                         'is how much total weight the pass took out. The paper says '
+                         '"removes X% of anchors", which names neither.')}
+            print('\n  robust pass: %.1f%% of anchors downweighted (median over %d '
+                  'frames, median %.0f anchors), removing %.1f%% of weight mass'
+                  % (rb_summary['downweighted_frac_median'] * 100, rb_summary['frames'],
+                     rb_summary['median_anchors'],
+                     rb_summary['weight_mass_removed_median'] * 100))
+        if no_plane[proto]:
+            print('  no ground plane on %d frames -- W3_roi omitted there'
+                  % no_plane[proto])
+
+        # W0_uniform and B4c_affine_cl are the same fit reached by two code paths, so a
+        # gap between them is a bug in one of them rather than a result.
+        if 'W0_uniform' in per_method and 'B4c_affine_cl' in per_method:
+            d0 = per_method['W0_uniform']['overall'].get('medae', float('nan'))
+            d1 = per_method['B4c_affine_cl']['overall'].get('medae', float('nan'))
+            gap = abs(d0 - d1)
+            print('  consistency check  W0_uniform %.4f vs B4c_affine_cl %.4f   gap %.4f m%s'
+                  % (d0, d1, gap, '  <-- SHOULD BE ~0' if gap > 5e-3 else '  OK'))
+
+        # --- paired A/B on a shared frame draw ---------------------------------------
+        paired_out = {}
+        for spec in a.paired:
+            ra, sep, rb = spec.partition(':')
+            if not sep or ra not in acc[proto] or rb not in acc[proto]:
+                print(f'  paired {spec}: unknown row, skipped'); continue
+
+            def _err(row):
+                out = []
+                for pp, gg in zip(acc[proto][row]['pred'], acc[proto][row]['gt']):
+                    e = np.abs(np.asarray(pp, float) - np.asarray(gg, float))
+                    out.append(e[np.isfinite(e)])
+                return out
+
+            ga, gb = _err(ra), _err(rb)
+            # A row absent on some frames (W3_roi with no ground plane) would silently
+            # pair frame i of one arm with frame j of the other, so refuse instead.
+            if len(ga) != len(gb):
+                print(f'  paired {spec}: {len(ga)} vs {len(gb)} frames, not paired -- skipped')
+                paired_out[spec] = {'error': f'frame counts differ: {len(ga)} vs {len(gb)}'}
+                continue
+            pm = paired_diff(ga, gb, np.median, B=a.bootstrap or 1000, seed=a.seed)
+            pa_ = paired_diff(ga, gb, np.mean, B=a.bootstrap or 1000, seed=a.seed)
+            paired_out[spec] = {'medae': pm, 'mae': pa_}
+            print('  paired  %-34s medAE %+.4f m  [%+.4f, %+.4f]  p=%.3f  (n=%d frames)'
+                  % (f'{rb} - {ra}', pm['point'], pm['lo'], pm['hi'],
+                     pm['p_two_sided'], pm['n_groups']))
+
+        report['protocols'][proto] = {'skipped': skipped[proto], 'methods': per_method,
+                                      'robust_pass': rb_summary,
+                                      'paired': paired_out,
+                                      'frames_without_ground_plane': no_plane[proto]}
 
     if a.out:
         with open(a.out, 'w') as f:

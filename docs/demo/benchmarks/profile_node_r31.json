@@ -1,0 +1,111 @@
+{
+ "blend": true,
+ "roi_enable": true,
+ "n": 500,
+ "env": {
+  "note": "profile_node",
+  "captured_utc": "2026-09-13T05:04:07Z",
+  "uptime": "up 7 hours, 37 minutes",
+  "versions": {
+   "l4t": [
+    "# R36 (release), REVISION: 5.0, GCID: 43688277, BOARD: generic, EABI: aarch64, DATE: Fri Jan 16 03:50:45 UTC 2026"
+   ],
+   "tensorrt": "10.3.0.30-1+cuda12.5",
+   "cuda": "12.6.68",
+   "cudnn": "9.3.0.75-1",
+   "jetpack_metapackage": ""
+  },
+  "clocks": {
+   "cpu_governor": "schedutil",
+   "cpu_min_khz": "2201600",
+   "cpu_max_khz": "2201600",
+   "gpu_governor": "nvhost_podgov",
+   "gpu_min_hz": "1300500000",
+   "gpu_max_hz": "1300500000",
+   "gpu_cur_hz": "1300500000",
+   "nvpmodel": "NV Power Mode: MAXN 0",
+   "cpu_locked": true,
+   "gpu_locked": true,
+   "jetson_clocks_applied": true
+  },
+  "thermal_c": {
+   "cpu-thermal": 48.3,
+   "gpu-thermal": 42.8,
+   "soc0-thermal": 45.2,
+   "soc1-thermal": 44.2,
+   "soc2-thermal": 45.0,
+   "tj-thermal": 48.2
+  },
+  "engines": {
+   "student_v4_heldout_fp16.engine": {
+    "path": "/home/leroi-ultio/RingFusion/student_v4_heldout_fp16.engine",
+    "exists": true,
+    "bytes": 9573020,
+    "sha256_1mb": "8ce50916693373a7"
+   },
+   "residual_v7_fov73_fp16.engine": {
+    "path": "/home/leroi-ultio/RingFusion/residual_v7_fov73_fp16.engine",
+    "exists": true,
+    "bytes": 1207732,
+    "sha256_1mb": "1e2f6e51e6a8cc97"
+   }
+  },
+  "git": {
+   "commit": "aba5edd20e511a13ad916ff89ce50c4445d06073",
+   "dirty": true,
+   "branch": "main"
+  }
+ },
+ "frame_total_ms": 97.16643049978302,
+ "pipeline_total_ms": 84.72416500080726,
+ "stages": {
+  "1_rectify": {
+   "median_ms": 4.100783999092528,
+   "p90_ms": 4.850214801263064
+  },
+  "2_backbone": {
+   "median_ms": 10.171351501412573,
+   "p90_ms": 10.674498300431878
+  },
+  "3_4_project_pair": {
+   "median_ms": 0.881236501300009,
+   "p90_ms": 0.9369085997604998
+  },
+  "4b_roi_plane": {
+   "median_ms": 0.10039699918706901,
+   "p90_ms": 0.10998959951393772
+  },
+  "5_fit_metric": {
+   "median_ms": 3.6442075015656883,
+   "p90_ms": 3.7890435978624737
+  },
+  "6_variance": {
+   "median_ms": 6.070341500162613,
+   "p90_ms": 6.509074599671294
+  },
+  "7_residual": {
+   "median_ms": 27.593003500442137,
+   "p90_ms": 28.64122160099214
+  },
+  "7b_clamp": {
+   "median_ms": 1.0488314983376767,
+   "p90_ms": 1.0884237010031939
+  },
+  "7c_blend": {
+   "median_ms": 24.49544900082401,
+   "p90_ms": 25.341395498253405
+  },
+  "7d_roi_sigma": {
+   "median_ms": 6.11142549860233,
+   "p90_ms": 6.386666001708363
+  },
+  "8_cloud": {
+   "median_ms": 2.6174229988100706,
+   "p90_ms": 2.815877700049896
+  },
+  "9_publish": {
+   "median_ms": 8.085270999799832,
+   "p90_ms": 8.664423300797353
+  }
+ }
+}

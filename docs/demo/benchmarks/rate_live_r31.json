@@ -1,0 +1,81 @@
+{
+ "label": "r31 deployed: v7+sigma, blend+ROI on, jetson_clocks applied, leroi stack stopped",
+ "secs": 900.0,
+ "expect_hz": 9.9,
+ "topics": {
+  "image": {
+   "n": 27000,
+   "hz": 29.99717420889026,
+   "median_ms": 32.833099365234375,
+   "p90_ms": 43.13492774963379,
+   "max_ms": 312.8547668457031
+  },
+  "tof": {
+   "n": 14349,
+   "hz": 15.942047508423746,
+   "median_ms": 60.9743595123291,
+   "p90_ms": 73.53463172912599,
+   "max_ms": 140.8693790435791
+  },
+  "depth": {
+   "n": 8458,
+   "hz": 9.397641830997651,
+   "median_ms": 105.69024085998535,
+   "p90_ms": 117.67435073852539,
+   "max_ms": 160.16769409179688
+  },
+  "cloud": {
+   "n": 8458,
+   "hz": 9.39771892776877,
+   "median_ms": 105.4222583770752,
+   "p90_ms": 127.90818214416504,
+   "max_ms": 161.8037223815918
+  }
+ },
+ "depth_latency": {
+  "median_ms": 146.94619178771973,
+  "p90_ms": 172.56577014923096,
+  "max_ms": 230.29565811157227
+ },
+ "env": {
+  "note": "rate_live",
+  "captured_utc": "2026-09-13T03:03:36Z",
+  "uptime": "up 5 hours, 36 minutes",
+  "versions": {
+   "l4t": [
+    "# R36 (release), REVISION: 5.0, GCID: 43688277, BOARD: generic, EABI: aarch64, DATE: Fri Jan 16 03:50:45 UTC 2026"
+   ],
+   "tensorrt": "10.3.0.30-1+cuda12.5",
+   "cuda": "12.6.68",
+   "cudnn": "9.3.0.75-1",
+   "jetpack_metapackage": ""
+  },
+  "clocks": {
+   "cpu_governor": "schedutil",
+   "cpu_min_khz": "2201600",
+   "cpu_max_khz": "2201600",
+   "gpu_governor": "nvhost_podgov",
+   "gpu_min_hz": "1300500000",
+   "gpu_max_hz": "1300500000",
+   "gpu_cur_hz": "1300500000",
+   "nvpmodel": "NV Power Mode: MAXN 0",
+   "cpu_locked": true,
+   "gpu_locked": true,
+   "jetson_clocks_applied": true
+  },
+  "thermal_c": {
+   "cpu-thermal": 55.3,
+   "gpu-thermal": 49.5,
+   "soc0-thermal": 51.2,
+   "soc1-thermal": 50.2,
+   "soc2-thermal": 51.0,
+   "tj-thermal": 55.3
+  },
+  "engines": {},
+  "git": {
+   "commit": "aba5edd20e511a13ad916ff89ce50c4445d06073",
+   "dirty": true,
+   "branch": "main"
+  }
+ }
+}

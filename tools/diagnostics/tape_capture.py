@@ -82,11 +82,46 @@ def _quad_centre(pts):
             (a * (y3 - y4) - (y1 - y2) * b) / den)
 
 
+def cone_class(u, v, calib, edge_deg=3.0):
+    """'in' / 'edge' / 'out' for a pixel, from the calibrated ToF FOV.
+
+    Recorded AT CAPTURE rather than derived later because it is the thing the session is
+    composed against -- a set needs points deliberately inside, on the boundary and
+    outside, and discovering afterwards that all four "outside" markers were actually on
+    the edge means the session has to be repeated. tape_eval recomputes this independently
+    for scoring; this copy exists to steer placement, not to be trusted over that one.
+    """
+    import numpy as _np
+    fx, fy, cx, cy = [float(x) for x in _np.asarray(calib['K'], float).ravel()[:4]]
+    ah = _np.degrees(_np.arctan(abs(u - cx) / fx))
+    av = _np.degrees(_np.arctan(abs(v - cy) / fy))
+    hh, hv = float(calib['fov_h']) / 2.0, float(calib['fov_v']) / 2.0
+    if ah <= hh - edge_deg and av <= hv - edge_deg:
+        return 'in'
+    if ah <= hh + edge_deg and av <= hv + edge_deg:
+        return 'edge'
+    return 'out'
+
+
 class TapeCapture(Node):
     def __init__(self, a):
         super().__init__('tape_capture')
         self.a = a
         self.rgb = self.depth = self.var = self.tof = None
+        # Calibration is loaded only to classify a click as in/edge/out of the cone while
+        # placing markers. Empty --calib disables the label rather than failing capture:
+        # a session with unlabelled points is recoverable, a lost session is not.
+        self.calib = None
+        if getattr(a, 'calib', ''):
+            try:
+                import sys as _s, os as _o
+                _s.path.insert(0, _o.path.join(
+                    _o.path.dirname(_o.path.dirname(_o.path.dirname(_o.path.abspath(__file__)))),
+                    'training'))
+                from anchoring_bridge import calib_from_yaml as _cfy
+                self.calib = _cfy(a.calib, train_size=(1232, 1640))
+            except Exception as e:                      # noqa: BLE001
+                print(f'  (calib not loaded, cone labels disabled: {e})')
         self.create_subscription(Image, a.image_topic, self.on_img, 5)
         self.create_subscription(Image, a.depth_topic, self.on_depth, 5)
         self.create_subscription(Image, a.var_topic, self.on_var, 5)
@@ -137,6 +172,8 @@ class TapeCapture(Node):
         json.dump({'captured': time.strftime('%Y-%m-%d %H:%M:%S'),
                    'origin_offset_m': self.a.origin_offset,
                    'instrument': self.a.instrument,
+                   'role': self.a.role,
+                   'edge_deg': self.a.edge_deg,
                    'note': ('range_m is SLANT RANGE from the optical centre; '
                             'tape_eval.py converts to axis depth via z = r*cos(theta)'),
                    'points': self.points}, open(self._gt_path(), 'w'), indent=1)
@@ -280,14 +317,20 @@ class TapeCapture(Node):
                 np.save(os.path.join(self.a.dir, stem + '_var.npy'), self.frozen['var'])
             if self.frozen['tof'] is not None:
                 np.save(os.path.join(self.a.dir, stem + '_tof.npy'), self.frozen['tof'])
+        cone = cone_class(u, v, self.calib, self.a.edge_deg) if self.calib else None
         self.points.append({'id': pid, 'stem': stem, 'u': u, 'v': v,
                             'u_sub': uf, 'v_sub': vf,
                             'corners': [list(map(int, p)) for p in self.clicks]
                                        if len(self.clicks) == 4 else None,
-                            'range_m': r, 'label': label, 'frame': self.frame_id})
+                            'range_m': r, 'label': label, 'frame': self.frame_id,
+                            'cone': cone, 'role': self.a.role})
         self.n_saved += 1
-        print(f'  recorded {stem}: ({u},{v}) r={r:.3f} m "{label}"  '
-              f'[{len(self.points)} total]')
+        tally = {}
+        for q in self.points:
+            tally[q.get('cone')] = tally.get(q.get('cone'), 0) + 1
+        print(f'  recorded {stem}: ({u},{v}) r={r:.3f} m "{label}"  cone={cone}  '
+              f'[{len(self.points)} total: ' +
+              ', '.join(f'{k}={v}' for k, v in sorted(tally.items(), key=lambda t: str(t[0]))) + ']')
         self.save()                       # save after EVERY point, not at the end
         # STAY FROZEN. The scene is required to be static for this whole exercise, so one
         # frozen frame can supply every marker in view -- click, type, click, type. Making
@@ -312,6 +355,16 @@ def main():
                         'ADDED to every range by tape_eval.py')
     p.add_argument('--instrument', default='laser',
                    help='laser (+-1-3 mm) or tape (+-5 mm); goes into the uncertainty budget')
+    p.add_argument('--calib', default='',
+                   help='calibration.yaml -- enables in/edge/out cone labelling while placing')
+    p.add_argument('--edge-deg', type=float, default=3.0,
+                   help='half-width of the cone-edge band, degrees; matches marker_view')
+    # Every point in a re-arranged scene is held out with respect to the frozen sigma
+    # constants, so this defaults to heldout. It is recorded per point anyway, because
+    # "which points informed the constants" is exactly what the reviewer asked to be able
+    # to tell, and reconstructing it afterwards is what went wrong last time.
+    p.add_argument('--role', default='heldout', choices=['heldout', 'calibration'],
+                   help='provenance of the points captured in this run')
     a = p.parse_args()
     rclpy.init()
     try:

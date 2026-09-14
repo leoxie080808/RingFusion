@@ -1,0 +1,58 @@
+lead-in: capture opens at 23:27:44
+=== CAPTURE OPEN 23:27:44 ===
+warming up 5 frames, then DRIVE. Target 600 frames.
+  25/600 frames
+  50/600 frames
+  75/600 frames
+  100/600 frames
+  125/600 frames
+  150/600 frames
+  175/600 frames
+  200/600 frames
+  225/600 frames
+  250/600 frames
+  275/600 frames
+  300/600 frames
+  325/600 frames
+  350/600 frames
+  375/600 frames
+  400/600 frames
+  425/600 frames
+  450/600 frames
+  475/600 frames
+  500/600 frames
+  525/600 frames
+  550/600 frames
+  575/600 frames
+  600/600 frames
+
+=== Stage 7c blend A/B, 600 frames, scored on HELD-OUT ToF zones ===
+Both arms share one backbone+residual pass per frame, so every difference is
+the blend. The blend saw only the central island; these zones are outside it.
+
+method               n   cov       MAE     medAE       p95   AbsRel   d<1.25      bias
+--------------------------------------------------------------------------------------
+A_noblend       415368  1.00    0.161m    0.034m    0.886m    0.181    0.789   -0.041m
+B_blend         415368  1.00    0.153m    0.033m    0.849m    0.177    0.800   -0.037m
+  paired mae    0.1610 -> 0.1526  delta -0.0084 [-0.0093, -0.0075]  p=0.000  blend better, resolvable
+  paired medae  0.0342 -> 0.0331  delta -0.0011 [-0.0013, -0.0009]  p=0.000  blend better, resolvable
+  (600 frames resampled, B=2000)
+
+medAE ↓ by angular distance from the ToF island:
+arm                0-3°       3-6°      6-10°     10-15°     15-30°     30-90°
+------------------------------------------------------------------------------
+A_noblend             -          -          -     0.017m     0.037m     0.033m
+B_blend               -          -          -     0.010m     0.034m     0.033m
+
+(blend wins where it has anchors; the arms should converge as angle grows —
+ if B is WORSE far out, the blend is leaking near-field depth into the far field)
+
+temporal stability under motion (median frame-to-frame |Δdepth| ↓):
+  A_noblend    median 0.0082 m   p90 0.0247 m
+  B_blend      median 0.0078 m   p90 0.0239 m
+
+far field ↓:
+  A_noblend    max depth median 2.49 m   fraction beyond ToF range 0.00%
+  B_blend      max depth median 2.91 m   fraction beyond ToF range 0.00%
+
+wrote docs/demo/benchmarks/blend_ab_live_r31.json

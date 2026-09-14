@@ -1,0 +1,588 @@
+{
+ "generated_for": "ringfusion_r31",
+ "inputs": [
+  "live4_sigma_2026-08-04.json",
+  "live4_sigma_after_2026-08-04.json",
+  "live4_sigma_n15_2026-08-05.json"
+ ],
+ "label": "r31 desk re-analysis of the saved LIVE-4 tape captures. No new capture.",
+ "provenance": {
+  "question": "Are the 15 points independent of the 11 the constants were tuned on?",
+  "match_px": 45.0,
+  "match_gt_m": 0.1,
+  "n_calibration_points": 11,
+  "n_test_points": 15,
+  "n_reused_from_calibration": 8,
+  "n_ambiguous": 2,
+  "n_strictly_heldout": 5,
+  "rows": [
+   {
+    "id": 1,
+    "u": 394,
+    "v": 512,
+    "gt": 1.7,
+    "cone": "out",
+    "what": "thin X, band far left",
+    "role": "ambiguous",
+    "nearest_cal_px": 26.3,
+    "nearest_cal_gt": 0.7359,
+    "gt_delta_m": 0.964
+   },
+   {
+    "id": 2,
+    "u": 595,
+    "v": 679,
+    "gt": 0.37,
+    "cone": "edge",
+    "what": "new floor marker, low left",
+    "role": "heldout",
+    "nearest_cal_px": 127.1,
+    "nearest_cal_gt": 0.76,
+    "gt_delta_m": 0.39
+   },
+   {
+    "id": 3,
+    "u": 611,
+    "v": 541,
+    "gt": 0.73,
+    "cone": "in",
+    "what": "upright marker on the discs",
+    "role": "calibration",
+    "nearest_cal_px": 24.6,
+    "nearest_cal_gt": 0.76,
+    "gt_delta_m": 0.03
+   },
+   {
+    "id": 4,
+    "u": 791,
+    "v": 567,
+    "gt": 1.49,
+    "cone": "in",
+    "what": "card under the checker band",
+    "role": "heldout",
+    "nearest_cal_px": 54.1,
+    "nearest_cal_gt": 1.7038,
+    "gt_delta_m": 0.214
+   },
+   {
+    "id": 5,
+    "u": 770,
+    "v": 520,
+    "gt": 1.72,
+    "cone": "in",
+    "what": "thin X on the band",
+    "role": "calibration",
+    "nearest_cal_px": 11.7,
+    "nearest_cal_gt": 1.7038,
+    "gt_delta_m": 0.016
+   },
+   {
+    "id": 6,
+    "u": 961,
+    "v": 607,
+    "gt": 0.33,
+    "cone": "in",
+    "what": "big centre-dot marker on the bottle",
+    "role": "calibration",
+    "nearest_cal_px": 9.0,
+    "nearest_cal_gt": 0.3341,
+    "gt_delta_m": 0.004
+   },
+   {
+    "id": 7,
+    "u": 873,
+    "v": 463,
+    "gt": 2.02,
+    "cone": "in",
+    "what": "banner near 2024",
+    "role": "calibration",
+    "nearest_cal_px": 11.0,
+    "nearest_cal_gt": 2.1,
+    "gt_delta_m": 0.08
+   },
+   {
+    "id": 8,
+    "u": 934,
+    "v": 429,
+    "gt": 2.845,
+    "cone": "in",
+    "what": "banner, PROVINCIAL CHAMPIONSHIP",
+    "role": "calibration",
+    "nearest_cal_px": 13.0,
+    "nearest_cal_gt": 2.888,
+    "gt_delta_m": 0.043
+   },
+   {
+    "id": 9,
+    "u": 877,
+    "v": 380,
+    "gt": 3.01,
+    "cone": "in",
+    "what": "banner, right of Excellence Award",
+    "role": "calibration",
+    "nearest_cal_px": 10.2,
+    "nearest_cal_gt": 3.03,
+    "gt_delta_m": 0.02
+   },
+   {
+    "id": 10,
+    "u": 900,
+    "v": 329,
+    "gt": 3.15,
+    "cone": "edge",
+    "what": "banner top, on the cone edge",
+    "role": "calibration",
+    "nearest_cal_px": 12.0,
+    "nearest_cal_gt": 3.178,
+    "gt_delta_m": 0.028
+   },
+   {
+    "id": 11,
+    "u": 903,
+    "v": 281,
+    "gt": 4.031,
+    "cone": "out",
+    "what": "above the cone, HIGH STAKES banner",
+    "role": "ambiguous",
+    "nearest_cal_px": 12.0,
+    "nearest_cal_gt": 3.3635,
+    "gt_delta_m": 0.667
+   },
+   {
+    "id": 12,
+    "u": 1131,
+    "v": 604,
+    "gt": 0.68,
+    "cone": "edge",
+    "what": "thick marker on the brown box",
+    "role": "calibration",
+    "nearest_cal_px": 18.1,
+    "nearest_cal_gt": 0.72,
+    "gt_delta_m": 0.04
+   },
+   {
+    "id": 13,
+    "u": 1429,
+    "v": 578,
+    "gt": 0.815,
+    "cone": "out",
+    "what": "far right, on the blue rings",
+    "role": "heldout",
+    "nearest_cal_px": 317.2,
+    "nearest_cal_gt": 0.72,
+    "gt_delta_m": 0.095
+   },
+   {
+    "id": 14,
+    "u": 1076,
+    "v": 519,
+    "gt": 0.71,
+    "cone": "in",
+    "what": "thin X on the band, right",
+    "role": "heldout",
+    "nearest_cal_px": 94.5,
+    "nearest_cal_gt": 0.72,
+    "gt_delta_m": 0.01
+   },
+   {
+    "id": 15,
+    "u": 508,
+    "v": 521,
+    "gt": 1.86,
+    "cone": "out",
+    "what": "last marker on the left wall",
+    "role": "heldout",
+    "nearest_cal_px": 86.7,
+    "nearest_cal_gt": 0.76,
+    "gt_delta_m": 1.1
+   }
+  ],
+  "finding": "8 of 15 points are calibration markers re-measured; 5 are strictly held out. The independent sample is 5, not 15."
+ },
+ "coverage": {
+  "note": "Wilson intervals are the SAMPLING uncertainty from having this many points. The lo/hi already in live4_sigma_n15 are the spread across 5 repeat captures of the SAME points, i.e. pipeline noise. They are not interchangeable and the paper needs the Wilson one for any claim about where coverage sits relative to its target.",
+  "n11_before_sigma_terms": {
+   "label": "n=11, before",
+   "n": 11,
+   "cov1": {
+    "k": 9,
+    "frac": 0.8181818181818182,
+    "wilson_lo": 0.523,
+    "wilson_hi": 0.949,
+    "target": 0.683
+   },
+   "cov2": {
+    "k": 9,
+    "frac": 0.8181818181818182,
+    "wilson_lo": 0.523,
+    "wilson_hi": 0.949,
+    "target": 0.954
+   },
+   "worst_nsig": 3.863018064708754
+  },
+  "n11_after_sigma_terms": {
+   "label": "n=11, after",
+   "n": 11,
+   "cov1": {
+    "k": 10,
+    "frac": 0.9090909090909091,
+    "wilson_lo": 0.623,
+    "wilson_hi": 0.984,
+    "target": 0.683
+   },
+   "cov2": {
+    "k": 10,
+    "frac": 0.9090909090909091,
+    "wilson_lo": 0.623,
+    "wilson_hi": 0.984,
+    "target": 0.954
+   },
+   "worst_nsig": 2.303635615345389
+  },
+  "n15_all": {
+   "label": "n=15, all points",
+   "n": 15,
+   "cov1": {
+    "k": 12,
+    "frac": 0.8,
+    "wilson_lo": 0.548,
+    "wilson_hi": 0.93,
+    "target": 0.683
+   },
+   "cov2": {
+    "k": 15,
+    "frac": 1.0,
+    "wilson_lo": 0.796,
+    "wilson_hi": 1.0,
+    "target": 0.954
+   },
+   "worst_nsig": 1.7235777111777224
+  },
+  "n15_heldout_only": {
+   "label": "n=15, held out + ambiguous",
+   "n": 7,
+   "cov1": {
+    "k": 4,
+    "frac": 0.5714285714285714,
+    "wilson_lo": 0.25,
+    "wilson_hi": 0.842,
+    "target": 0.683
+   },
+   "cov2": {
+    "k": 7,
+    "frac": 1.0,
+    "wilson_lo": 0.646,
+    "wilson_hi": 1.0,
+    "target": 0.954
+   },
+   "worst_nsig": 1.7235777111777224
+  },
+  "repeat_spread_from_file": {
+   "corr": {
+    "mean": 0.613,
+    "lo": 0.586,
+    "hi": 0.654,
+    "sd": 0.02445403852127499
+   },
+   "cov1": {
+    "mean": 0.7597999999999999,
+    "lo": 0.733,
+    "hi": 0.8,
+    "sd": 0.032823162553294614
+   },
+   "worst": {
+    "mean": 1.7047999999999999,
+    "lo": 1.637,
+    "hi": 1.753,
+    "sd": 0.03831135601880985
+   }
+  }
+ },
+ "accuracy": {
+  "note": "Depth error against tape. Bootstrapped over points, B=10000. These intervals are what decides whether the tape reference can carry an accuracy claim or only a validation one.",
+  "all_15": {
+   "label": "all 15 points",
+   "n": 15,
+   "median": {
+    "point": 0.05135086918776022,
+    "lo": 0.008731500257099345,
+    "hi": 0.5305469578706512,
+    "B": 10000,
+    "n_groups": 15,
+    "n_samples": 15
+   },
+   "mae": {
+    "point": 0.3449126076571354,
+    "lo": 0.11219477291893018,
+    "hi": 0.6557608496853943,
+    "B": 10000,
+    "n_groups": 15,
+    "n_samples": 15
+   },
+   "rmse": {
+    "point": 0.6429791240785134,
+    "lo": 0.21425136418594976,
+    "hi": 1.0122048545492466,
+    "B": 10000,
+    "n_groups": 15,
+    "n_samples": 15
+   }
+  },
+  "in_cone": {
+   "label": "inside the dToF cone",
+   "n": 8,
+   "median": {
+    "point": 0.029212192306250773,
+    "lo": 0.011542117812723851,
+    "hi": 0.10078408005598583,
+    "B": 10000,
+    "n_groups": 8,
+    "n_samples": 8
+   },
+   "mae": {
+    "point": 0.15248540162075036,
+    "lo": 0.019654037656531204,
+    "hi": 0.393604040673733,
+    "B": 10000,
+    "n_groups": 8,
+    "n_samples": 8
+   },
+   "rmse": {
+    "point": 0.3483357485505441,
+    "lo": 0.02469443634262652,
+    "hi": 0.6001426835777506,
+    "B": 10000,
+    "n_groups": 8,
+    "n_samples": 8
+   }
+  },
+  "cone_edge": {
+   "label": "on the cone edge",
+   "n": 3,
+   "median": {
+    "point": 0.0020587126922927967,
+    "lo": 0.000226284573996538,
+    "hi": 0.55911689250016,
+    "B": 10000,
+    "n_groups": 3,
+    "n_samples": 3
+   },
+   "mae": {
+    "point": 0.18713396325548312,
+    "lo": 0.000226284573996538,
+    "hi": 0.55911689250016,
+    "B": 10000,
+    "n_groups": 3,
+    "n_samples": 3
+   },
+   "rmse": {
+    "point": 0.322808503079712,
+    "lo": 0.000226284573996538,
+    "hi": 0.55911689250016,
+    "B": 10000,
+    "n_groups": 3,
+    "n_samples": 3
+   }
+  },
+  "out_of_cone": {
+   "label": "outside the dToF cone",
+   "n": 4,
+   "median": {
+    "point": 0.5281447152871326,
+    "lo": 0.26489255494136743,
+    "hi": 2.0712220266089467,
+    "B": 10000,
+    "n_groups": 4,
+    "n_samples": 4
+   },
+   "mae": {
+    "point": 0.8481010030311449,
+    "lo": 0.3313061556736884,
+    "hi": 1.6848521381326136,
+    "B": 10000,
+    "n_groups": 4,
+    "n_samples": 4
+   },
+   "rmse": {
+    "point": 1.1088297853236706,
+    "lo": 0.35070795239625613,
+    "hi": 1.8128904543666398,
+    "B": 10000,
+    "n_groups": 4,
+    "n_samples": 4
+   }
+  },
+  "heldout_only": {
+   "label": "held out + ambiguous",
+   "n": 7,
+   "median": {
+    "point": 0.525742472703614,
+    "lo": 0.006329186582166413,
+    "hi": 0.9775081432272084,
+    "B": 10000,
+    "n_groups": 7,
+    "n_samples": 7
+   },
+   "mae": {
+    "point": 0.6254714363751781,
+    "lo": 0.19243134183421898,
+    "hi": 1.1622946283772602,
+    "B": 10000,
+    "n_groups": 7,
+    "n_samples": 7
+   },
+   "rmse": {
+    "point": 0.9160146940696028,
+    "lo": 0.31433135898205894,
+    "hi": 1.4231281740825554,
+    "B": 10000,
+    "n_groups": 7,
+    "n_samples": 7
+   }
+  },
+  "strictly_heldout": {
+   "label": "strictly held out",
+   "n": 5,
+   "median": {
+    "point": 0.525742472703614,
+    "lo": 0.0020587126922927967,
+    "hi": 0.9775081432272084,
+    "B": 10000,
+    "n_groups": 5,
+    "n_samples": 5
+   },
+   "mae": {
+    "point": 0.4084370946151866,
+    "lo": 0.10850365425050648,
+    "hi": 0.7083705349798667,
+    "B": 10000,
+    "n_groups": 5,
+    "n_samples": 5
+   },
+   "rmse": {
+    "point": 0.5501730071689375,
+    "lo": 0.23515685888614554,
+    "hi": 0.793484296421184,
+    "B": 10000,
+    "n_groups": 5,
+    "n_samples": 5
+   }
+  }
+ },
+ "out_of_cone_claim": {
+  "question": "Section V-E quotes errors 1.07 and 1.52 m against sigma 2.10 and 1.84. Those are calibration-set points. Can the claim be re-sourced to held-out points?",
+  "paper_source": {
+   "file": "live4_sigma_2026-08-04.json",
+   "points": [
+    {
+     "id": 7,
+     "u": 912,
+     "v": 329,
+     "gt": 3.178,
+     "pred": 2.107,
+     "err": -1.071,
+     "sigma": 2.103
+    },
+    {
+     "id": 8,
+     "u": 915,
+     "v": 280,
+     "gt": 3.3635,
+     "pred": 1.845,
+     "err": -1.518,
+     "sigma": 1.844
+    }
+   ],
+   "role": "CALIBRATION SET -- the constants were fitted on these points"
+  },
+  "heldout_replacement": [
+   {
+    "id": 1,
+    "what": "thin X, band far left",
+    "gt": 1.7,
+    "pred": 1.435,
+    "err": -0.265,
+    "sigma": 1.932,
+    "nsig": 0.137,
+    "pointing_sensitivity_m": 0.0
+   },
+   {
+    "id": 11,
+    "what": "above the cone, HIGH STAKES banner",
+    "gt": 4.031,
+    "pred": 1.96,
+    "err": -2.071,
+    "sigma": 1.962,
+    "nsig": 1.055,
+    "pointing_sensitivity_m": 1.306
+   },
+   {
+    "id": 13,
+    "what": "far right, on the blue rings",
+    "gt": 0.815,
+    "pred": 1.346,
+    "err": 0.531,
+    "sigma": 3.274,
+    "nsig": 0.162,
+    "pointing_sensitivity_m": 0.035
+   },
+   {
+    "id": 15,
+    "what": "last marker on the left wall",
+    "gt": 1.86,
+    "pred": 1.334,
+    "err": -0.526,
+    "sigma": 0.468,
+    "nsig": 1.123,
+    "pointing_sensitivity_m": 0.0
+   }
+  ],
+  "all_out_of_cone_n15": [
+   {
+    "id": 1,
+    "role": "ambiguous",
+    "gt": 1.7,
+    "err": -0.265,
+    "sigma": 1.932,
+    "nsig": 0.137
+   },
+   {
+    "id": 11,
+    "role": "ambiguous",
+    "gt": 4.031,
+    "err": -2.071,
+    "sigma": 1.962,
+    "nsig": 1.055
+   },
+   {
+    "id": 13,
+    "role": "heldout",
+    "gt": 0.815,
+    "err": 0.531,
+    "sigma": 3.274,
+    "nsig": 0.162
+   },
+   {
+    "id": 15,
+    "role": "heldout",
+    "gt": 1.86,
+    "err": -0.526,
+    "sigma": 0.468,
+    "nsig": 1.123
+   }
+  ]
+ },
+ "pointing_sensitivity": {
+  "note": "best_within_45px is how far off the BEST pixel within 45 px is. Where that is much smaller than the reported error, most of the error is where the click landed, not what the pipeline predicted.",
+  "points": [
+   {
+    "id": 11,
+    "cone": "out",
+    "abs_err": 2.071,
+    "best_within_45px": 1.306,
+    "attributable_to_pointing": 0.765,
+    "flagged_suspect": false
+   }
+  ]
+ }
+}

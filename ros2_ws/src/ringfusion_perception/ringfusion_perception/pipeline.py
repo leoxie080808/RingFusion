@@ -58,7 +58,8 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
         blend=True, blend_near=blend_mod.NEAR_DEG, blend_far=blend_mod.FAR_DEG,
         roi_enable=True, roi_weight_fit=False,
         roi_reach_max=roi.REACH_MAX_M, roi_height_max=roi.HEIGHT_MAX_M,
-        plane_tracker=None, roi_mask_stride=ROI_MASK_STRIDE, timings=None):
+        plane_tracker=None, roi_mask_stride=ROI_MASK_STRIDE, timings=None,
+        sigma_terms=None, learned_var=True):
     """One perception frame.
 
     Args:
@@ -73,6 +74,15 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
                       weight the fit by confidence. Default -1 = ignore confidence
                       entirely (uniform weights -- the original tested behaviour).
       timings      optional dict; if given, each stage records its wall-clock ms into it.
+      sigma_terms  optional dict forwarded to blend.sigma_support_var, e.g.
+                   {'disagree_k': 0.0} to zero one term. None = the deployed
+                   constants. Exists so the uncertainty ablation can replay
+                   logged frames per arm rather than needing a separate live
+                   capture for each.
+      learned_var  include the refiner's tau^2 in the published variance. False
+                   drops it while KEEPING the refined depth, so an uncertainty
+                   ablation varies only the variance and compares arms whose
+                   depth is identical. Setting residual=None would change both.
                    None (the default) skips every timer, so the deployed path pays nothing.
                    Needed because the deployed rate (7.2 Hz) disagreed sharply with the
                    offline benchmark (12.3 Hz) and a per-stage breakdown is the only way to
@@ -209,7 +219,7 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
     if residual is not None:
         metric, var_extra = residual.refine(rgb, metric, disp,
                                              anchor_depth, anchor_mask, a, b)
-        if var is not None and var_extra is not None:
+        if var is not None and var_extra is not None and learned_var:
             var = var + var_extra                  # total = analytic + learned
 
     _t('7_residual')
@@ -245,7 +255,8 @@ def run(rgb, tof_dist_m, tof_valid, calib, backbone, residual=None,
         if var is not None and bfields is not None:
             dist_r, tof_r, bscale = bfields
             var = var + blend_sigma_var(D_pre_blend, dist_r, tof_r, bscale, float(fx),
-                                        near_deg=blend_near, far_deg=blend_far)
+                                        near_deg=blend_near, far_deg=blend_far,
+                                        **(sigma_terms or {}))
 
     _t('7c_blend')
 

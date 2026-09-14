@@ -27,6 +27,9 @@ import sys
 import time
 
 import numpy as np
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import envinfo                                                # noqa: E402
 
 _REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO, 'training'))
@@ -101,6 +104,10 @@ def main():
     print('  DEPTHOR-Small 79.4 ms (12.6 Hz)   DEPTHOR-Large 183.8 ms (5.4 Hz)')
     if a.out:
         import json
+        # A latency number has to carry the clock state it was taken under: nvpmodel
+        # persists across reboots but jetson_clocks does not, and the two are not the
+        # same measurement.
+        report['env'] = envinfo.capture([a.backbone_engine, a.residual_engine], note='time_pipeline')
         json.dump(report, open(a.out, 'w'), indent=1)
         print(f'wrote {a.out}')
 

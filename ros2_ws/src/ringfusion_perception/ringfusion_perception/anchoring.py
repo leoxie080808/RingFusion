@@ -104,8 +104,15 @@ def solve_scale_shift(disp, inv_depth, weights, eps=1e-9, b_prior=0.0):
 
 
 def solve_robust(disp, inv_depth, weights, iters=1, c=1.345, range_weight=True,
-                 b_prior=0.0):
+                 b_prior=0.0, info=None):
     """range_weight applies the z**p term (a no-op at the current p=0).
+
+    Pass a dict as `info` to get the robust pass's own diagnostics back without changing
+    the return value: n_anchors, the fraction whose residual exceeded the Huber threshold,
+    and the fraction of total weight mass the pass removed. Note these are DOWNWEIGHTED,
+    not rejected -- Huber scales an outlier's weight by 1/u rather than dropping it, so
+    "removes X% of anchors" overstates what happens. Both numbers are reported so the
+    paper can say which one it means.
 
     The region-of-interest weighting is NOT applied here -- it is geometric (floor plane
     + reach + height, see roi.py) and needs pixel coords and K, which this module does
@@ -125,6 +132,12 @@ def solve_robust(disp, inv_depth, weights, iters=1, c=1.345, range_weight=True,
         scale = 1.4826 * np.median(np.abs(r - np.median(r))) + 1e-9
         u = np.abs(r) / (c * scale)
         hub = np.where(u <= 1.0, 1.0, 1.0 / np.maximum(u, 1e-9))
+        if info is not None:
+            sw = float(w.sum())
+            info['n_anchors'] = int(w.size)
+            info['downweighted_frac'] = float(np.mean(u > 1.0))
+            info['weight_mass_removed_frac'] = (
+                float(1.0 - float((w * hub).sum()) / sw) if sw > 0 else float('nan'))
         r2 = solve_scale_shift(d, s, w * hub, b_prior=b_prior)
         if r2 is None:
             break

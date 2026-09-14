@@ -1,0 +1,99 @@
+{
+ "label": "r31 deployed run 2 of 2, v7+sigma, blend+ROI on, jetson_clocks applied, leroi stopped",
+ "secs": 900.0,
+ "expect_hz": 9.9,
+ "topics": {
+  "image": {
+   "n": 27002,
+   "hz": 30.0002755655258,
+   "median_ms": 33.119916915893555,
+   "p90_ms": 41.252851486206055,
+   "p05_ms": 12.454032897949219,
+   "p95_ms": 43.477773666381836,
+   "hz_p05": 23.000257733372084,
+   "hz_p95": 80.29527528907268,
+   "max_ms": 267.58861541748047
+  },
+  "tof": {
+   "n": 14349,
+   "hz": 15.94230652289404,
+   "median_ms": 60.38665771484375,
+   "p90_ms": 70.24753093719482,
+   "p05_ms": 57.54760503768921,
+   "p95_ms": 71.05531692504883,
+   "hz_p05": 14.073542181999251,
+   "hz_p95": 17.37691775956754,
+   "max_ms": 132.14731216430664
+  },
+  "depth": {
+   "n": 8537,
+   "hz": 9.485880501554739,
+   "median_ms": 105.24511337280273,
+   "p90_ms": 110.91732978820801,
+   "p05_ms": 92.36699342727661,
+   "p95_ms": 117.35260486602783,
+   "hz_p05": 8.521327678594103,
+   "hz_p95": 10.826378156254819,
+   "max_ms": 554.0361404418945
+  },
+  "cloud": {
+   "n": 8538,
+   "hz": 9.48587558830352,
+   "median_ms": 105.05914688110352,
+   "p90_ms": 109.17525291442871,
+   "p05_ms": 100.68259239196777,
+   "p95_ms": 111.75127029418945,
+   "hz_p05": 8.94844414177541,
+   "hz_p95": 9.932203534319978,
+   "max_ms": 443.5160160064697
+  }
+ },
+ "depth_latency": {
+  "median_ms": 135.72239875793457,
+  "p05_ms": 105.52277565002441,
+  "p90_ms": 160.91442108154297,
+  "p95_ms": 167.10915565490723,
+  "max_ms": 572.6442337036133
+ },
+ "env": {
+  "note": "rate_live",
+  "captured_utc": "2026-09-13T03:21:46Z",
+  "uptime": "up 5 hours, 55 minutes",
+  "versions": {
+   "l4t": [
+    "# R36 (release), REVISION: 5.0, GCID: 43688277, BOARD: generic, EABI: aarch64, DATE: Fri Jan 16 03:50:45 UTC 2026"
+   ],
+   "tensorrt": "10.3.0.30-1+cuda12.5",
+   "cuda": "12.6.68",
+   "cudnn": "9.3.0.75-1",
+   "jetpack_metapackage": ""
+  },
+  "clocks": {
+   "cpu_governor": "schedutil",
+   "cpu_min_khz": "2201600",
+   "cpu_max_khz": "2201600",
+   "gpu_governor": "nvhost_podgov",
+   "gpu_min_hz": "1300500000",
+   "gpu_max_hz": "1300500000",
+   "gpu_cur_hz": "1300500000",
+   "nvpmodel": "NV Power Mode: MAXN 0",
+   "cpu_locked": true,
+   "gpu_locked": true,
+   "jetson_clocks_applied": true
+  },
+  "thermal_c": {
+   "cpu-thermal": 55.9,
+   "gpu-thermal": 49.5,
+   "soc0-thermal": 51.2,
+   "soc1-thermal": 50.4,
+   "soc2-thermal": 51.2,
+   "tj-thermal": 55.9
+  },
+  "engines": {},
+  "git": {
+   "commit": "aba5edd20e511a13ad916ff89ce50c4445d06073",
+   "dirty": true,
+   "branch": "main"
+  }
+ }
+}
