@@ -431,6 +431,69 @@ belongs in limitation 4 beside the frequency.
 
 → `t1/t6_fallback_frequency.json`
 
+### 3.2f T8 — DEPTHOR-Small inside the ZJU-L5 footprint, and the reproduction tolerance ✅ *(2026-09-27)*
+
+Two placeholders: DEPTHOR-Small's accuracy split by the dToF footprint, and how closely our
+re-score matches their published numbers.
+
+Scored with **our** metric code and **our** region masks (`depthor_regions.py`), so the split
+is comparable to our own rows rather than being their whole-frame number next to our
+inside-footprint one — the objection that would otherwise make "restrict to the ToF region and
+our metrics improve" inadmissible. Their `evaluate.py` cannot be used: its prediction-saving
+block is commented out and its `compute_errors` returns a key called `mae` that is actually
+AbsRel.
+
+#### DEPTHOR-Small by region, 527 test samples
+
+| Region | pixels | share | AbsRel | MAE | medAE | p95 | δ1 | bias |
+|---|---|---|---|---|---|---|---|---|
+| all valid-GT | 156,851,220 | 100 % | 0.0813 | 0.202 m | 0.0506 | 0.659 | 0.9201 | −0.096 m |
+| **inside footprint** | 85,375,741 | **54.4 %** | **0.0501** | **0.079 m** | **0.0365** | **0.205** | **0.9733** | **0.000 m** |
+| outside footprint | 71,475,479 | 45.6 % | 0.1186 | 0.350 m | 0.0866 | 1.452 | 0.8566 | −0.210 m |
+
+🆕 **DEPTHOR is 2.4× better inside the footprint than outside** (AbsRel 0.050 vs 0.119), and its
+**bias is exactly 0.000 m inside against −0.210 m outside**. So the inside/outside gap is not
+peculiar to our method — a strong dToF-completion baseline shows the same structure on the same
+data. That is worth stating: it reframes R1's inside/outside question as a property of
+dToF-supported evaluation generally, not a flattering split we chose.
+
+#### ✅ Reproduction tolerance: the largest difference is **0.008**
+
+§2 question 9 asked whether it is 0.004 or 0.008. Per metric, against their published Table 2:
+
+| metric | ours | published | \|diff\| |
+|---|---|---|---|
+| rel | 0.0790 | 0.0800 | 0.0010 |
+| δ1 | 0.9230 | 0.9210 | 0.0020 |
+| log10 | 0.0360 | 0.0380 | 0.0020 |
+| δ2 | 0.9680 | 0.9630 | 0.0050 |
+| **RMSE** | **0.3710** | **0.3790** | **0.0080** |
+
+**The reproduction tolerance is 0.008, on RMSE**, and every other metric is within 0.005. A
+small gap is expected and its cause is known: we gate 0.1–20 m, they gate to 10 m.
+
+#### Provenance
+
+⚠️ The previous region scores (`depthor_small_regions.json`, 2026-07-30) carried **no `env`
+block**, which by this document's own standard makes them an old number of unknown clock state
+— the one un-provenanced figure in an otherwise self-certifying record. Re-run today under
+MAXN with clocks locked, commit `1023df4`:
+
+**Every figure reproduces to four decimal places and every pixel count is identical** (all:
+AbsRel 0.0813, δ1 0.9201; inside: 0.0501, 0.9733; outside: 0.1186, 0.8566; n_eval identical in
+all three regions). The July numbers were sound; they now self-certify.
+
+#### The 55 % / 54 % footprint share
+
+Both records are correct and the difference is the denominator, not the mask. In-footprint
+pixel counts agree to **0.23 %** (85,375,741 here against 85,178,297 in
+`zjul5_deployed_r31.json`), while the valid-pixel totals differ by **2.1 %** (156.85 M against
+153.64 M) because coverage differs between model outputs. **Quote "about 55 %"** against the
+**12.4 %** on our own sensor: the contrast is the point, and a second decimal invites a question
+about which valid-pixel set produced it.
+
+→ `t1/t8_depthor_small_regions_r31.json`, `depthor_small_zjul5.json`
+
 ### 3.3 Table III — angular bands
 
 **✅ Every published cell reproduces exactly on the current build.** medAE in m, `center`
