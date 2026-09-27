@@ -16,6 +16,7 @@ Usage:
 import argparse
 import math
 import os
+import random
 
 import numpy as np
 import torch
@@ -203,6 +204,12 @@ def main():
     ap.add_argument('--min-delta', type=float, default=1e-4,
                     help='val improvement below this counts as no improvement')
     ap.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
+    # Seeds weight init, batch order and the augmentation RNG -- NOT the train/val split,
+    # which stays pinned at 0 (see random_split below). T9 reports mean +- std over seeds;
+    # that number has to be initialisation variance, so every seed must see identical data.
+    ap.add_argument('--seed', type=int, default=0,
+                    help='seed for weight init, batch ordering and augmentation noise. '
+                         'The train/val split is independent of this and always uses 0.')
     args = ap.parse_args()
 
     if args.real:
@@ -212,11 +219,18 @@ def main():
         ap.error('--depth is required unless --real is set')
 
     os.makedirs(args.out, exist_ok=True)
+
+    # Must happen before ResidualRefinerNet() is constructed, or weight init is unseeded.
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
+
     device = args.device
     H, W = args.size
     calib = calib_from_yaml(args.calib, (H, W)) if args.real else default_calib(H, W, hfov_deg=args.hfov)
     run_batch_fn = run_batch_real if args.real else run_batch
-    rng = np.random.default_rng(0)
+    rng = np.random.default_rng(args.seed)   # augmentation noise/dropout varies per seed
 
     student = DepthStudent(pretrained=False).to(device).eval()
     student.load_state_dict(torch.load(args.student_ckpt, map_location=device))
@@ -224,7 +238,7 @@ def main():
         p.requires_grad_(False)
 
     residual = ResidualRefinerNet().to(device)
-    print(f"residual parameters: {count_parameters(residual):,} | device {device}")
+    print(f"residual parameters: {count_parameters(residual):,} | device {device} | seed {args.seed}")
 
     if args.real:
         full = ResidualRealDataset(args.rgb, args.tof, size=tuple(args.size))
@@ -232,6 +246,9 @@ def main():
         full = ResidualDepthDataset(args.rgb, args.depth, size=tuple(args.size),
                                     depth_scale=args.depth_scale)
     n_val = max(1, int(len(full) * args.val_frac))
+    # PINNED AT 0 ON PURPOSE -- independent of --seed. Re-seeding the split would make
+    # each seed train and validate on different frames, so the reported mean +- std would
+    # confound initialisation variance with split variance.
     train_set, val_set = random_split(full, [len(full) - n_val, n_val],
                                       generator=torch.Generator().manual_seed(0))
     train_loader = DataLoader(train_set, batch_size=args.batch, shuffle=True,

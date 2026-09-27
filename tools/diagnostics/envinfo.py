@@ -128,11 +128,46 @@ def git():
     }
 
 
+def machine():
+    """Which board produced this number.
+
+    Added when the r33 round started splitting work across two AGX Orins: T9 trains on one
+    while the timing rows are measured on the other. Without this, two env blocks differ in
+    thermals and uptime with nothing saying they came from different hardware, and a reader
+    cannot tell a second machine from a second session on the first.
+
+    `machine_id` is the stable per-install ID. `model` and `ram_gb` are what actually
+    distinguish a 32 GB module from a 64 GB one -- nvpmodel reports neither.
+    """
+    return {
+        'hostname': _run('hostname'),
+        'machine_id': _read('/etc/machine-id')[:16],
+        'model': _read('/proc/device-tree/model').replace('\x00', '').strip(),
+        'serial': _read('/proc/device-tree/serial-number').replace('\x00', '').strip(),
+        'ram_gb': int(round(int(_run("awk '/MemTotal/{print $2}' /proc/meminfo") or 0) / 1e6)),
+        'arch': _run('uname -m'),
+        'kernel': _run('uname -r'),
+    }
+
+
+def versions_match(env_a, env_b):
+    """Do two captures share a software stack? -> (bool, list of differing keys).
+
+    The gate for trusting a number measured on another board. TensorRT is the one that
+    matters most: engines are built for a specific TRT version, and a rebuilt FP16 engine
+    can shift numerics enough to make accuracy rows non-comparable.
+    """
+    va, vb = env_a.get('versions', {}), env_b.get('versions', {})
+    diff = [k for k in sorted(set(va) | set(vb)) if va.get(k) != vb.get(k)]
+    return (not diff), diff
+
+
 def capture(engines_list=None, note=''):
     return {
         'note': note,
         'captured_utc': _run('date -u +%Y-%m-%dT%H:%M:%SZ'),
         'uptime': _run('uptime -p'),
+        'machine': machine(),
         'versions': versions(),
         'clocks': clocks(),
         'thermal_c': thermal(),
@@ -157,10 +192,31 @@ if __name__ == '__main__':
     ap.add_argument('--out', default='')
     ap.add_argument('--engine', action='append', default=[])
     ap.add_argument('--note', default='')
+    ap.add_argument('--compare', default='',
+                    help='path to any JSON carrying an "env" block (or a bare env block). '
+                         'Compares this machine\'s software stack against it and exits 1 on '
+                         'a mismatch -- the gate before trusting a number measured elsewhere.')
     a = ap.parse_args()
     env = capture(a.engine, a.note)
     print(json.dumps(env, indent=1))
     warn_if_unlocked(env)
+    if a.compare:
+        with open(a.compare) as f:
+            ref = json.load(f)
+        ref = ref.get('env', ref)
+        same, diff = versions_match(env, ref)
+        rm = (ref.get('machine') or {}).get('hostname', 'unrecorded')
+        print(f"\n-- stack comparison against {a.compare} (machine: {rm})")
+        if same:
+            print('   MATCH -- same software stack, engine-based results are comparable.')
+        else:
+            print('   MISMATCH on: ' + ', '.join(diff))
+            for k in diff:
+                print(f"     {k}:\n       here = {env['versions'].get(k)}"
+                      f"\n       ref  = {ref.get('versions', {}).get(k)}")
+            print('   TensorRT differences mean engines must be rebuilt, and rebuilt FP16')
+            print('   engines can shift numerics -- keep engine-based tests on one board.')
+            raise SystemExit(1)
     if a.out:
         with open(a.out, 'w') as f:
             json.dump(env, f, indent=1)
