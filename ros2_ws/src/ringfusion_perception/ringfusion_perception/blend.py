@@ -156,8 +156,17 @@ def sigma_support_var(D_net, dist_r, tof_r, scale, fx,
     editing constants would mean re-running the whole capture once per arm.
     Zeroing is the right control for an ACCURACY ablation; it is the wrong one
     for a COST measurement, where the arithmetic still runs (see
-    sigma_cost_corrected_2026-08-04.json, which is why the cost is 10.6 ms and
-    not the 0.80 ms a zeroed-constant A/B first reported).
+    t2_sigma_block_cost.json, which is why the cost is 7.2 ms and not the 0.80 ms
+    a zeroed-constant A/B first reported).
+
+    COST, re-measured 2026-09-27 (T2): this block costs 7.2 ms at 1640x1232 and
+    1.67 ms at 480x640 -- timed in situ over 40 real frames (n=200), and confirmed
+    by an end-to-end bypass A/B once the full-frame var add that survives the bypass
+    (0.78 ms) is subtracted. It SUPERSEDES the 10.6 ms in
+    sigma_cost_corrected_2026-08-04.json, which does not reproduce on unchanged code
+    -- that A/B used an isolated block, 40 frames x 3 reps and limited warm-up, which
+    charges allocation and cold-cache effects to the sigma arm. Do not confuse this
+    with Stage 7d (the ROI sigma floor, pipeline.py), a SEPARATE 5.7 ms.
 
     disagreement -- w * |D_tof - D_net|, the distance the blend actually moves the depth.
         Weighted by the blend weight because that is how much of the move is real: far from

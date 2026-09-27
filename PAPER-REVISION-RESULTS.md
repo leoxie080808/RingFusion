@@ -312,6 +312,52 @@ Blend alone = 7c − σ ≈ **15.9 ms**, matching `sigma_cost_corrected`'s indep
 
 → `t1/t2_core_timing.json`, `t1/t2_sigma_block_cost.json`, `t1/tegrastats_t2.log`
 
+### 3.2d T10 — distillation fidelity of the DEPLOYED backbone ✅ *(2026-09-27)*
+
+The paper cites **ρ = 0.996** in the V intro. That number came from the **2000-image pilot
+student** (§1 item 26), not `student_v4_heldout`, which is what the robot runs. T10 gives the
+deployed backbone its own number.
+
+Scored on the **200 frames in `heldout_stems.txt`** — frames `distill_backbone.py` was told to
+exclude outright via `--exclude-stems-file`, so the student never saw them. All 200 are valid
+here: this tests the **backbone against the teacher**, so the N2 contamination caveat (which
+concerns the refiner) does not apply. Metrics are `eval_student.py`'s, unchanged.
+
+| Arm | ρ | val_ssi | AbsRel | δ1.25 |
+|---|---|---|---|---|
+| *pilot, what the paper cites* | *0.9962* | *3.51* | — | *0.89* |
+| FP32 checkpoint, **training** preprocessing | 0.9986 | 4.8998 | 0.5843 | 0.9294 |
+| FP32 checkpoint, **deployed** preprocessing *(control)* | 0.9985 | 5.5903 | 0.2464 | 0.9180 |
+| **FP16 TensorRT, deployed** ← **the number to cite** | **0.9985** | **5.6060** | **0.2418** | **0.9176** |
+
+✅ **The deployed backbone beats the pilot: ρ = 0.9985 against 0.9962, and δ1.25 0.918 against
+0.89.** Re-measuring strengthens the claim rather than weakening it.
+
+🆕 **FP16 quantisation is free; the arm-to-arm spread is preprocessing.** The control isolates
+the two effects, because it runs the FP32 weights through the deployed preprocessing:
+
+| Effect | ρ | val_ssi | AbsRel | δ1.25 |
+|---|---|---|---|---|
+| **Preprocessing** (`F.interpolate` bilinear → `cv2.INTER_AREA`) | −0.0001 | +0.69 | **−0.3379** | −0.0114 |
+| **FP16 quantisation** (control → engine) | **0.0000** | +0.016 | −0.0046 | −0.0004 |
+
+The control sits on top of the FP16 row — ρ identical, δ1.25 within 0.0004, val_ssi within 0.3 %.
+So **none of the spread is attributable to FP16**; it is the resize kernel. `eval_student.py`'s
+own comment predicts this: ratio metrics are taken in depth space, and disparity has near-zero
+far-field values that INTER_AREA and bilinear treat differently.
+
+⚠️ **The release checklist's distillation split is wrong.** The Sep 27 brief's R5 checklist
+records "1800 training and 200 held-out frame IDs". The true
+figure is **3228 total → 200 excluded → 3028 available to distillation**. `data.list_images()`
+globs `'**'` **recursively** (the `DistillDataset` docstring says so explicitly), and
+`data/rect/` holds 2000 top-level PNGs **plus `paired/` with 1228 more**. `paired/` was created
+**2026-07-24**, six days before `student_v4_heldout` trained on **2026-07-30**, so it was
+included. This matters for the R5 artifact release, which promises to publish the split.
+(§6.5 here is unaffected — it lists `heldout_stems.txt` (200) without asserting a training
+count, so only the brief's checklist needs the correction.)
+
+→ `t1/t10_student_rho.json`, `tools/diagnostics/t10_student_rho.py`
+
 ### 3.3 Table III — angular bands
 
 **✅ Every published cell reproduces exactly on the current build.** medAE in m, `center`
