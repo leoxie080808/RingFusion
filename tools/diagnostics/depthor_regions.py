@@ -38,6 +38,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import metrics as M                                              # noqa: E402
 from zjul5_eval import coverage_mask, GT_MIN, GT_MAX             # noqa: E402
+import sys as _s, os as _o
+_s.path.insert(0, _o.path.dirname(_o.path.abspath(__file__)))
+import envinfo  # noqa: E402
 
 
 def main():
@@ -121,7 +124,9 @@ def main():
 
     if a.out:
         with open(a.out, 'w') as f:
-            json.dump({'variant': a.variant, 'n': n, 'regions': report}, f, indent=1)
+            json.dump({'variant': a.variant, 'n': n, 'regions': report,
+                       'env': envinfo.capture(note=f'depthor_regions_{a.variant}')},
+                      f, indent=1)
         print(f'wrote {a.out}')
 
 

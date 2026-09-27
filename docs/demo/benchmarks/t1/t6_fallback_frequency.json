@@ -1,0 +1,99 @@
+{
+ "label": "T6: frame-drop frequency and real guard firing rates",
+ "note": "The paper (r34+) describes frame-dropping, which is what the code does. N_min / v_min / kappa_max were never implemented and are not measured.",
+ "frames": 1234,
+ "resolution": "1232x1640",
+ "drops": {
+  "count": 0,
+  "rate_pct": 0.0,
+  "stems": []
+ },
+ "guard_fire_counts": {},
+ "zero_anchor_frames": 0,
+ "expired_half_map_frames": 0,
+ "fitted_scale_le_zero": 0,
+ "sigma_unavailable": {
+  "count": 0,
+  "rate_pct": 0.0,
+  "consequence": "covariance() returns None at n<=2, so var is None and the node publishes depth and cloud but NO /depth_var message (perception_node.py:210) -- the consumer gets silence, not a high-sigma warning."
+ },
+ "distributions": {
+  "anchor_count": {
+   "min": 537,
+   "p05": 629.0,
+   "median": 832.5,
+   "p95": 999.35,
+   "max": 1024
+  },
+  "disparity_var_weighted": {
+   "p05": 60.516894,
+   "median": 110.006947,
+   "p95": 240.408989,
+   "min": 12.062266,
+   "max": 828.455474
+  },
+  "condition_number": {
+   "p05": 369.569827,
+   "median": 907.645394,
+   "p95": 2653.859018,
+   "max": 9515.082595
+  }
+ },
+ "eval_only_cond_guard": {
+  "threshold": 100000000.0,
+  "note": "baselines.py:346 rejects frames with cond(X^T X) above this; the deployed node has no such guard and publishes them.",
+  "frames_removed_full_set": 0,
+  "frames_removed_val61": 0,
+  "stems": []
+ },
+ "env": {
+  "note": "t6_fallback_frequency",
+  "captured_utc": "2026-09-27T23:37:25Z",
+  "uptime": "up 3 hours, 45 minutes",
+  "machine": {
+   "hostname": "ubuntu",
+   "machine_id": "369cadd30c8f4b8e",
+   "model": "NVIDIA Jetson AGX Orin Developer Kit",
+   "serial": "1423725084630",
+   "ram_gb": 64,
+   "arch": "aarch64",
+   "kernel": "5.15.185-tegra"
+  },
+  "versions": {
+   "l4t": [
+    "# R36 (release), REVISION: 5.0, GCID: 43688277, BOARD: generic, EABI: aarch64, DATE: Fri Jan 16 03:50:45 UTC 2026"
+   ],
+   "tensorrt": "10.3.0.30-1+cuda12.5",
+   "cuda": "12.6.68",
+   "cudnn": "9.3.0.75-1",
+   "jetpack_metapackage": ""
+  },
+  "clocks": {
+   "cpu_governor": "schedutil",
+   "cpu_min_khz": "2201600",
+   "cpu_max_khz": "2201600",
+   "gpu_governor": "nvhost_podgov",
+   "gpu_min_hz": "1300500000",
+   "gpu_max_hz": "1300500000",
+   "gpu_cur_hz": "1300500000",
+   "nvpmodel": "NV Power Mode: MAXN 0",
+   "cpu_locked": true,
+   "gpu_locked": true,
+   "jetson_clocks_applied": true
+  },
+  "thermal_c": {
+   "cpu-thermal": 46.8,
+   "gpu-thermal": 42.1,
+   "soc0-thermal": 44.3,
+   "soc1-thermal": 43.7,
+   "soc2-thermal": 44.1,
+   "tj-thermal": 46.8
+  },
+  "engines": {},
+  "git": {
+   "commit": "3e592d89910b99e05fa029a2e4d15114265e03be",
+   "dirty": false,
+   "branch": "main"
+  }
+ }
+}

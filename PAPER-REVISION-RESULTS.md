@@ -358,6 +358,79 @@ count, so only the brief's checklist needs the correction.)
 
 → `t1/t10_student_rho.json`, `tools/diagnostics/t10_student_rho.py`
 
+### 3.2e T6 — frame-drop frequency and guard firing rates ✅ *(2026-09-27)*
+
+§IV-C (r34 onward) describes what the code does: when the anchor fit fails, **the frame is
+dropped**. `N_min`, `v_min` and `κ_max` belonged to the original scale-only-fallback
+description, were never implemented, and no longer appear in the paper — so they are not
+measured. What is measured is the three guards that exist, all in `solve_scale_shift`.
+
+All 1234 logged pairs, deployed engines, 1640×1232, `PlaneTracker(refit_every=1)`.
+
+#### ✅ The fit never failed
+
+| Quantity | Result |
+|---|---|
+| **Frames dropped** | **0 of 1234 — 0.00 %** |
+| guard `w.size < 2` (fewer than 2 anchors) | **0** |
+| guard `w.sum() <= eps` (zero total weight) | **0** |
+| guard `abs(den) < eps` (singular normal matrix) | **0** |
+| zero-anchor frames | 0 |
+| expired half-map frames | 0 |
+| fitted scale ≤ 0 | 0 |
+| σ unavailable (n ≤ 2) | **0 — 0.00 %** |
+
+**IV-C's pending X.X % is 0.00 %.** State it with its bound rather than as a bare zero:
+**0/1234, 95 % Wilson upper bound 0.31 %** (rule of three: 0.24 %). Zero observed failures
+does not establish a zero rate — only that it is below roughly one in three hundred frames on
+this corpus.
+
+#### Why it never fired: the guards are three orders of magnitude away
+
+| Quantity | min | p05 | median | p95 | max |
+|---|---|---|---|---|---|
+| anchors per frame | **537** | — | 832.5 | — | 1024 |
+| weighted disparity variance | — | 60.52 | 110.01 | — | — |
+| condition number of the normal matrix | — | — | 907.6 | 2653.9 | **9515.1** |
+
+The fit needs **2** anchors; the sparsest frame supplied **537**. The 32×32 dToF returns
+enough zones that the guards are not close to active — the margin is ~270×, not marginal.
+
+#### ✅ The eval-only condition-number guard removes nothing
+
+`baselines.py:346` rejects frames with `cond(XᵀX) > 1e8`; the deployed node has no such guard
+and publishes them. If that guard had removed frames, Table II would either need those frames
+re-scored or a note saying they were excluded.
+
+| | frames removed |
+|---|---|
+| full 1234-frame set | **0** |
+| the 61 frames behind Table II | **0** |
+
+**Nothing changes, and no Table II note is needed.** The observed maximum condition number is
+**9,515 — four orders of magnitude below the 1e8 threshold**. Worth recording that the two
+tests are not equivalent (the harness gates on the condition number, the node on a determinant
+floor of 1e-9), so this is a measured result rather than an inference from the guards agreeing.
+
+#### ⚠️ What this does NOT establish
+
+Limitation 4 says a scene at nearly uniform depth can pass the guards yet give a poorly
+conditioned fit. **This corpus contains no such scene**, so the concern is *untested here, not
+refuted*: weighted disparity variance never approaches zero (p05 = 60.5) and the worst
+conditioning is benign for a 2×2 float64 system. The limitation should stand, worded as a
+regime not present in the logged data rather than one shown to be harmless.
+
+🆕 **When σ cannot be computed, the node publishes depth with no uncertainty at all.**
+`covariance()` returns `None` at n ≤ 2 (σ̂² needs n−2 dof). `var` then stays `None`, which
+cascades: the refiner's τ², the Stage 7c σ terms **and** the Stage 7d ROI floor are all
+skipped, and `perception_node.py:210` guards the publish with `if res['var'] is not None`. So
+depth and cloud go out normally while **`/depth_var` is silently absent** — a consumer receives
+no message rather than a high-σ warning, and one holding the last value would reason from a
+stale σ belonging to a different frame. It never happened in 1234 frames, but the asymmetry
+belongs in limitation 4 beside the frequency.
+
+→ `t1/t6_fallback_frequency.json`
+
 ### 3.3 Table III — angular bands
 
 **✅ Every published cell reproduces exactly on the current build.** medAE in m, `center`
