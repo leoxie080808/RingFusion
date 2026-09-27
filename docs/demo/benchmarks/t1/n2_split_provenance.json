@@ -1,0 +1,12 @@
+{
+ "n_frames": 1234,
+ "refiner_n_val": 61,
+ "refiner_val_equals_val_stems": true,
+ "refiner_trained_on": 1173,
+ "pct_of_eval_set_trained_on": 95.1,
+ "val_stems_trained_on": 0,
+ "val_stems_total": 61,
+ "heldout_stems_trained_on": 139,
+ "heldout_stems_total": 200,
+ "val_subset_of_heldout": true
+}

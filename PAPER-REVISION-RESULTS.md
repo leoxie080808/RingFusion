@@ -947,6 +947,64 @@ the pending plane captures (§5).
 
 ---
 
+### 3.14 N1, N2, N5 — deployed weighting, split contamination, held-out lists
+
+Three questions that change what Table II and Table V *mean*, so they are settled before
+either table is filled. All three are answered from code and config; no new runs.
+
+#### N1 — the deployed fit uses UNIFORM weights
+
+Not `w ∝ z`. All three weighting mechanisms are off in the shipped configuration:
+
+| Mechanism | State | Evidence |
+|---|---|---|
+| Range weighting `w = z^p` | **disabled**, `RANGE_WEIGHT_P = 0.0` | `anchoring.py:11` |
+| Confidence weighting | **off** — deployed `min_confidence = -1`, so `weights = np.ones_like(inv_depth)` | `pipeline.py:143-146`; node readback in §4b |
+| ROI weighting of the fit | **off** — `roi_weight_fit=False`, not overridden in `single_module.launch.py` | `pipeline.py:59` |
+
+So **`W0_uniform` is the deployed row** in Table V, and any sentence implying range weighting
+ships is wrong. `anchoring.py`'s docstring records the sweep that led here: `p=1` was chosen on
+two 2026-07-25 captures, then **disabled**, because re-scored on only the anchors a robot can
+drive to (≤ 2.5 m) it was the *worst* option — 9.7 % / 10.4 % against 7.5 % / 7.8 % for uniform.
+The geometric ROI replaced it and reached 6.0 % / 6.1 %.
+
+#### N2 — ❌ the refiner trained on 95.1 % of the 1234-frame evaluation set
+
+`baselines_r31.json` evaluates `ros2_ws/data/real/rgb`; the shipped refiner trained on the same
+directory (`training/README.md:178`). Reproducing the refiner's own split exactly —
+`random_split(..., generator=torch.Generator().manual_seed(0))` at `val_frac = 0.05`, which is
+what `train_residual.py:249-253` does:
+
+| | |
+|---|---|
+| Frames in the evaluation set | 1234 |
+| Refiner's validation split | 61 |
+| **Refiner's val split == `val_stems.txt`** | ✅ **bit-for-bit identical** |
+| **Frames the refiner TRAINED on** | **1173 (95.1 %)** |
+| `val_stems.txt` frames trained on | **0 of 61** ✅ |
+| `heldout_stems.txt` frames trained on | ⚠️ **139 of 200** |
+
+Two consequences, both load-bearing:
+
+1. **The refiner rows in `baselines_r31.json` (all 1234 frames) are contaminated by
+   construction** and cannot support a generalisation claim. The 61-frame
+   `baselines_valsplit_r31.json` is the honest refiner evaluation.
+2. ⚠️ **`heldout_stems.txt` is the BACKBONE's hold-out, not the refiner's** — the refiner
+   trained on 139 of those 200 frames. Using it as a clean refiner split would be wrong.
+   **`val_stems.txt` (61) is the only split clean for both networks**, being a strict subset of
+   the backbone hold-out *and* disjoint from the refiner's training set.
+
+This is reproducible from the repo alone — no stored state — because the split is seeded.
+→ `t1/n2_split_provenance.json`
+
+#### N5 — the `student_v4_heldout` hold-out list
+
+`docs/demo/benchmarks/heldout_stems.txt`, **200 stems** (`000006`, `000022`, `000026`, …), with
+`val_stems.txt` (**61**) a strict subset. Both are already listed for release under R5 (§6.5).
+For any refiner-facing use, read N2 first: only the 61 are clean.
+
+---
+
 ## 4. New results, not currently in the paper
 
 ### 4.1 Discontinuity behaviour — the `edge` protocol
