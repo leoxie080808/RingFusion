@@ -1,0 +1,150 @@
+{
+ "label": "T2 offline core timing: ROI crop and uncertainty terms separated",
+ "procedure": {
+  "warmup_iters": 100,
+  "timed_iters": 500,
+  "single_input_reused": true,
+  "plane_tracker": "PlaneTracker(refit_every=1), as deployed",
+  "sigma_control": "sigma_support_var BYPASSED, not zeroed"
+ },
+ "resolutions": {
+  "1232x1640": {
+   "resolution": "1232x1640",
+   "core_only": {
+    "median_ms": 49.973,
+    "p05_ms": 49.79,
+    "p95_ms": 50.538,
+    "mean_ms": 50.052
+   },
+   "plus_blend": {
+    "median_ms": 72.998,
+    "p05_ms": 72.877,
+    "p95_ms": 73.199,
+    "mean_ms": 73.022
+   },
+   "deployed": {
+    "median_ms": 78.665,
+    "p05_ms": 78.518,
+    "p95_ms": 78.939,
+    "mean_ms": 78.69
+   },
+   "deployed_no_7c_sigma": {
+    "median_ms": 70.836,
+    "p05_ms": 70.679,
+    "p95_ms": 71.001,
+    "mean_ms": 70.851
+   },
+   "per_stage_ms": {
+    "2_backbone": 9.579,
+    "3_4_project_pair": 0.814,
+    "4b_roi_plane": 0.092,
+    "5_fit_metric": 3.121,
+    "6_variance": 5.503,
+    "7_residual": 25.503,
+    "7b_clamp": 1.043,
+    "7c_blend": 23.156,
+    "7d_roi_sigma": 5.703,
+    "8_cloud": 2.517
+   },
+   "components_ms": {
+    "blend_depth_stage7c": 23.025,
+    "sigma_terms_in_7c": 7.829,
+    "roi_plane_and_floor": 5.667
+   }
+  },
+  "480x640": {
+   "resolution": "480x640",
+   "core_only": {
+    "median_ms": 20.145,
+    "p05_ms": 20.033,
+    "p95_ms": 20.76,
+    "mean_ms": 20.226
+   },
+   "plus_blend": {
+    "median_ms": 25.506,
+    "p05_ms": 25.4,
+    "p95_ms": 25.703,
+    "mean_ms": 25.534
+   },
+   "deployed": {
+    "median_ms": 28.13,
+    "p05_ms": 28.037,
+    "p95_ms": 28.259,
+    "mean_ms": 28.144
+   },
+   "deployed_no_7c_sigma": {
+    "median_ms": 26.38,
+    "p05_ms": 26.286,
+    "p95_ms": 26.514,
+    "mean_ms": 26.387
+   },
+   "per_stage_ms": {
+    "2_backbone": 5.319,
+    "3_4_project_pair": 0.772,
+    "4b_roi_plane": 0.091,
+    "5_fit_metric": 1.246,
+    "6_variance": 1.457,
+    "7_residual": 9.339,
+    "7b_clamp": 0.209,
+    "7c_blend": 5.476,
+    "7d_roi_sigma": 2.684,
+    "8_cloud": 1.186
+   },
+   "components_ms": {
+    "blend_depth_stage7c": 5.361,
+    "sigma_terms_in_7c": 1.75,
+    "roi_plane_and_floor": 2.624
+   }
+  }
+ },
+ "env": {
+  "note": "t2_core_timing",
+  "captured_utc": "2026-09-27T23:03:47Z",
+  "uptime": "up 3 hours, 11 minutes",
+  "machine": {
+   "hostname": "ubuntu",
+   "machine_id": "369cadd30c8f4b8e",
+   "model": "NVIDIA Jetson AGX Orin Developer Kit",
+   "serial": "1423725084630",
+   "ram_gb": 64,
+   "arch": "aarch64",
+   "kernel": "5.15.185-tegra"
+  },
+  "versions": {
+   "l4t": [
+    "# R36 (release), REVISION: 5.0, GCID: 43688277, BOARD: generic, EABI: aarch64, DATE: Fri Jan 16 03:50:45 UTC 2026"
+   ],
+   "tensorrt": "10.3.0.30-1+cuda12.5",
+   "cuda": "12.6.68",
+   "cudnn": "9.3.0.75-1",
+   "jetpack_metapackage": ""
+  },
+  "clocks": {
+   "cpu_governor": "schedutil",
+   "cpu_min_khz": "2201600",
+   "cpu_max_khz": "2201600",
+   "gpu_governor": "nvhost_podgov",
+   "gpu_min_hz": "1300500000",
+   "gpu_max_hz": "1300500000",
+   "gpu_cur_hz": "1300500000",
+   "nvpmodel": "NV Power Mode: MAXN 0",
+   "cpu_locked": true,
+   "gpu_locked": true,
+   "jetson_clocks_applied": true
+  },
+  "thermal_c": {
+   "cpu-thermal": 49.5,
+   "gpu-thermal": 44.6,
+   "soc0-thermal": 46.8,
+   "soc1-thermal": 46.2,
+   "soc2-thermal": 46.7,
+   "tj-thermal": 49.3
+  },
+  "engines": {},
+  "git": {
+   "commit": "7885189f236f86e86d7d7e0768d8139a33b6749f",
+   "dirty": true,
+   "branch": "main"
+  }
+ }
+}

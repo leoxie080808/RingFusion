@@ -1,0 +1,21 @@
+{
+ "label": "Stage 7c sigma_support_var, timed in situ on real frames",
+ "resolutions": {
+  "1232x1640": {
+   "n_frames": 40,
+   "n_calls": 200,
+   "median_ms": 7.22,
+   "mean_ms": 7.243,
+   "p05_ms": 7.167,
+   "p95_ms": 7.509
+  },
+  "480x640": {
+   "n_frames": 40,
+   "n_calls": 200,
+   "median_ms": 1.669,
+   "mean_ms": 1.681,
+   "p05_ms": 1.64,
+   "p95_ms": 1.808
+  }
+ }
+}

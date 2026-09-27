@@ -233,6 +233,85 @@ pinned at 2201 MHz in 100 % of samples, MAXN, leroi stopped, T9 running on the *
 `ours_{pytorch,tensorrt}_fp16_t1.json`, `depthor_small_fp16_accuracy.json`,
 `t1_conversion_failure.json`, `tegrastats_t1.log`
 
+### 3.2c T2 — offline core timing, ROI crop and uncertainty terms separated ✅ *(2026-09-27)*
+
+Three figures were circulating for "the cost of the uncertainty terms" — 5.7 ms, ~12 ms and
+10.6 ms. **They are not the same quantity.** Two of them are different pipeline stages, and the
+third does not reproduce.
+
+#### Per-stage, deployed resolution 1640×1232
+
+500 timed iterations after 100 warm-up, deployed engines, `PlaneTracker(refit_every=1)`.
+In-node column is `profile_node_r31.json`.
+
+| Stage | Offline | In-node | ratio |
+|---|---|---|---|
+| `2_backbone` | 9.579 | 10.17 | 1.06 |
+| `3_4_project_pair` | 0.814 | 0.88 | 1.08 |
+| `4b_roi_plane` | 0.092 | 0.10 | 1.09 |
+| `5_fit_metric` | 3.121 | 3.64 | 1.17 |
+| `6_variance` | 5.503 | 6.07 | 1.10 |
+| `7_residual` | 25.503 | 27.59 | 1.08 |
+| `7b_clamp` | 1.043 | 1.05 | 1.01 |
+| **`7c_blend`** | **23.156** | **24.50** | 1.06 |
+| **`7d_roi_sigma`** | **5.703** | **6.11** | 1.07 |
+| `8_cloud` | 2.517 | 2.62 | 1.04 |
+| **sum** | **77.03** | 82.73¹ | **1.074** |
+
+¹ excludes `1_rectify` (4.10) and `9_publish` (8.09), which have no offline counterpart.
+
+🆕 **T2's step-3 answer: the node runs 7.4 % slower than offline, and uniformly** — every stage
+lands between 1.01× and 1.17×, with no outlier. The gap is general ROS/DDS and scheduling
+overhead, not one stage behaving differently on the robot.
+
+#### Config arms
+
+| Arm | 1640×1232 | 480×640 |
+|---|---|---|
+| core only (blend off, ROI off) | 49.973 | 20.145 |
+| + blend (incl. σ) | 72.998 | 25.506 |
+| **deployed** | **78.665** | **28.130** |
+| deployed, 7c σ block bypassed | 70.836 | 26.380 |
+
+#### ✅ The three figures, reconciled
+
+| Quoted | What it actually is | Status |
+|---|---|---|
+| **5.7 ms** | **Stage 7d, the ROI sigma floor** — offline **5.703**, in-node **6.11** | ✅ correct, both agree |
+| **~12 ms** | a partial attribution of **Stage 7c** — offline **23.156**, in-node **24.50** | ✅ 7c agrees across methods |
+| **10.6 ms** | `sigma_support_var` inside 7c, from `sigma_cost_corrected_2026-08-04` | ❌ **does not reproduce** |
+
+**5.7 and 10.6 were never in conflict** — one is Stage 7d, the other is the σ block inside Stage
+7c. Table I must name the stage, or this recurs.
+
+#### ❌ The 10.6 ms σ figure does not reproduce; it is 7.2 ms
+
+Two independent measurements today, on the same commit:
+
+| Method | 1640×1232 | 480×640 |
+|---|---|---|
+| **`sigma_support_var` timed in situ**, 40 real frames, n = 200 | **7.22 ms** (p5 7.17, p95 7.51) | **1.669 ms** |
+| End-to-end bypass A/B (78.665 − 70.836) | 7.83 ms | 1.750 ms |
+| ⤷ less the full-frame add that survives the bypass (0.78 ms measured) | **7.05 ms** | 1.67 ms |
+
+The two agree at **7.1–7.2 ms**. The Aug 4 figure is ~47 % higher.
+
+**It is not a code change.** `blend.py`'s only edit since (commit `d0be2c8`, 2026-09-14) turned
+`DISAGREE_K`/`SUPPORT_FRAC`/`SPREAD_K` from module constants into function arguments —
+identical arithmetic. The difference is method: Aug 4 A/B'd an isolated blend block over
+40 frames × 3 reps with limited warm-up, which attributes allocation and cold-cache effects to
+the σ arm.
+
+⚠️ **Table I should quote ~7.2 ms for the 7c σ block at 1640×1232, superseding 10.6 ms**, and
+**5.7 ms for Stage 7d** as a separate line. The `blend.py` docstring citing "10.6 ms" should be
+updated — its *methodological* warning (zeroing constants is the wrong control for a cost
+question, which produced the discredited 0.80 ms) remains correct and worth keeping.
+
+Blend alone = 7c − σ ≈ **15.9 ms**, matching `sigma_cost_corrected`'s independently measured
+**15.901 ms** exactly. The blend half reproduces across methods and dates; only the σ half moved.
+
+→ `t1/t2_core_timing.json`, `t1/t2_sigma_block_cost.json`, `t1/tegrastats_t2.log`
+
 ### 3.3 Table III — angular bands
 
 **✅ Every published cell reproduces exactly on the current build.** medAE in m, `center`
