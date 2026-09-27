@@ -1,0 +1,59 @@
+{
+ "label": "T1 summary: DEPTHOR at matched runtime and precision (2026-09-27)",
+ "protocol": {
+  "warmup_iters": 100,
+  "timed_iters": 500,
+  "input_res": "480x640",
+  "batch": 1,
+  "cuda_synchronized": true,
+  "single_input_reused": true,
+  "note": "Both sides reuse ONE input. r31 timed OUR pipeline over cycling frames while DEPTHOR reused a batch; this harness removes that asymmetry.",
+  "plane_tracker": "PlaneTracker(refit_every=1), matching the deployed node"
+ },
+ "depthor": {
+  "small": {
+   "fp32_ms": 80.04,
+   "fp16_ms": 81.24,
+   "fp16_speedup": 0.985,
+   "note": "FP16 is SLOWER than FP32 for Small"
+  },
+  "large": {
+   "fp32_ms": 183.4,
+   "fp16_ms": 152.33,
+   "fp16_speedup": 1.204
+  }
+ },
+ "ours": {
+  "pytorch_fp16": {
+   "deployed_ms": 53.81,
+   "stages_off_ms": 45.58,
+   "fp16_mode": {
+    "backbone": "half",
+    "residual": "half"
+   }
+  },
+  "tensorrt_fp16": {
+   "deployed_ms": 27.54,
+   "stages_off_ms": 19.79
+  }
+ },
+ "ratios_vs_depthor_small": {
+  "matched_pytorch_fp16_deployed": 1.51,
+  "matched_pytorch_fp16_stages_off": 1.782,
+  "deployed_trt_vs_depthor_fastest": 2.906,
+  "deployed_trt_vs_depthor_fp16": 2.95,
+  "tensorrt_gain_on_our_own_stack": 1.954
+ },
+ "accuracy_gate": {
+  "absrel_fp32": 0.09408238984644413,
+  "absrel_fp16": 0.09403706505894661,
+  "delta": 4.532478749751101e-05,
+  "budget": 0.002,
+  "pass": true
+ },
+ "paper_claim": {
+  "r31": 2.83,
+  "t1_deployed": 2.906,
+  "t1_matched": 1.51
+ }
+}

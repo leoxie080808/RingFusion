@@ -1,0 +1,99 @@
+{
+ "label": "RingFusion pipeline, networks in PyTorch FP16 (T1 matched-precision arm)",
+ "backend": "torch",
+ "input_res": "480x640",
+ "fp16_mode_selected": {
+  "backbone": "half",
+  "residual": "half"
+ },
+ "fp16_mode_benchmark_ms": {
+  "backbone": {
+   "half": 20.58,
+   "autocast": 24.028
+  },
+  "residual": {
+   "half": 6.598,
+   "autocast": 7.253
+  }
+ },
+ "weights": {
+  "student": "training/runs/student_v4_heldout/student_best.pth",
+  "residual": "training/runs/residual_v7_long/residual_best.pth"
+ },
+ "procedure": {
+  "warmup_iters": 100,
+  "timed_iters": 500,
+  "cuda_synchronized": true,
+  "batch_reused": true,
+  "plane_tracker": "PlaneTracker(refit_every=1), as deployed",
+  "gpu_otherwise_idle": "asserted by operator"
+ },
+ "configs": {
+  "stages_off": {
+   "median_ms": 45.58,
+   "mean_ms": 45.61,
+   "sd_ms": 0.151,
+   "p05_ms": 45.45,
+   "p95_ms": 45.82,
+   "hz": 21.94
+  },
+  "deployed": {
+   "median_ms": 53.81,
+   "mean_ms": 53.81,
+   "sd_ms": 0.091,
+   "p05_ms": 53.68,
+   "p95_ms": 53.97,
+   "hz": 18.58
+  }
+ },
+ "env": {
+  "note": "time_pipeline_torch",
+  "captured_utc": "2026-09-27T22:37:54Z",
+  "uptime": "up 2 hours, 45 minutes",
+  "machine": {
+   "hostname": "ubuntu",
+   "machine_id": "369cadd30c8f4b8e",
+   "model": "NVIDIA Jetson AGX Orin Developer Kit",
+   "serial": "1423725084630",
+   "ram_gb": 64,
+   "arch": "aarch64",
+   "kernel": "5.15.185-tegra"
+  },
+  "versions": {
+   "l4t": [
+    "# R36 (release), REVISION: 5.0, GCID: 43688277, BOARD: generic, EABI: aarch64, DATE: Fri Jan 16 03:50:45 UTC 2026"
+   ],
+   "tensorrt": "10.3.0.30-1+cuda12.5",
+   "cuda": "12.6.68",
+   "cudnn": "9.3.0.75-1",
+   "jetpack_metapackage": ""
+  },
+  "clocks": {
+   "cpu_governor": "schedutil",
+   "cpu_min_khz": "2201600",
+   "cpu_max_khz": "2201600",
+   "gpu_governor": "nvhost_podgov",
+   "gpu_min_hz": "1300500000",
+   "gpu_max_hz": "1300500000",
+   "gpu_cur_hz": "1300500000",
+   "nvpmodel": "NV Power Mode: MAXN 0",
+   "cpu_locked": true,
+   "gpu_locked": true,
+   "jetson_clocks_applied": true
+  },
+  "thermal_c": {
+   "cpu-thermal": 49.1,
+   "gpu-thermal": 44.2,
+   "soc0-thermal": 46.6,
+   "soc1-thermal": 45.9,
+   "soc2-thermal": 46.3,
+   "tj-thermal": 49.1
+  },
+  "engines": {},
+  "git": {
+   "commit": "a031ace42d059e2f5df6e84912dbf3eabcee5d1f",
+   "dirty": true,
+   "branch": "main"
+  }
+ }
+}

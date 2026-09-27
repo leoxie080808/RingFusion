@@ -14,9 +14,9 @@ can report mean ± std over seeds instead of a single run. Everything here happe
 | 2 | `ros2_ws/data/real/` (**3.0 GB**) | gitignored; the refiner's training set (1234 rgb + 1234 tof) |
 | 3 | `training/runs/student_v4_heldout/student_best.pth` (**15 MB**) | gitignored; the frozen backbone the refiner trains against |
 
-Items 2 and 3 come on a USB stick. **Nothing else is needed** — no TensorRT engines (T9 trains in
-PyTorch), no ZJU-L5, no `data/rect`, no `data/teacher`. `calibration.yaml` is tracked and arrives
-with the clone.
+Items 2 and 3 are **pushed to you over Tailscale by machine A** once you have cloned — see §2.
+**Nothing else is needed**: no TensorRT engines (T9 trains in PyTorch), no ZJU-L5, no
+`data/rect`, no `data/teacher`. `calibration.yaml` is tracked and arrives with the clone.
 
 ---
 
@@ -31,17 +31,29 @@ grep -n "add_argument('--seed'" training/train_residual.py    # must print a lin
 
 `--depth 1` is deliberate: the full history is ~7 GB.
 
-## 2. Copy the two gitignored payloads
+## 2. Receive the two gitignored payloads
 
-Destination paths must match exactly.
+**Order matters: clone first (§1), then tell machine A you are ready.** The clone creates
+`ros2_ws/` and `training/`, but *not* `ros2_ws/data/` or `training/runs/` — those are gitignored,
+so they do not exist until the transfer creates them.
+
+Machine A pushes both payloads over Tailscale (you are `100.78.2.6 / jetson-orin-agx` on the
+tailnet). Nothing for you to run; the commands on A are:
 
 ```bash
-mkdir -p ~/RingFusion/ros2_ws/data ~/RingFusion/training/runs
-cp -r /media/<stick>/real/                 ~/RingFusion/ros2_ws/data/real/
-cp -r /media/<stick>/student_v4_heldout/   ~/RingFusion/training/runs/student_v4_heldout/
+rsync -a --mkpath --info=progress2 \
+  ~/RingFusion/training/runs/student_v4_heldout/student_best.pth \
+  <you>@100.78.2.6:~/RingFusion/training/runs/student_v4_heldout/
+
+rsync -a --mkpath --partial --info=progress2 \
+  ~/RingFusion/ros2_ws/data/real/ \
+  <you>@100.78.2.6:~/RingFusion/ros2_ws/data/real/
 ```
 
-Verify:
+`--mkpath` creates the two missing directory levels; `--partial` makes the 3 GB transfer
+resumable, so if the link drops, A just re-runs the same command.
+
+Once it lands, verify on your side:
 
 ```bash
 ls ~/RingFusion/ros2_ws/data/real/rgb | wc -l     # expect 1234
@@ -62,6 +74,67 @@ A mismatch does **not** block T9 — training is PyTorch and is far less version
 TensorRT inference. But **report the diff to machine A before starting**, and record it, because
 it determines whether anything else can ever be offloaded to this board. The reference stack is
 L4T R36.5.0 · TensorRT 10.3.0.30 · CUDA 12.6.68 · cuDNN 9.3.0.75.
+
+## 3b. Known blocker on this board — torch/cuBLAS (RESOLVED 2026-09-27)
+
+This was hit and fixed during setup. Recorded here in case the board is ever re-imaged.
+
+**Symptom:** `torch.cuda.is_available()` returns True and the device reports `Orin`, but the
+first matmul dies with `RuntimeError: CUDA error: CUBLAS_STATUS_ALLOC_FAILED`.
+
+**Cause:** pip had `nvidia-cublas-cu12 12.9.2.10` and `nvidia-cuda-nvrtc-cu12 12.9.86`
+installed — CUDA **12.9** libraries running against the Orin's **12.6** driver, which ships
+with JetPack and cannot be upgraded separately. `training/README.md` §"GPU torch on the Orin"
+documents this and its gotcha: *never let anything pip install `nvidia-cublas-cu12`.*
+
+**Fix applied:**
+
+```bash
+pip3 uninstall -y nvidia-cublas-cu12 nvidia-cuda-nvrtc-cu12   # keep nvidia-cudss-cu12
+```
+
+Verified afterwards: cuBLAS passes, and cuDNN passes at 288 x 384 (the training input size).
+
+### ⚠ If you launch training non-interactively
+
+`LD_LIBRARY_PATH` is set in `~/.bashrc`, which **only runs for interactive shells**. A run
+started under `nohup`, `ssh host 'cmd'`, cron or systemd will not have it, and torch will fail
+to import with `libcudss.so.0: cannot open shared object file`. Export it explicitly in any
+such launch:
+
+```bash
+export LD_LIBRARY_PATH=/usr/local/cuda-12.6/lib64:/usr/local/cuda/lib64:\
+/usr/lib/aarch64-linux-gnu/tegra:/usr/lib/aarch64-linux-gnu:\
+$HOME/.local/lib/python3.10/site-packages/nvidia/cu12/lib:$LD_LIBRARY_PATH
+```
+
+The loop in §5 assumes you are in a normal interactive terminal, where this is already set.
+
+## 3c. Smoke test — run this before committing to 11 hours
+
+```bash
+cd ~/RingFusion
+python3 training/train_residual.py --real \
+  --rgb ros2_ws/data/real/rgb --tof ros2_ws/data/real/tof \
+  --calib ros2_ws/src/ringfusion_bringup/config/calibration.yaml \
+  --student-ckpt training/runs/student_v4_heldout/student_best.pth \
+  --out /tmp/t9_smoke --holdout island --island 16 --holdout-frac 0.25 \
+  --epochs 1 --patience 0 --seed 0
+```
+
+Known-good output (measured on this board, 2026-09-27):
+
+```
+residual parameters: 463,971 | device cuda | seed 0
+[epoch 0] train 0.1690 (cov 0.89)  val 0.0768 (cov 0.87 -> target 0.68)
+  new best (val 0.0768) -> residual_best.pth
+done. best val 0.0768
+real    2m48.826s
+```
+
+`463,971` parameters and `device cuda` are the two things to check. The 2m48s is
+**startup-dominated** — dataset scan, checkpoint load and cuDNN autotune — so do not
+extrapolate it; steady-state is about 1 min/epoch.
 
 ## 4. Put the board in the same state as machine A
 

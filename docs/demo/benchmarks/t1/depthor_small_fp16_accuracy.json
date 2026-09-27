@@ -1,0 +1,12 @@
+{
+ "variant": "small",
+ "method": "torch.autocast fp16 (layer_norm/softmax stay fp32 by autocast policy)",
+ "n_frames": 50,
+ "absrel_fp32": 0.09408238984644413,
+ "absrel_fp16": 0.09403706505894661,
+ "delta": 4.532478749751101e-05,
+ "gate": 0.002,
+ "pass": true,
+ "nonfinite_fp16_frames": 0,
+ "mean_abs_pred_diff_m": 0.0007041291595669463
+}

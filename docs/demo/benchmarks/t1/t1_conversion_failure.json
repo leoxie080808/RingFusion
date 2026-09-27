@@ -1,0 +1,76 @@
+{
+ "label": "T1: why DEPTHOR could not be converted to TensorRT. For the response letter.",
+ "date": "2026-09-27",
+ "conclusion": "DEPTHOR does not convert because of ONE image-resize operation, not because of its attention layers. The paper must not claim that attention/ViT networks in general fail to compile.",
+ "blocking_operator": {
+  "aten_op": "aten::_upsample_bilinear2d_aa",
+  "what_it_is": "bilinear resize with antialias=True",
+  "origin": "torchvision.transforms.Resize, used in transforms_cfg['zju_s'] at Depthor/src/utils/set_mde.py:75-80 -- three resizes: trans (252x322), feat_trans (240x320), inv_trans (480x640). torchvision's Resize defaults to antialias=True for tensor inputs.",
+  "note_these_are_mid_graph": "Not input preprocessing that could be hoisted out of the timed region: they resize into the DepthAnything ViT and back out again inside forward()."
+ },
+ "attention_layers_are_NOT_the_problem": {
+  "dinov2_interpolate_antialias": "already False (dinov2.py:66, 423) -- the ViT's own positional-embedding interpolation is not antialiased and exports fine",
+  "layernorm_softmax": "These only caused trouble in a manual model.half() attempt ('expected scalar type Half but found Float'). torch.autocast resolves it by keeping layer_norm/softmax in FP32, and the FP16 model then matches FP32 to AbsRel 0.000045."
+ },
+ "export_attempts": [
+  {
+   "exporter": "TorchScript",
+   "opset": 17,
+   "result": "UnsupportedOperatorError on aten::_upsample_bilinear2d_aa"
+  },
+  {
+   "exporter": "TorchScript",
+   "opset": 18,
+   "result": "UnsupportedOperatorError"
+  },
+  {
+   "exporter": "TorchScript",
+   "opset": 19,
+   "result": "UnsupportedOperatorError"
+  },
+  {
+   "exporter": "TorchScript",
+   "opset": 20,
+   "result": "UnsupportedOperatorError"
+  },
+  {
+   "exporter": "TorchScript",
+   "opset": 21,
+   "result": "UnsupportedOperatorError"
+  },
+  {
+   "exporter": "TorchScript",
+   "opset": 17,
+   "variant": "control with antialias=False",
+   "result": "exports cleanly -- confirms the antialias flag is the sole blocker"
+  },
+  {
+   "exporter": "dynamo (torch.onnx.export dynamo=True, onnxscript installed)",
+   "opset": 18,
+   "result": "handles antialias on an isolated module, but fails on the full model inside torch.export: RuntimeError 'The tensor has a non-zero number of elements, but its data is not allocated yet.'"
+  },
+  {
+   "exporter": "TorchScript",
+   "opset": 17,
+   "variant": "antialias forced off on the full model",
+   "result": "ONNX exported successfully (120.7 MB) but the model's output changed -- see below"
+  }
+ ],
+ "cost_of_the_only_working_workaround": {
+  "change": "force antialias=False in transforms_cfg['zju_s']",
+  "measured_on": "one ZJU-L5 frame, DEPTHOR-Small",
+  "abs_rel_shift": 0.004549,
+  "max_abs_diff_m": 0.192757,
+  "mean_abs_diff_m": 0.007645,
+  "t1_accuracy_budget": 0.002,
+  "verdict": "REJECTED: the preprocessing change alone is 2.3x the entire FP16 accuracy budget, before any quantisation error. An engine built this way would not be DEPTHOR, so timing it would not answer the reviewer's question."
+ },
+ "fallback_taken": "Both sides timed in PyTorch, FP16 via torch.autocast, per the T1 brief. DEPTHOR FP16 vs FP32 agrees to AbsRel 0.000045 over 50 ZJU-L5 frames (budget 0.002), so the FP16 arm is a faithful DEPTHOR.",
+ "environment": {
+  "torch": "2.11.0",
+  "tensorrt": "10.3.0.30-1+cuda12.5",
+  "cuda": "12.6.68",
+  "l4t": "R36.5.0",
+  "board": "AGX Orin Developer Kit 64 GB, MAXN, jetson_clocks applied"
+ }
+}

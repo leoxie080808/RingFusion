@@ -125,6 +125,114 @@ At the deployed 1640×1232: 50.2 / 73.4 / **79.3 ms** (12.6 Hz) for the same thr
 
 → `timing_pipeline_r31.json`
 
+### 3.2b T1 — DEPTHOR at matched runtime and precision ✅ *(2026-09-27)*
+
+R5's objection to Table II was correct: the paper compared our **TensorRT FP16** pipeline
+against DEPTHOR timed in **PyTorch FP32**, stacking a runtime advantage and a precision
+advantage, only one of which is a property of the method. T1 separates them.
+
+#### ❌ DEPTHOR cannot be converted to TensorRT — and the reason is one resize, not attention
+
+| Exporter | Opset | Result |
+|---|---|---|
+| TorchScript | 17, 18, 19, 20, 21 | `UnsupportedOperatorError: aten::_upsample_bilinear2d_aa` at **every** opset |
+| TorchScript | 17, `antialias=False` control | exports cleanly — confirms the flag is the sole blocker |
+| dynamo (`onnxscript`) | 18 | handles antialias on an isolated module; fails on the full model inside `torch.export` |
+| TorchScript | 17, antialias forced off | **exports**, but the model's output moves — see below |
+
+The blocker is `torchvision.transforms.Resize` (defaults to `antialias=True`) used three times
+in `transforms_cfg["zju_s"]` — 252×322 into the ViT, 240×320 for features, 480×640 back out.
+These are **mid-graph**, not input preprocessing, so they cannot be hoisted out of the timed
+region.
+
+⚠️ **The ViT attention layers are not the cause.** dinov2's own `interpolate_antialias` is
+already `False`, and its positional-embedding interpolation exports fine. The paper must not
+generalise this to "attention networks do not compile."
+
+Forcing antialias off was measured rather than assumed:
+
+| | |
+|---|---|
+| AbsRel shift | **0.004549** |
+| max abs diff | 0.192757 m |
+| T1 budget | 0.002 |
+
+**2.3× the entire accuracy budget before any quantisation** — so that engine would not be
+DEPTHOR, and timing it would not answer R5. Route rejected. → `t1_conversion_failure.json`
+
+#### ✅ The FP16 fallback is a faithful DEPTHOR
+
+Both sides timed in PyTorch, FP16 via `torch.autocast` (which keeps `layer_norm` and `softmax`
+in FP32 — manual `.half()` raises *"expected scalar type Half but found Float"* at the first
+LayerNorm). Over 50 ZJU-L5 frames, 0 non-finite:
+
+| AbsRel FP32 | AbsRel FP16 | delta | budget |
+|---|---|---|---|
+| 0.094082 | 0.094037 | **0.000045** | 0.002 ✅ **44× inside** |
+
+#### 🆕 FP16 does not help DEPTHOR-Small
+
+100 warm-up + 500 timed, batch 1 @ 480×640, single input reused, CUDA-synchronised:
+
+| Model | FP32 | FP16 | Effect |
+|---|---|---|---|
+| **DEPTHOR-Small** | **80.04** ms | **81.24** ms | **1.5 % slower** |
+| DEPTHOR-Large | 183.40 ms | 152.33 ms | 17 % faster |
+
+Small is too small to pay back autocast's cast overhead; Large is not. **Since Table II
+compares against Small, the precision asymmetry R5 objected to is worth nothing to DEPTHOR.**
+
+Reproducibility: 80.04 ms against r31's 80.05 ms, a different day and after a reboot. Large at
+183.40 ms is *closer* to the published 183.8 ms than r31's 186.25 ms.
+
+#### Our pipeline, both backends, same harness
+
+Only the execution backend differs: the adapters duck-type `TRTRunner.run()` so the deployed
+classes' own `_preprocess`/`_pack`/`refine` run unchanged. `.half()` and autocast were both
+benchmarked per network and the faster used — **`.half()` won on both** (backbone 20.58 vs
+24.03 ms, residual 6.60 vs 7.25 ms), the opposite of DEPTHOR.
+
+| Config @ 480×640 | PyTorch FP16 | TensorRT FP16 | r31 |
+|---|---|---|---|
+| optional stages off | 45.58 ms | **19.79 ms** | 20.08 ✅ |
+| **deployed** (blend + ROI + σ) | 53.81 ms | **27.54 ms** | 28.16 ✅ |
+
+⚠️ **A plane-tracker trap, hit and corrected.** A first pass passed `plane_tracker=None`,
+which makes `pipeline.run` re-RANSAC the ground plane every frame — the exact bug
+`perception_node.py:94` records the node already fixed. It cost **+13 %** (31.16 vs 27.54 ms)
+and 7× the percentile spread. The fix (commit `87d1a13`, 2026-07-30) **predates both deployed
+engines and r31**, so r31's numbers did describe the shipped configuration.
+
+#### The decomposition R5 actually asked for
+
+| Comparison | Ratio |
+|---|---|
+| **Matched** — both PyTorch FP16, deployed | **1.51×** |
+| Matched — both PyTorch FP16, stages off | 1.78× |
+| **Deployed** — ours TensorRT vs DEPTHOR's fastest (80.04 ms) | **2.91×** |
+| TensorRT's gain on our own stack (53.81 → 27.54) | 1.95× |
+
+`1.51 × 1.95 = 2.95`, consistent. So the deployed advantage splits into **1.51× from the
+network** and **1.95× from TensorRT compilation**.
+
+**What to claim.** TensorRT is NVIDIA's software, not a contribution. What §IV-A can claim is
+that our network is built only from operations TensorRT compiles cleanly, and DEPTHOR's is not.
+The matched 1.51× is too small to headline, so keep the deployed ratio and state the dependency
+plainly: *at matched runtime and precision our network is 1.51× faster; the deployed 2.9×
+additionally reflects that our architecture compiles to TensorRT while DEPTHOR's does not,
+owing to one antialiased resize.* **Both ratios belong in Table II.**
+
+⚠️ r31 timed **our** pipeline over cycling frames while timing DEPTHOR on a reused batch. This
+harness puts both on a single reused input, removing that asymmetry — which is part of why the
+deployed row moved 28.16 → 27.54 ms and the ratio 2.83 → 2.91.
+
+**Session:** 2070 tegrastats samples over 34 min, tj max **58.4 °C** (26.6 °C of headroom), CPU
+pinned at 2201 MHz in 100 % of samples, MAXN, leroi stopped, T9 running on the *other* Orin.
+
+→ `t1_summary.json`, `depthor_{small,large}_{fp16,fp32}_t1.json`,
+`ours_{pytorch,tensorrt}_fp16_t1.json`, `depthor_small_fp16_accuracy.json`,
+`t1_conversion_failure.json`, `tegrastats_t1.log`
+
 ### 3.3 Table III — angular bands
 
 **✅ Every published cell reproduces exactly on the current build.** medAE in m, `center`
