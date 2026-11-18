@@ -1,0 +1,28 @@
+{
+ "protocol": "center",
+ "frames_scored": 61,
+ "median_of_frame_medians_m": {
+  "ours": 0.030906070496299454,
+  "nearest": 0.13980822572053292
+ },
+ "picks": [
+  {
+   "tag": "median",
+   "stem": "000054",
+   "file": "median_000054",
+   "kept": 216,
+   "withheld": 476,
+   "median_err_nearest_m": 0.03166583344153452,
+   "median_err_ours_m": 0.030906070496299454
+  },
+  {
+   "tag": "gap",
+   "stem": "000265",
+   "file": "gap_000265",
+   "kept": 231,
+   "withheld": 563,
+   "median_err_nearest_m": 0.2212124541575256,
+   "median_err_ours_m": 0.02547005050033413
+  }
+ ]
+}

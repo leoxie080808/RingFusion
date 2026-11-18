@@ -1,0 +1,46 @@
+{
+ "what": "paired frames for an offline map, presentation only, not in the paper",
+ "frames": 402,
+ "dropped": 0,
+ "unpaired": 1,
+ "depth_shape_hw": [
+  308,
+  410
+ ],
+ "K_saved_grid": [
+  94.8912555520776,
+  94.88024875099535,
+  209.4272721130486,
+  136.84332627526956
+ ],
+ "K_rect_full": [
+  379.5650222083104,
+  379.5209950039814,
+  839.2090884521944,
+  548.8733051010782
+ ],
+ "decimate": 4,
+ "rectify": {
+  "width": 1640,
+  "height": 1232,
+  "balance": 0.0,
+  "fov_scale": 1.0
+ },
+ "camera_model": "fisheye",
+ "units": {
+  "depth": "m",
+  "var": "m^2"
+ },
+ "args": {
+  "dir": "/home/leroi-ultio/icrae_rerun/map2",
+  "secs": 180.0,
+  "calib": "/home/leroi-ultio/RingFusion/ros2_ws/src/ringfusion_bringup/config/calibration.yaml",
+  "decimate": 4,
+  "max_skew": 0.12,
+  "queue": 40,
+  "wait_var": true,
+  "image_topic": "/image",
+  "depth_topic": "/depth",
+  "var_topic": "/depth_var"
+ }
+}

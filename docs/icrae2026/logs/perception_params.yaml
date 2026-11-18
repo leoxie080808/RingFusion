@@ -1,0 +1,14 @@
+/perception:
+  ros__parameters:
+    backbone_engine: /home/leroi-ultio/RingFusion/student_v4_heldout_fp16.engine
+    blend: true
+    blend_far_deg: 5.0
+    blend_near_deg: 2.0
+    calib: /home/leroi-ultio/RingFusion/ros2_ws/install/ringfusion_bringup/share/ringfusion_bringup/config/calibration.yaml
+    frame_id: cam_0
+    min_confidence: -1
+    plane_refit_every: 1
+    residual_engine: /home/leroi-ultio/RingFusion/residual_v7_fov73_fp16.engine
+    roi_enable: true
+    use_sim_time: false
+

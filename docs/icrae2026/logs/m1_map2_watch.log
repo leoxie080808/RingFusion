@@ -1,0 +1,10 @@
+watch: reference frame captured; closing allowed after 30 s
+watch:   5.1 s  frame 00048.jpg  diff vs start  45.2  (best after 30s: nan)
+watch:  10.2 s  frame 00093.jpg  diff vs start  21.0  (best after 30s: nan)
+watch:  15.5 s  frame 00139.jpg  diff vs start  37.5  (best after 30s: nan)
+watch:  20.6 s  frame 00188.jpg  diff vs start  42.0  (best after 30s: nan)
+watch:  25.7 s  frame 00233.jpg  diff vs start  46.0  (best after 30s: nan)
+watch:  30.8 s  frame 00281.jpg  diff vs start  46.0  (best after 30s: 38.8)
+watch:  35.9 s  frame 00327.jpg  diff vs start  33.7  (best after 30s: 18.1)
+watch:  41.1 s  frame 00374.jpg  diff vs start  33.9  (best after 30s: 18.1)
+watch: LOOP CLOSED at 43.9 s, frame 00400.jpg, diff 4.6 -> stopping recorder

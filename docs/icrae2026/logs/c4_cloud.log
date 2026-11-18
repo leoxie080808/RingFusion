@@ -1,0 +1,31 @@
+waiting for /image + /depth ...
+>>> RECORDING — drive the robot now <<<
+   2.0s  25 frames
+   4.1s  50 frames
+   6.2s  75 frames
+   8.3s  100 frames
+  10.3s  125 frames
+  12.4s  150 frames
+  14.5s  175 frames
+  16.6s  200 frames
+  18.7s  225 frames
+  20.8s  250 frames
+  22.8s  275 frames
+  24.9s  300 frames
+  27.0s  325 frames
+  29.1s  350 frames
+  31.2s  375 frames
+  33.2s  400 frames
+{
+  "w": 320,
+  "h": 240,
+  "fps": 12.0,
+  "frames": 421,
+  "zmin": 0.15,
+  "zmax": 6.0,
+  "fx": 74.06146774796301,
+  "fy": 73.93266136441197,
+  "cx": 163.74811481994035,
+  "cy": 106.92337112358668
+}
+wrote 421 frames

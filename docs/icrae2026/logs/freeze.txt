@@ -1,0 +1,65 @@
+# freeze record, 2026-11-17T23:47:22-05:00, host ubuntu
+# Not a clean freeze: local commits and uncommitted edits beyond 3e592d8 (presentation-only session).
+## git log --oneline -3
+62760d0 Merge branch 'main' of github.com:leoxie080808/RingFusion
+c744e12 Add ICRAE 2026 capture scripts and session notes (presentation only)
+5f90b7d T8: DEPTHOR-Small by footprint region, and the reproduction tolerance
+## git status --short
+M  PAPER-REVISION-RESULTS.md
+A  docs/demo/benchmarks/t1/t9_val61_protocols.json
+A  docs/demo/benchmarks/tape_s3/frame001_conf.npy
+A  docs/demo/benchmarks/tape_s3/frame001_depth.npy
+A  docs/demo/benchmarks/tape_s3/frame001_rgb.png
+A  docs/demo/benchmarks/tape_s3/frame001_tof.npy
+A  docs/demo/benchmarks/tape_s3/frame001_var.npy
+A  docs/demo/benchmarks/tape_s3/tape_gt.json
+A  docs/demo/benchmarks/zjul5_deployed_gate10m.json
+A  docs/demo/benchmarks/zjul5_deployed_gate20m.json
+ M firmware-esp/README.md
+A  ros2_ws/src/ringfusion_bringup/config/robot_geometry.yaml
+A  t3_testRun.md
+M  tools/diagnostics/baselines.py
+A  tools/diagnostics/freeze_sigma_constants.py
+M  tools/diagnostics/marker_view.py
+M  tools/diagnostics/plane_eval.py
+A  tools/diagnostics/residual_torch.py
+M  tools/diagnostics/tape_capture.py
+M  tools/diagnostics/tape_eval.py
+A  tools/diagnostics/tape_geometry.py
+M  tools/diagnostics/tape_repeats.py
+M  tools/diagnostics/tape_web.py
+M  tools/diagnostics/zjul5_eval.py
+## git diff --stat   (unstaged)
+ firmware-esp/README.md | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+## git diff --cached --stat   (staged)
+ PAPER-REVISION-RESULTS.md                          |  329 +
+ docs/demo/benchmarks/t1/t9_val61_protocols.json    | 7991 ++++++++++++++++++++
+ docs/demo/benchmarks/tape_s3/frame001_conf.npy     |  Bin 0 -> 1152 bytes
+ docs/demo/benchmarks/tape_s3/frame001_depth.npy    |  Bin 0 -> 8082048 bytes
+ docs/demo/benchmarks/tape_s3/frame001_rgb.png      |  Bin 0 -> 2589710 bytes
+ docs/demo/benchmarks/tape_s3/frame001_tof.npy      |  Bin 0 -> 4224 bytes
+ docs/demo/benchmarks/tape_s3/frame001_var.npy      |  Bin 0 -> 8082048 bytes
+ docs/demo/benchmarks/tape_s3/tape_gt.json          |   94 +
+ docs/demo/benchmarks/zjul5_deployed_gate10m.json   |  213 +
+ docs/demo/benchmarks/zjul5_deployed_gate20m.json   |  213 +
+ .../ringfusion_bringup/config/robot_geometry.yaml  |   87 +
+ t3_testRun.md                                      |  131 +
+ tools/diagnostics/baselines.py                     |   25 +-
+ tools/diagnostics/freeze_sigma_constants.py        |   86 +
+ tools/diagnostics/marker_view.py                   |   34 +
+ tools/diagnostics/plane_eval.py                    |   21 +-
+ tools/diagnostics/residual_torch.py                |   77 +
+ tools/diagnostics/tape_capture.py                  |  248 +-
+ tools/diagnostics/tape_eval.py                     |  154 +-
+ tools/diagnostics/tape_geometry.py                 |  210 +
+ tools/diagnostics/tape_repeats.py                  |   23 +-
+ tools/diagnostics/tape_web.py                      |  241 +-
+ tools/diagnostics/zjul5_eval.py                    |   27 +-
+ 23 files changed, 10136 insertions(+), 68 deletions(-)
+## git diff --stat 3e592d8 -- ros2_ws training   (the doc's check, committed + uncommitted)
+ .../ringfusion_bringup/config/robot_geometry.yaml  | 87 ++++++++++++++++++++++
+ 1 file changed, 87 insertions(+)
+## sha256sum engines
+99167d447db6dc1a96cabcbf33282a25b8a0a05937bbd800c5aa17ddb05ba2fa  /home/leroi-ultio/RingFusion/student_v4_heldout_fp16.engine
+a66f068bfdaade2d201c05961e8e5113d7b5483facfd027ef9d68d32aef2d0e8  /home/leroi-ultio/RingFusion/residual_v7_fov73_fp16.engine

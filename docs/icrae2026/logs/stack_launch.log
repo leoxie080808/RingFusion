@@ -1,0 +1,94 @@
+[INFO] [launch]: All log files can be found below /home/leroi-ultio/.ros/log/2026-11-17-23-48-05-742530-ubuntu-9723
+[INFO] [launch]: Default logging verbosity is set to INFO
+[INFO] [tof_driver-1]: process started with pid [9749]
+[INFO] [camera-2]: process started with pid [9751]
+[INFO] [perception-3]: process started with pid [9753]
+[INFO] [static_transform_publisher-4]: process started with pid [9755]
+[static_transform_publisher-4] [WARN] [1794977285.881083345] []: Old-style arguments are deprecated; see --help for new-style arguments
+[static_transform_publisher-4] [INFO] [1794977285.906018270] [cam_to_tof]: Spinning until stopped - publishing transform
+[static_transform_publisher-4] translation: ('0.000000', '0.020195', '0.001130')
+[static_transform_publisher-4] rotation: ('0.000000', '0.000000', '0.000000', '1.000000')
+[static_transform_publisher-4] from 'cam_0' to 'tof_0'
+[camera-2] GST_ARGUS: Creating output stream
+[camera-2] CONSUMER: Waiting until producer is connected...
+[camera-2] GST_ARGUS: Available Sensor modes :
+[camera-2] GST_ARGUS: 3280 x 2464 FR = 21.000000 fps Duration = 47619048 ; Analog Gain range min 1.000000, max 10.625000; Exposure Range min 13000, max 683709000;
+[camera-2] 
+[camera-2] GST_ARGUS: 3280 x 1848 FR = 28.000001 fps Duration = 35714284 ; Analog Gain range min 1.000000, max 10.625000; Exposure Range min 13000, max 683709000;
+[camera-2] 
+[camera-2] GST_ARGUS: 1920 x 1080 FR = 29.999999 fps Duration = 33333334 ; Analog Gain range min 1.000000, max 10.625000; Exposure Range min 13000, max 683709000;
+[camera-2] 
+[camera-2] GST_ARGUS: 1640 x 1232 FR = 29.999999 fps Duration = 33333334 ; Analog Gain range min 1.000000, max 10.625000; Exposure Range min 13000, max 683709000;
+[camera-2] 
+[camera-2] GST_ARGUS: 1280 x 720 FR = 59.999999 fps Duration = 16666667 ; Analog Gain range min 1.000000, max 10.625000; Exposure Range min 13000, max 683709000;
+[camera-2] 
+[camera-2] GST_ARGUS: Running with following settings:
+[camera-2]    Camera index = 0 
+[camera-2]    Camera mode  = 3 
+[camera-2]    Output Stream W = 1640 H = 1232 
+[camera-2]    seconds to Run    = 0 
+[camera-2]    Frame Rate = 29.999999 
+[camera-2] GST_ARGUS: Setup Complete, Starting captures for 0 seconds
+[camera-2] GST_ARGUS: Starting repeat capture requests.
+[camera-2] CONSUMER: Producer has connected; continuing.
+[camera-2] [ WARN:0] global ./modules/videoio/src/cap_gstreamer.cpp (1100) open OpenCV | GStreamer warning: Cannot query video position: status=0, value=-1, duration=-1
+[camera-2] [INFO] [1794977287.218888412] [camera]: Arducam CSI -> /image
+[tof_driver-1] [INFO] [1794977287.744853906] [tof_driver]: ToF driver module 0 reading /dev/ttyACM1 -> /tof
+[tof_driver-1] [tof_source] detected BINARY frame stream
+[perception-3] [INFO] [1794977288.830724901] [perception]: loading backbone engine: /home/leroi-ultio/RingFusion/student_v4_heldout_fp16.engine
+[perception-3] [11/17/2026-23:48:11] [TRT] [W] Using an engine plan file across different models of devices is not recommended and is likely to affect performance or even cause errors.
+[perception-3] [INFO] [1794977291.415468551] [perception]: loading residual engine: /home/leroi-ultio/RingFusion/residual_v7_fov73_fp16.engine
+[perception-3] [11/17/2026-23:48:11] [TRT] [W] Using an engine plan file across different models of devices is not recommended and is likely to affect performance or even cause errors.
+[perception-3] [INFO] [1794977291.429605176] [perception]: rectify: fisheye->pinhole (1640, 1232)
+[perception-3] [INFO] [1794977291.439055138] [perception]: Perception up: backbone=tensorrt residual=residual_trt -> /cloud, /depth, /depth_var
+[WARNING] [launch]: user interrupted with ctrl-c (SIGINT)
+[INFO] [static_transform_publisher-4]: sending signal 'SIGINT' to process[static_transform_publisher-4]
+[INFO] [perception-3]: sending signal 'SIGINT' to process[perception-3]
+[INFO] [camera-2]: sending signal 'SIGINT' to process[camera-2]
+[INFO] [tof_driver-1]: sending signal 'SIGINT' to process[tof_driver-1]
+[static_transform_publisher-4] [INFO] [1794980583.507617061] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[perception-3] Traceback (most recent call last):
+[perception-3]   File "/home/leroi-ultio/RingFusion/ros2_ws/install/ringfusion_perception/lib/ringfusion_perception/perception", line 33, in <module>
+[perception-3]     sys.exit(load_entry_point('ringfusion-perception', 'console_scripts', 'perception')())
+[perception-3]   File "/home/leroi-ultio/RingFusion/ros2_ws/build/ringfusion_perception/ringfusion_perception/perception_node.py", line 238, in main
+[perception-3]     rclpy.shutdown()
+[perception-3]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/__init__.py", line 130, in shutdown
+[perception-3]     _shutdown(context=context)
+[perception-3]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/utilities.py", line 58, in shutdown
+[perception-3]     return context.shutdown()
+[perception-3]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/context.py", line 102, in shutdown
+[perception-3]     self.__context.shutdown()
+[perception-3] rclpy._rclpy_pybind11.RCLError: failed to shutdown: rcl_shutdown already called on the given context, at ./src/rcl/init.c:241
+[tof_driver-1] Traceback (most recent call last):
+[tof_driver-1]   File "/home/leroi-ultio/RingFusion/ros2_ws/install/ringfusion_drivers/lib/ringfusion_drivers/tof_driver", line 33, in <module>
+[tof_driver-1]     sys.exit(load_entry_point('ringfusion-drivers==0.1.0', 'console_scripts', 'tof_driver')())
+[tof_driver-1]   File "/home/leroi-ultio/RingFusion/ros2_ws/install/ringfusion_drivers/lib/python3.10/site-packages/ringfusion_drivers/tof_driver_node.py", line 85, in main
+[tof_driver-1]     rclpy.shutdown()
+[tof_driver-1]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/__init__.py", line 130, in shutdown
+[tof_driver-1]     _shutdown(context=context)
+[tof_driver-1]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/utilities.py", line 58, in shutdown
+[tof_driver-1]     return context.shutdown()
+[tof_driver-1]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/context.py", line 102, in shutdown
+[tof_driver-1]     self.__context.shutdown()
+[tof_driver-1] rclpy._rclpy_pybind11.RCLError: failed to shutdown: rcl_shutdown already called on the given context, at ./src/rcl/init.c:241
+[INFO] [static_transform_publisher-4]: process has finished cleanly [pid 9755]
+[ERROR] [tof_driver-1]: process has died [pid 9749, exit code 1, cmd '/home/leroi-ultio/RingFusion/ros2_ws/install/ringfusion_drivers/lib/ringfusion_drivers/tof_driver --ros-args -r __node:=tof_driver --params-file /tmp/launch_params_1h662nxd'].
+[ERROR] [perception-3]: process has died [pid 9753, exit code 1, cmd '/home/leroi-ultio/RingFusion/ros2_ws/install/ringfusion_perception/lib/ringfusion_perception/perception --ros-args -r __node:=perception --params-file /tmp/launch_params_w9l_liwr'].
+[camera-2] GST_ARGUS: Cleaning up
+[ERROR] [camera-2]: process[camera-2] failed to terminate '5' seconds after receiving 'SIGINT', escalating to 'SIGTERM'
+[INFO] [camera-2]: sending signal 'SIGTERM' to process[camera-2]
+[camera-2] CONSUMER: Done Success
+[camera-2] GST_ARGUS: Done Success
+[camera-2] Traceback (most recent call last):
+[camera-2]   File "/home/leroi-ultio/RingFusion/ros2_ws/install/ringfusion_drivers/lib/ringfusion_drivers/camera", line 33, in <module>
+[camera-2]     sys.exit(load_entry_point('ringfusion-drivers==0.1.0', 'console_scripts', 'camera')())
+[camera-2]   File "/home/leroi-ultio/RingFusion/ros2_ws/install/ringfusion_drivers/lib/python3.10/site-packages/ringfusion_drivers/camera_node.py", line 91, in main
+[camera-2]     rclpy.shutdown()
+[camera-2]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/__init__.py", line 130, in shutdown
+[camera-2]     _shutdown(context=context)
+[camera-2]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/utilities.py", line 58, in shutdown
+[camera-2]     return context.shutdown()
+[camera-2]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/context.py", line 102, in shutdown
+[camera-2]     self.__context.shutdown()
+[camera-2] rclpy._rclpy_pybind11.RCLError: failed to shutdown: rcl_shutdown already called on the given context, at ./src/rcl/init.c:241
+[ERROR] [camera-2]: process has died [pid 9751, exit code 1, cmd '/home/leroi-ultio/RingFusion/ros2_ws/install/ringfusion_drivers/lib/ringfusion_drivers/camera --ros-args -r __node:=camera --params-file /tmp/launch_params_x9qzu0y7'].

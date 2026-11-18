@@ -1,0 +1,15 @@
+waiting for /image /tof /depth /depth_var ...
+>>> RECORDING, drive the robot now <<<
+   2.8s  30 frames
+   5.7s  60 frames
+   8.5s  90 frames
+  11.4s  120 frames
+  14.4s  150 frames
+  17.2s  180 frames
+  20.1s  210 frames
+  23.1s  240 frames
+  26.0s  270 frames
+  28.9s  300 frames
+  31.8s  330 frames
+  34.7s  360 frames
+wrote 363 frames to /home/leroi-ultio/icrae_rerun/clips/c1_take3

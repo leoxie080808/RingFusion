@@ -1,0 +1,24 @@
+/usr/lib/python3/dist-packages/scipy/__init__.py:146: UserWarning: A NumPy version >=1.17.3 and <1.25.0 is required for this version of SciPy (detected version 1.26.4
+  warnings.warn(f"A NumPy version >={np_minversion} and <{np_maxversion}"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/287 [00:00<?, ?it/s]Loading weights: 100%|██████████| 287/287 [00:00<00:00, 4629.74it/s]
+xFormers not available
+xFormers not available
+ours: closed-form fit on depth-anything/Depth-Anything-V2-Small-hf
+DEPTHOR-Small loaded
+  50/527
+  100/527
+  150/527
+  200/527
+  250/527
+  300/527
+  350/527
+  400/527
+  450/527
+  500/527
+
+scanned 517 images. Pooled AbsRel: ours 0.094 (paper 0.094), DEPTHOR-Small 0.079 (paper 0.079 published)
+match   idx 244  dinner_room1/1645005045.90853.h5  AbsRel ours 0.036  DEPTHOR 0.027  far>5m 0%
+median  idx 383  library1/1645175752.414045.h5  AbsRel ours 0.273  DEPTHOR 0.271  far>5m 14%
+far     idx 378  library1/1645175573.706783.h5  AbsRel ours 0.264  DEPTHOR 0.196  far>5m 9%
+wrote 3 image sets and summary.json to /home/leroi-ultio/icrae_rerun/zjul5

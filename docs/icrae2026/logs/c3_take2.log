@@ -1,0 +1,21 @@
+rectified K (fx,fy,cx,cy) = [379.56502221 379.520995   839.20908845 548.8733051 ]
+waiting for all three topics...
+>>> RECORDING — drive the robot now <<<
+   1.9s  30 frames
+   3.9s  60 frames
+   5.9s  90 frames
+   7.9s  120 frames
+   9.9s  150 frames
+  11.9s  180 frames
+  13.9s  210 frames
+  15.9s  240 frames
+  17.9s  270 frames
+  19.9s  300 frames
+  21.9s  330 frames
+  23.9s  360 frames
+  25.9s  390 frames
+  27.9s  420 frames
+  29.9s  450 frames
+  31.9s  480 frames
+  33.9s  510 frames
+wrote 525 frames to /home/leroi-ultio/icrae_rerun/clips/c3_take2

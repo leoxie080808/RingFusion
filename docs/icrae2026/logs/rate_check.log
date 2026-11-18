@@ -1,0 +1,21 @@
+warming up 3 s, then measuring 60 s...
+
+=== deployed rate -- rerun 2026-11-17 ===
+topic          n       Hz    median       p90       max
+-------------------------------------------------------
+image       1804    30.16     32.6m     42.2m    246.7m   [18.43-150.35 Hz p05-p95]
+tof          959    16.01     60.6m     70.6m    124.3m   [13.67-18.68 Hz p05-p95]
+depth        572     9.57    104.6m    114.4m    149.1m   [8.36-11.17 Hz p05-p95]
+cloud        573     9.56    104.5m    111.1m    126.9m   [8.54-10.81 Hz p05-p95]
+
+/depth age on arrival (how stale each map is):
+  median 140.1 ms   p90 165.4 ms   max 480.5 ms
+
+interpretation:
+  /tof supplies 16.0 Hz against /depth 9.6 Hz, so the pipeline is the constraint --
+     this measures COMPUTE, which is what we wanted.
+  measured 9.57 Hz vs 9.9 Hz extrapolated (-3%)
+  offline pipeline.run() reference: 14.1 Hz (70.7 ms) at 1640x1232, blend+ROI on, no ROS
+  ToF complete-map rate to stay above: 8.3 Hz -- PASS
+
+wrote /home/leroi-ultio/icrae_rerun/logs/rate_check.json

@@ -1,0 +1,28 @@
+waiting for /image /depth /depth_var ...
+first paired frame, recording 180 s
+    3.2 s  30 frames      16 MB  dropped 0  unpaired 1  queue 0
+    6.5 s  60 frames      31 MB  dropped 0  unpaired 1  queue 0
+    9.9 s  90 frames      46 MB  dropped 0  unpaired 1  queue 0
+   13.2 s  120 frames      60 MB  dropped 0  unpaired 1  queue 0
+   16.6 s  150 frames      75 MB  dropped 0  unpaired 1  queue 0
+   19.8 s  180 frames      90 MB  dropped 0  unpaired 1  queue 0
+   23.1 s  210 frames     104 MB  dropped 0  unpaired 1  queue 0
+   25.8 s  240 frames     118 MB  dropped 0  unpaired 1  queue 0
+   29.7 s  270 frames     134 MB  dropped 0  unpaired 1  queue 0
+   33.1 s  300 frames     149 MB  dropped 0  unpaired 1  queue 0
+   36.4 s  330 frames     164 MB  dropped 0  unpaired 1  queue 0
+   39.7 s  360 frames     180 MB  dropped 0  unpaired 1  queue 0
+   43.0 s  390 frames     195 MB  dropped 0  unpaired 1  queue 0
+saved 402 frames (201 MB) to /home/leroi-ultio/icrae_rerun/map2, dropped 0, unpaired 1
+Traceback (most recent call last):
+  File "/home/leroi-ultio/RingFusion/tools/diagnostics/record_map_frames.py", line 227, in <module>
+    main()
+  File "/home/leroi-ultio/RingFusion/tools/diagnostics/record_map_frames.py", line 223, in main
+    rclpy.shutdown()
+  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/__init__.py", line 130, in shutdown
+    _shutdown(context=context)
+  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/utilities.py", line 58, in shutdown
+    return context.shutdown()
+  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/context.py", line 102, in shutdown
+    self.__context.shutdown()
+rclpy._rclpy_pybind11.RCLError: failed to shutdown: rcl_shutdown already called on the given context, at ./src/rcl/init.c:241

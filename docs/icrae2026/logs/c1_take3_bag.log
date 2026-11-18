@@ -1,0 +1,14 @@
+stdin is not a terminal device. Keyboard handling disabled.[INFO] [1794978863.750869536] [rosbag2_recorder]: Press SPACE for pausing/resuming
+[INFO] [1794978863.753165150] [rosbag2_storage]: Opened database '/home/leroi-ultio/icrae_rerun/bags/c1_take3/c1_take3_0.db3' for READ_WRITE.
+[INFO] [1794978863.754295037] [rosbag2_recorder]: Listening for topics...
+[INFO] [1794978863.754318781] [rosbag2_recorder]: Event publisher thread: Starting
+[INFO] [1794978863.754530268] [rosbag2_recorder]: Recording...
+[INFO] [1794978863.858036954] [rosbag2_recorder]: Subscribed to topic '/cloud'
+[INFO] [1794978863.859722809] [rosbag2_recorder]: Subscribed to topic '/depth'
+[INFO] [1794978863.860915031] [rosbag2_recorder]: Subscribed to topic '/depth_var'
+[INFO] [1794978864.367042617] [rosbag2_recorder]: Subscribed to topic '/image'
+[INFO] [1794978864.368947640] [rosbag2_recorder]: Subscribed to topic '/tof'
+[INFO] [1794978864.369039991] [rosbag2_recorder]: All requested topics are subscribed. Stopping discovery...
+[INFO] [1794978902.763178987] [rosbag2_cpp]: Writing remaining messages from cache to the bag. It may take a while
+[INFO] [1794978902.785477275] [rosbag2_recorder]: Event publisher thread: Exiting
+[INFO] [1794978902.785886811] [rosbag2_recorder]: Recording stopped

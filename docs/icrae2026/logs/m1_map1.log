@@ -1,0 +1,22 @@
+waiting for /image /depth /depth_var ...
+first paired frame, recording 65 s
+    3.3 s  30 frames      16 MB  dropped 0  unpaired 11  queue 0
+    6.6 s  60 frames      32 MB  dropped 0  unpaired 11  queue 0
+   10.1 s  90 frames      47 MB  dropped 0  unpaired 11  queue 0
+   13.3 s  120 frames      62 MB  dropped 0  unpaired 11  queue 0
+   16.4 s  150 frames      77 MB  dropped 0  unpaired 11  queue 0
+   19.7 s  180 frames      93 MB  dropped 0  unpaired 11  queue 0
+   23.1 s  210 frames     108 MB  dropped 0  unpaired 11  queue 0
+   26.4 s  240 frames     124 MB  dropped 0  unpaired 11  queue 0
+   29.8 s  270 frames     139 MB  dropped 0  unpaired 11  queue 0
+   33.0 s  300 frames     154 MB  dropped 0  unpaired 11  queue 0
+   36.3 s  330 frames     169 MB  dropped 0  unpaired 11  queue 0
+   39.7 s  360 frames     185 MB  dropped 0  unpaired 11  queue 0
+   43.0 s  390 frames     200 MB  dropped 0  unpaired 11  queue 1
+   46.2 s  420 frames     215 MB  dropped 0  unpaired 11  queue 0
+   48.9 s  450 frames     230 MB  dropped 0  unpaired 11  queue 0
+   52.9 s  480 frames     245 MB  dropped 0  unpaired 11  queue 0
+   56.2 s  510 frames     260 MB  dropped 0  unpaired 11  queue 1
+   59.5 s  540 frames     276 MB  dropped 0  unpaired 11  queue 0
+   62.7 s  570 frames     291 MB  dropped 0  unpaired 11  queue 0
+saved 589 frames (301 MB) to /home/leroi-ultio/icrae_rerun/map1, dropped 0, unpaired 11

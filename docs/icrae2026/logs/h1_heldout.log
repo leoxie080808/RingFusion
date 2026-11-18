@@ -1,0 +1,8 @@
+[11/18/2026-00:54:20] [TRT] [W] Using an engine plan file across different models of devices is not recommended and is likely to affect performance or even cause errors.
+[11/18/2026-00:54:20] [TRT] [W] Using an engine plan file across different models of devices is not recommended and is likely to affect performance or even cause errors.
+/usr/lib/python3/dist-packages/scipy/__init__.py:146: UserWarning: A NumPy version >=1.17.3 and <1.25.0 is required for this version of SciPy (detected version 1.26.4
+  warnings.warn(f"A NumPy version >={np_minversion} and <{np_maxversion}"
+61 frames, center protocol. Median of per-frame medians: ours 3.1 cm, nearest 14.0 cm
+median 000054  kept 216  withheld 476  median error: nearest 3.2 cm, ours 3.1 cm
+gap    000265  kept 231  withheld 563  median error: nearest 22.1 cm, ours 2.5 cm
+wrote 2 frames and summary.json to /home/leroi-ultio/icrae_rerun/heldout
