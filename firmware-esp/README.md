@@ -13,6 +13,21 @@ Hardware mapping:
 - 3V3 -> 3V3
 - GND -> GND
 
+Wire colours on the current harness (2026-11-17):
+
+| Signal | Wire |
+|---|---|
+| 3V3 | red |
+| GND | orange, brown (two) |
+| SDA | yellow |
+| SCL | green |
+| INT | purple-maroon (replaced the original blue, which had failed) |
+| EN | white |
+| spare | purple, not connected at either end |
+
+If the app logs "32x32 ranging started" and then nothing follows, check INT first:
+I2C and EN are evidently working by then, and the app sends a frame only when INT goes low.
+
 The board is based on the ams OSRAM TMF8829. The project uses the official portable
 TMF8829 C driver and firmware image, with an ESP-IDF hardware shim.
 
