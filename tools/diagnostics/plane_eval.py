@@ -49,6 +49,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from anchoring_bridge import calib_from_yaml                      # noqa: E402
 from bootstrap import frame_bootstrap                             # noqa: E402
 import envinfo                                                    # noqa: E402
+from tape_geometry import slant_from_legs, load_geometry, has_legs  # noqa: E402
 
 PLANE_PREFIX = 'plane:'
 
@@ -105,7 +106,12 @@ def main():
                     help='shrink each region by this much so marker tape and hull edges '
                          'do not contribute')
     ap.add_argument('--out', default='')
+    ap.add_argument('--geometry',
+                    default=os.path.join(_REPO, 'ros2_ws', 'src', 'ringfusion_bringup',
+                                         'config', 'robot_geometry.yaml'),
+                    help='items 27-29, required only for sessions that recorded tape legs')
     a = ap.parse_args()
+    geom = load_geometry(a.geometry)
 
     import cv2
 
@@ -144,7 +150,20 @@ def main():
             report['planes'][name] = {'skipped': 'fewer than 3 tape points'}
             continue
         uv = np.array([[p['u'], p['v']] for p in gp], float)
-        r = np.array([float(p['range_m']) + origin for p in gp], float)
+        # Slant range per tape point, from whichever reference it carries. NOTE: the plane is
+        # still fitted along the CLICKED RAYS, so it inherits whatever pointing error the
+        # clicks carry -- unchanged from the slant-range era, and acceptable because the floor
+        # geometry already agrees with tape to 2.3 mm. A legs session could do better still by
+        # placing each point in 3D from its legs and skipping the rays entirely; that is a
+        # worthwhile follow-up, not a prerequisite.
+        if any(has_legs(p) for p in gp):
+            if geom is None:
+                sys.exit(f"plane group '{name}' recorded tape legs, but items 27-29 are UNSET "
+                         f"in {a.geometry} -- fill them in before scoring a legs session.")
+            r = np.array([float(slant_from_legs(p['x_m'], p['y_m'], p['z_m'], geom))
+                          for p in gp], float)
+        else:
+            r = np.array([float(p['range_m']) + origin for p in gp], float)
         P = rays(uv[:, 0], uv[:, 1], K) * r[:, None]          # tape ranges only
         n, c = fit_plane(P)
         resid = np.abs(P @ n + c)

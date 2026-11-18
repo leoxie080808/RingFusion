@@ -46,7 +46,12 @@ from ringfusion_msgs.msg import ToFFrame
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from tape_capture import _quad_centre, cone_class                 # noqa: E402
+# Imported, never reimplemented: the centre rule, the cone classifier, the stamp helper and
+# the legs->axial-depth conversion must be bit-identical between the two capture front ends,
+# or a session started in one and finished in the other would carry two different references.
+from tape_capture import (_quad_centre, _stamp, cone_class,       # noqa: E402
+                          load_capture_geometry)
+from tape_geometry import axial_from_legs, slant_from_legs        # noqa: E402
 from marker_view import cone_rect, dashed_rect                    # noqa: E402
 from ringfusion_perception import geometry as geo                 # noqa: E402
 
@@ -58,13 +63,45 @@ ZOOM, ZOOM_HALF = 6, 28
 # entirely inside the cone, or span the cone nicely while every marker is at 2 m. Progress
 # against both is shown live because a gap discovered after the scene is dismantled cannot
 # be filled -- the whole point of the session is that nothing moved between repeats.
+# The SUPERSET of the two specs that disagree, so one session satisfies both:
+#   * PAPER-REVISION-RESULTS.md section 5: 20+ points, 8 in / 3 edge / 4 out,
+#     4+ discontinuities, spanning 0.3-4.0 m.
+#   * the Sept 27 brief, T3: >=12 points, and specifically TWO IN-CONE POINTS BEYOND 4.2 m,
+#     which section 5's 0.3-4.0 m span does not reach at all, plus a thin pole.
+# Hence the fourth range band. Satisfying the superset costs one session instead of two, and
+# the beyond-4.2 m pair is the only part needing a long sightline -- book it with drive 3b.
 CONE_TARGET = {'in': 8, 'edge': 3, 'out': 4}
-BAND_TARGET = {'near': 4, 'mid': 4, 'far': 4}
+BAND_TARGET = {'near': 4, 'mid': 4, 'far': 4, 'beyond': 2}
 PLANE_MIN = 3          # a plane is defined by 3; the 4th is the only check that it was flat
+# Discontinuities are counted from a `disc:` label prefix, the same idiom as `plane:`. They
+# cannot be detected from geometry -- whether a marker straddles a depth edge is a fact about
+# the scene, not the pixel -- so the operator declares it. One must be the thin pole.
+DISC_TARGET = 4
+DISC_POLE_LABEL = 'disc:pole'
 
 
-def band_of(r, near_m, far_m):
+def band_of(r, near_m, far_m, beyond_m):
+    """Range band for composition tracking. `beyond` is the dToF-gate regime the brief asks
+    for and section 5 omits; it is tracked separately because two points there are a hard
+    requirement, not a bonus at the top of `far`."""
+    if r >= beyond_m:
+        return 'beyond'
     return 'near' if r < near_m else ('mid' if r < far_m else 'far')
+
+
+def tape_range(q, geom):
+    """Distance used for range banding, from whichever reference the point carries.
+
+    Legs: the slant range from the optical centre when the geometry is known, else the forward
+    leg, which is within a few percent of it for the on-axis majority and is available before
+    the CAD numbers land. Never the pipeline's own prediction -- banding on that would let a
+    depth error move a marker between bands and quietly satisfy the composition.
+    """
+    if q.get('x_m') is not None:
+        if geom is None:
+            return float(q['x_m'])
+        return float(slant_from_legs(q['x_m'], q['y_m'], q['z_m'], geom))
+    return float(q.get('range_m', 0.0))
 
 
 class Session:
@@ -76,6 +113,11 @@ class Session:
         self.a, self.calib = a, calib
         self.lock = threading.Lock()
         self.rgb = self.depth = self.var = self.tof = None
+        self.tof_conf = self.tof_stamp = self.tof_module = None
+        self.depth_stamp = None
+        from collections import deque
+        self.tof_hist = deque(maxlen=40)          # ~2.5 s at 16 Hz, ~160 kB
+        self.geom = load_capture_geometry(getattr(a, 'geometry', ''), a.reference)
         self.frozen = None
         self.clicks = []
         self.points = []
@@ -106,8 +148,17 @@ class Session:
                    'instrument': self.a.instrument,
                    'role': self.a.role,
                    'edge_deg': self.a.edge_deg,
-                   'note': ('range_m is SLANT RANGE from the optical centre; '
-                            'tape_eval.py converts to axis depth via z = r*cos(theta)'),
+                   'reference': self.a.reference,
+                   'convention': 'REP103: x forward, y LEFT-positive, z up; '
+                                 'pitch + = nose down, yaw + = turned left',
+                   'note': ({'legs': 'x_m/y_m/z_m are three tape legs from the ROBOT CENTRE '
+                                     '(forward, sideways LEFT-positive, height above floor). '
+                                     'tape_eval.py converts to axial depth Z using items '
+                                     '27-29 from robot_geometry.yaml. No pointing error.',
+                             'slant': 'range_m is SLANT RANGE from the optical centre; '
+                                      'tape_eval.py converts to axis depth via '
+                                      'z = r*cos(theta), theta taken from the PIXEL'}
+                            [self.a.reference]),
                    'points': self.points}, open(self._gt_path(), 'w'), indent=1)
 
     # --- derived ---------------------------------------------------------------------
@@ -127,15 +178,24 @@ class Session:
     def bands(self):
         t = {}
         for q in self.points:
-            b = band_of(float(q.get('range_m', 0.0)), self.a.near_m, self.a.far_m)
+            b = band_of(tape_range(q, self.geom), self.a.near_m, self.a.far_m, self.a.beyond_m)
             t[b] = t.get(b, 0) + 1
         return t
+
+    def discs(self):
+        """Declared discontinuities, and whether the thin pole among them is present."""
+        n = sum(1 for q in self.points if str(q.get('label', '')).startswith('disc:'))
+        pole = any(str(q.get('label', '')).strip() == DISC_POLE_LABEL for q in self.points)
+        return n, pole
 
     def progress(self):
         """Remaining counts against both composition axes, plus under-sized plane groups."""
         cone, band = self.tally(), self.bands()
         need = {f'cone {k}': max(0, v - cone.get(k, 0)) for k, v in CONE_TARGET.items()}
         need.update({f'range {k}': max(0, v - band.get(k, 0)) for k, v in BAND_TARGET.items()})
+        ndisc, pole = self.discs()
+        need['discontinuities'] = max(0, DISC_TARGET - ndisc)
+        need['thin pole'] = 0 if pole else 1
         short = {k.split(':', 1)[1]: PLANE_MIN - v
                  for k, v in self.plane_groups().items() if v < PLANE_MIN}
         return need, short
@@ -155,14 +215,35 @@ class Session:
         with self.lock:
             if self.depth is None:
                 return False, 'no /depth yet -- is the perception node running?'
+            # Pair the depth map with the ToF packet that ACTUALLY produced it, by stamp.
+            # /depth is stamped with its source packet's stamp, and this tool holds its own
+            # subscription, so "latest /tof seen" is not in general that packet. See
+            # tape_capture._freeze for why an unpaired frame can only be reconstructed
+            # approximately offline.
+            hit = None
+            if self.depth_stamp is not None:
+                for h in self.tof_hist:
+                    if h['stamp'] == self.depth_stamp:
+                        hit = h
+                        break
             self.frozen = {'rgb': self.rgb.copy(), 'depth': self.depth.copy(),
                            'var': None if self.var is None else self.var.copy(),
-                           'tof': None if self.tof is None else self.tof.copy()}
+                           'wall': time.time(), 'depth_stamp': self.depth_stamp,
+                           'tof': hit['dist'] if hit else (
+                               None if self.tof is None else self.tof.copy()),
+                           'conf': hit['conf'] if hit else (
+                               None if self.tof_conf is None else self.tof_conf.copy()),
+                           'tof_stamp': hit['stamp'] if hit else self.tof_stamp,
+                           'tof_module': hit['module'] if hit else self.tof_module,
+                           'tof_exact': hit is not None,
+                           'tof_skew_s': 0.0 if hit else (
+                               None if (self.tof_stamp is None or self.depth_stamp is None)
+                               else self.tof_stamp - self.depth_stamp)}
             self.clicks = []
             self.frame_id += 1
             return True, f'frozen frame {self.frame_id} -- tap a marker'
 
-    def record(self, rng, label):
+    def record(self, meas, label):
         with self.lock:
             if self.frozen is None:
                 return False, 'not frozen'
@@ -183,21 +264,41 @@ class Session:
                     np.save(os.path.join(self.a.dir, stem + '_var.npy'), self.frozen['var'])
                 if self.frozen['tof'] is not None:
                     np.save(os.path.join(self.a.dir, stem + '_tof.npy'), self.frozen['tof'])
+                if self.frozen['conf'] is not None:
+                    np.save(os.path.join(self.a.dir, stem + '_conf.npy'), self.frozen['conf'])
             cone = cone_class(u, v, self.calib, self.a.edge_deg) if self.calib else None
-            self.points.append({'id': self.n_saved, 'stem': stem, 'u': u, 'v': v,
-                                'u_sub': uf, 'v_sub': vf,
-                                'corners': [list(map(int, p)) for p in self.clicks]
-                                           if len(self.clicks) == 4 else None,
-                                'range_m': float(rng), 'label': label or '?',
-                                'frame': self.frame_id,
-                                'cone': cone, 'role': self.a.role})
+            d0 = self.frozen['depth']
+            rec = {'id': self.n_saved, 'stem': stem, 'u': u, 'v': v,
+                   'u_sub': uf, 'v_sub': vf,
+                   'corners': [list(map(int, p)) for p in self.clicks]
+                              if len(self.clicks) == 4 else None,
+                   'label': label or '?', 'frame': self.frame_id,
+                   'cone': cone, 'role': self.a.role,
+                   'session': self.a.session,
+                   'wall_time': self.frozen['wall'],
+                   'tof_stamp': self.frozen['tof_stamp'],
+                   'tof_module': self.frozen['tof_module'],
+                   'depth_stamp': self.frozen['depth_stamp'],
+                   'tof_exact': self.frozen['tof_exact'],
+                   'tof_skew_s': self.frozen['tof_skew_s'],
+                   'pipeline_depth_m': (float(d0[v, u])
+                                        if 0 <= v < d0.shape[0] and 0 <= u < d0.shape[1]
+                                        else None)}
+            rec.update(meas)
+            self.points.append(rec)
             self.n_saved += 1
             self.clicks = []
             self.save()             # after EVERY point, never at the end
             d = self.frozen['depth'][v, u] if (0 <= v < self.frozen['depth'].shape[0]
                                                and 0 <= u < self.frozen['depth'].shape[1]) else float('nan')
-            print(f'  recorded {stem}: ({u},{v}) r={rng:.3f} m "{label}" cone={cone} '
-                  f'pipeline={d:.3f} m  [{len(self.points)} total]')
+            shown = (f"legs {meas['x_m']:.3f}/{meas['y_m']:+.3f}/{meas['z_m']:.3f}"
+                     if 'x_m' in meas else f"r={meas['range_m']:.3f} m")
+            extra = ''
+            if 'x_m' in meas and self.geom is not None:
+                Z = float(axial_from_legs(meas['x_m'], meas['y_m'], meas['z_m'], self.geom))
+                extra = f' tapeZ={Z:.3f} diff={d - Z:+.3f}'
+            print(f'  recorded {stem}: ({u},{v}) {shown} "{label}" cone={cone} '
+                  f'pipeline={d:.3f} m{extra}  [{len(self.points)} total]')
             return True, f'recorded #{self.n_saved - 1} "{label}" cone={cone}'
 
     # --- rendering -------------------------------------------------------------------
@@ -320,6 +421,9 @@ class Ros(Node):
 
     def on_depth(self, m):
         with self.s.lock:
+            # perception_node stamps /depth with the dToF PACKET's stamp, not publish time, so
+            # this is what lets freeze() pair the depth map with the packet that produced it.
+            self.s.depth_stamp = _stamp(m.header)
             self.s.depth = np.frombuffer(m.data, np.float32).reshape(m.height, m.width).copy()
 
     def on_var(self, m):
@@ -330,6 +434,17 @@ class Ros(Node):
         if len(m.dist_m) == m.rows * m.cols:
             with self.s.lock:
                 self.s.tof = np.asarray(m.dist_m, np.float32).reshape(m.rows, m.cols).copy()
+                # Same additions as tape_capture, for the same reasons: confidence is the one
+                # channel that can explain a mixed return at a discontinuity, and the stamp is
+                # what lets freeze() pair this packet with the depth map it produced.
+                self.s.tof_conf = (
+                    np.asarray(m.confidence, np.uint8).reshape(m.rows, m.cols).copy()
+                    if len(m.confidence) == m.rows * m.cols else None)
+                self.s.tof_stamp = _stamp(m.header)
+                self.s.tof_module = int(m.module_id)
+                self.s.tof_hist.append({'stamp': self.s.tof_stamp, 'dist': self.s.tof,
+                                        'conf': self.s.tof_conf,
+                                        'module': self.s.tof_module})
 
 
 PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
@@ -364,8 +479,11 @@ input{flex:1 1 110px;padding:12px;font-size:16px;border-radius:7px;border:1px so
 <div id="prog"></div>
 <div id="wrap"><img id="v" src="/frame.jpg" onclick="tap(event)"></div>
 <form onsubmit="rec(event)">
- <input id="r" type="number" step="0.001" inputmode="decimal" placeholder="range m" required>
- <input id="l" type="text" placeholder="label (or plane:floor)" required>
+ <span id="legs"><input id="x" type="number" step="0.001" inputmode="decimal" placeholder="fwd m" required>
+ <input id="y" type="number" step="0.001" inputmode="decimal" placeholder="side m (LEFT+)" required>
+ <input id="z" type="number" step="0.001" inputmode="decimal" placeholder="height m" required></span>
+ <input id="r" type="number" step="0.001" inputmode="decimal" placeholder="range m">
+ <input id="l" type="text" placeholder="label (plane:floor / disc:pole)" required>
  <button type="submit">Record</button>
 </form>
 <div id="st">loading…</div>
@@ -382,12 +500,32 @@ function tap(e){
     .then(()=>{ v.src='/frame.jpg?t='+Date.now(); state(); });
 }
 function post(p){ fetch(p,{method:'POST'}).then(state); }
+// Which inputs are live is decided ONCE by the server's --reference and never by the phone,
+// so a session cannot end up with a mix of the two references in one file.
+var REF='legs';
 function rec(e){
   e.preventDefault();
-  const r=document.getElementById('r'), l=document.getElementById('l');
+  const l=document.getElementById('l'); let body;
+  if(REF==='legs'){
+    const x=document.getElementById('x'),y=document.getElementById('y'),z=document.getElementById('z');
+    body={x_m:parseFloat(x.value),y_m:parseFloat(y.value),z_m:parseFloat(z.value),label:l.value};
+  }else{
+    const r=document.getElementById('r');
+    body={range_m:parseFloat(r.value),label:l.value};
+  }
   busy=true;
-  fetch('/record',{method:'POST',body:JSON.stringify({range_m:parseFloat(r.value),label:l.value})})
-    .then(x=>x.json()).then(d=>{ busy=false; if(d.ok){r.value='';} state(); });
+  fetch('/record',{method:'POST',body:JSON.stringify(body)})
+    .then(x=>x.json()).then(d=>{ busy=false;
+      if(d.ok){ ['x','y','z','r'].forEach(k=>{const n=document.getElementById(k); if(n)n.value='';}); }
+      state(); });
+}
+function applyRef(){
+  const legs=REF==='legs';
+  document.getElementById('legs').style.display = legs?'contents':'none';
+  const r=document.getElementById('r');
+  r.style.display = legs?'none':'';
+  r.required = !legs;
+  ['x','y','z'].forEach(k=>{document.getElementById(k).required = legs;});
 }
 function state(){
   fetch('/state').then(x=>x.json()).then(d=>{
@@ -399,7 +537,11 @@ function state(){
     mk('cone out',d.cone.out[0],d.cone.out[1]);
     mk('&lt;'+d.band_edges[0]+'m',d.band.near[0],d.band.near[1]);
     mk(d.band_edges[0]+'-'+d.band_edges[1]+'m',d.band.mid[0],d.band.mid[1]);
-    mk('&gt;'+d.band_edges[1]+'m',d.band.far[0],d.band.far[1]);
+    mk(d.band_edges[1]+'-'+d.band_edges[2]+'m',d.band.far[0],d.band.far[1]);
+    mk('&gt;'+d.band_edges[2]+'m',d.band.beyond[0],d.band.beyond[1]);
+    mk('disc',d.disc[0],d.disc[1]);
+    mk('pole',d.pole?1:0,1);
+    if(d.reference && d.reference!==REF){ REF=d.reference; applyRef(); }
     document.getElementById('prog').innerHTML=h;
     st.innerHTML='<span class="'+(d.ready?'ok':'bad')+'">'+d.hint+'</span>\n'+
       d.msg+'\npoints '+d.n+'   taps '+d.clicks+
@@ -409,6 +551,11 @@ function state(){
     v.src='/frame.jpg?t='+Date.now();
   });
 }
+// Apply the reference layout ONCE up front. The poll below only reacts to a CHANGE, and
+// when the server's reference matches this page's default there is no change to react to --
+// so without this call the unused input stays on screen and the operator sees both a
+// three-leg form and a slant-range box at the same time.
+applyRef();
 setInterval(()=>{ if(!busy) state(); }, 1200);
 state();
 </script></body></html>"""
@@ -479,7 +626,10 @@ def make_handler(sess):
                             'show_tof': sess.show_tof,
                             'cone': {k: [cone.get(k, 0), v] for k, v in CONE_TARGET.items()},
                             'band': {k: [band.get(k, 0), v] for k, v in BAND_TARGET.items()},
-                            'band_edges': [sess.a.near_m, sess.a.far_m],
+                            'band_edges': [sess.a.near_m, sess.a.far_m, sess.a.beyond_m],
+                            'reference': sess.a.reference,
+                            'disc': [sess.discs()[0], DISC_TARGET],
+                            'pole': sess.discs()[1],
                             'need': ', '.join(f'{k} +{v}' for k, v in need.items() if v) or 'all targets met',
                             'planes': ', '.join(f'{k.split(":",1)[1]}={v}'
                                                 for k, v in sorted(sess.plane_groups().items())) or '-',
@@ -534,12 +684,23 @@ def make_handler(sess):
                         sess.clicks.append((u, vv))
                         msg = f'tap {len(sess.clicks)} at ({u},{vv})'
             elif p == '/record':
-                try:
-                    rng = float(body.get('range_m'))
-                except (TypeError, ValueError):
-                    ok, msg = False, 'range must be a number'
+                # The reference is the SERVER's, from --reference. A phone cannot choose it,
+                # so one session file can never mix the two.
+                if sess.a.reference == 'legs':
+                    try:
+                        meas = {'x_m': float(body['x_m']), 'y_m': float(body['y_m']),
+                                'z_m': float(body['z_m'])}
+                    except (TypeError, ValueError, KeyError):
+                        meas, msg = None, 'need three legs: forward, sideways (right +), height'
                 else:
-                    ok, msg = sess.record(rng, str(body.get('label', '')).strip())
+                    try:
+                        meas = {'range_m': float(body['range_m'])}
+                    except (TypeError, ValueError, KeyError):
+                        meas, msg = None, 'range must be a number'
+                if meas is None:
+                    ok = False
+                else:
+                    ok, msg = sess.record(meas, str(body.get('label', '')).strip())
             else:
                 return self._send(404, 'text/plain', b'no')
 
@@ -563,6 +724,26 @@ def main():
     # span into roughly equal thirds so "near/mid/far" is a real spread rather than a label.
     p.add_argument('--near-m', type=float, default=1.3, help='near/mid range-band edge')
     p.add_argument('--far-m', type=float, default=2.6, help='mid/far range-band edge')
+    # The dToF's own range gate is 6.5 m and the brief asks for two IN-CONE points past
+    # 4.2 m, so this edge is a requirement rather than a tuning knob.
+    p.add_argument('--beyond-m', type=float, default=4.2,
+                   help='far/beyond edge; two in-cone points are required past this')
+    p.add_argument('--reference', required=True, choices=['legs', 'slant'],
+                   help='legs = three tape legs from the robot centre (T3, use this); '
+                        'slant = one range from the optical centre (legacy)')
+    p.add_argument('--geometry',
+                   default=os.path.join(
+                       os.path.dirname(os.path.dirname(os.path.dirname(
+                           os.path.abspath(__file__)))),
+                       'ros2_ws', 'src', 'ringfusion_bringup', 'config',
+                       'robot_geometry.yaml'),
+                   help='items 27-29; enables the live tape-vs-pipeline check in legs mode')
+    # T3 runs in BATCHES: there are 22 marker positions and only 9 physical markers, so the
+    # same markers are moved and re-recorded. Every batch shares one output dir (so one
+    # tape_eval run scores them all), and this tag is what tells them apart afterwards --
+    # which points were up together, and therefore which share a set of repeat captures.
+    p.add_argument('--session', default='T3-1',
+                   help='batch tag recorded on every point, e.g. T3-1, T3-2, T3-3')
     p.add_argument('--role', default='heldout', choices=['heldout', 'calibration'])
     p.add_argument('--image-topic', default='/image')
     p.add_argument('--depth-topic', default='/depth')

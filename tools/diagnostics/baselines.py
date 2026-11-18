@@ -212,6 +212,13 @@ def main():
     #                            island=residual_v4_best_fp16.engine
     # with --deployed-engine v7, which puts the scattered and island rows beside the
     # deployed one on a single split.
+    ap.add_argument('--residual-torch', nargs='*', default=[],
+                    help="repeatable; 'NAME=PATH' or a bare PATH to a TRAINING .pth. "
+                         "Scores the checkpoint directly instead of a TensorRT engine -- "
+                         "used for T9, where converting six checkpoints would fold six "
+                         "separate FP16 quantisations into a comparison meant to isolate "
+                         "the hold-out protocol. Only network execution differs; the "
+                         "deployed _pack and refine run unchanged.")
     ap.add_argument('--residual-engine', nargs='*', default=[],
                     help="repeatable; 'NAME=PATH' or a bare PATH")
     # The deployed engine keeps the canonical B5_ringfusion / B6_blend row names so the
@@ -285,9 +292,15 @@ def main():
     backbone = TensorRTBackbone(a.backbone_engine)
 
     eng_paths = parse_engines(a.residual_engine)
-    deployed = a.deployed_engine or (next(iter(eng_paths)) if eng_paths else '')
-    if deployed and deployed not in eng_paths:
-        sys.exit(f'--deployed-engine {deployed!r} is not one of {list(eng_paths)}')
+    ckpt_paths = parse_engines(a.residual_torch)
+    dup = set(eng_paths) & set(ckpt_paths)
+    if dup:
+        sys.exit(f'name collision between --residual-engine and --residual-torch: {sorted(dup)}')
+    deployed = a.deployed_engine or (next(iter(eng_paths)) if eng_paths else
+                                     (next(iter(ckpt_paths)) if ckpt_paths else ''))
+    if deployed and deployed not in eng_paths and deployed not in ckpt_paths:
+        sys.exit(f'--deployed-engine {deployed!r} is not one of '
+                 f'{list(eng_paths) + list(ckpt_paths)}')
 
     def b5(name):
         return 'B5_ringfusion' if name == deployed else f'B5_{name}'
@@ -302,6 +315,12 @@ def main():
             print(f'  refiner {nm:<12} {os.path.basename(pth)}'
                   f'{"   <- deployed" if nm == deployed else ""}')
             refiners[nm] = ResidualRefiner(pth)
+    if ckpt_paths:
+        from residual_torch import TorchResidualRefiner
+        for nm, pth in ckpt_paths.items():
+            print(f'  refiner {nm:<12} {os.path.basename(os.path.dirname(pth))}/'
+                  f'{os.path.basename(pth)}  [torch checkpoint]')
+            refiners[nm] = TorchResidualRefiner(pth)
 
     methods = list(METHODS) + ['B6_analytic']
     for nm in refiners:

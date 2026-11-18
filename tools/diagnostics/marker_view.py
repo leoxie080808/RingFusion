@@ -21,6 +21,11 @@ WHAT IS DRAWN
                  by depth. A marker inside the rect with no dots near it is inside the
                  cone but UNSUPPORTED -- a real and useful distinction when choosing
                  where the hard cases go
+  magenta cross  the OPTICAL CENTRE (principal point), with full-width guide lines. This is
+                 where a marker on the robot's forward axis at lens height lands when the
+                 camera is perfectly aimed, so it is what the axis markers A1/A2 are read
+                 against. It is NOT the middle of the screen -- on this rig it sits 67 px
+                 higher -- which is exactly why it is drawn rather than eyeballed.
   header         valid-zone count, so a thin scene is obvious before capturing anything
 
 Zones with no return cannot be drawn: their pixel position is computed from the measured
@@ -163,6 +168,32 @@ class MarkerView(Node):
         cv2.putText(view, f'edge band +/-{self.a.edge_deg:g} deg',
                     (sr(self.outer)[0] + 6, sr(self.outer)[1] - 8), FONT, 0.5, (0, 200, 255), 1)
 
+        # OPTICAL CENTRE crosshair. Worth drawing because it is NOT where anyone would guess:
+        # the principal point is 67 px ABOVE the geometric middle of the frame on this rig
+        # (839,549 against 820,616), so eyeballing "the centre of the screen" puts a marker
+        # about 34 cm too high at 2 m. The axis markers exist to be read against THIS point --
+        # a marker on the robot's forward axis at lens height lands here exactly when the
+        # camera is perfectly aimed, and wherever it lands instead IS the pitch and yaw.
+        if self.a.centre:
+            fx_, fy_, cx_, cy_ = [float(t) for t in
+                                  np.asarray(self.calib['K'], float).ravel()[:4]]
+            ccx, ccy = int(round(cx_ * sc)), int(round(cy_ * sc))
+            MAG = (255, 0, 255)
+            cv2.line(view, (0, ccy), (w, ccy), MAG, 1)
+            cv2.line(view, (ccx, 0), (ccx, h), MAG, 1)
+            cv2.drawMarker(view, (ccx, ccy), MAG, cv2.MARKER_CROSS, 26, 2)
+            cv2.circle(view, (ccx, ccy), 13, MAG, 1)
+            # The centre lands in the busiest part of the frame by construction -- that is
+            # where the ToF dots are -- so the label needs its own background or it is
+            # unreadable exactly when it matters.
+            txt = f'optical centre {cx_:.0f},{cy_:.0f}'
+            (tw, th), _ = cv2.getTextSize(txt, FONT, 0.5, 1)
+            tx, ty = ccx + 18, ccy - 14
+            if tx + tw + 6 > w:                    # keep it on screen near the right edge
+                tx = ccx - 18 - tw
+            cv2.rectangle(view, (tx - 4, ty - th - 4), (tx + tw + 4, ty + 4), (0, 0, 0), -1)
+            cv2.putText(view, txt, (tx, ty), FONT, 0.5, MAG, 1)
+
         bar = f'valid zones {n_valid}  |  cone {x1-x0}x{y1-y0} px  |  dots = ToF returns, tinted by depth'
         cv2.rectangle(view, (0, 0), (w, 34), (0, 0, 0), -1)
         cv2.putText(view, bar, (10, 24), FONT, 0.6, (255, 255, 255), 2)
@@ -200,6 +231,9 @@ def main():
     ap.add_argument('--rate', type=float, default=5.0,
                     help='publish Hz -- low on purpose, this is a placement aid and should '
                          'not take compute from the node it is watching')
+    ap.add_argument('--no-centre', dest='centre', action='store_false',
+                    help='hide the optical-centre crosshair (shown by default; it is the '
+                         'reference the axis markers A1/A2 are read against)')
     ap.add_argument('--edge-deg', type=float, default=3.0,
                     help='half-width of the cone-edge band, degrees')
     ap.add_argument('--scale', type=float, default=0.5,

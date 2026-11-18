@@ -1330,6 +1330,335 @@ effect, not extrapolation. State it that way.
 Floor geometry on this rig is already validated to **2.3 mm** (implied lens height 15.97 cm vs
 16.2 cm tape), which is what makes the plane approach viable.
 
+### 3.15 T9 — refiner seed variance vs hold-out protocol ✅ *(2026-09-28)*
+
+Six full 111-epoch trainings of the residual refiner, run sequentially on the second AGX Orin
+(commit `a031ace`), launched 2026-09-27 21:50 UTC and finished 2026-09-28 09:09 UTC —
+**11 h 20 m, ~1 h 53 m per run, all six `rc=0`**. Two hold-out protocols × three seeds,
+`--holdout-frac 0.25`, `--island 16`, `--patience 0` (no early stopping), all against the same
+`student_v4_heldout` backbone.
+
+| run | best val | at epoch | coverage | new-best count |
+|---|---|---|---|---|
+| random seed 0 | −0.4151 | 99 | 0.77 | 31 |
+| random seed 1 | −0.4268 | 110 | 0.79 | 38 |
+| random seed 2 | −0.4381 | 103 | 0.78 | 37 |
+| island seed 0 | −0.2383 | 107 | 0.70 | 32 |
+| island seed 1 | −0.2337 | 109 | 0.72 | 35 |
+| island seed 2 | −0.2157 | 110 | 0.70 | 38 |
+
+| | mean | sd (n=3) | mean coverage |
+|---|---|---|---|
+| `random` | **−0.4267** | 0.0115 | 0.78 |
+| `island` | **−0.2292** | 0.0119 | 0.71 |
+
+**The protocol dominates the seed by 17×.** The gap between protocols is **0.1974**; the pooled
+seed-to-seed sd is **0.0117**. There is **no overlap whatsoever** — the worst random seed
+(−0.4151) still beats the best island seed (−0.2383) by more than 15 seed-sigmas. Welch
+t = −20.62, p = 0.00003 on n=3 per arm.
+
+This answers the question T9 was posed to answer: **seed choice is immaterial to any claim in
+the paper, and hold-out protocol is everything.** A reviewer asking "would a different seed
+change this?" can be answered with a number: seed moves the val loss by ±0.012, the protocol
+by 0.197.
+
+**Why `random` scores so much better, and why that is the problem.** `random` scatters held-out
+zones individually, so a held-out zone's immediate neighbours are almost always in the training
+set — and neighbouring dToF zones are strongly correlated. `island` holds out contiguous
+16-zone blocks, which removes that leak. The 1.86× better val loss under `random` is the
+leakage, not a better model. §3.13's withheld-zone caveats apply to exactly this.
+
+**Coverage points the same way.** Against a 0.68 target, `island` lands at 0.71 and `random` at
+0.78 — the leak-free protocol is also the better-calibrated one, which is the opposite of what
+you would expect if `random`'s advantage were real.
+
+⚠️ **These are floors, not converged optima.** Every one of the six was still setting new bests
+in its final ten epochs (best epochs 99–110 of 111), with `--patience 0` so nothing stopped
+early. The *ranking* is unambiguous and is what the test was for; the absolute values would
+keep improving with more epochs and should not be quoted as converged.
+
+**Still to do:** score all six checkpoints on the 61-frame `val_stems.txt` split — the only
+split clean for both networks (§3.14 N2). Each run's own val number is computed on its own
+hold-out, so the two arms are not scored on the same data; the common-split scoring is what
+makes them directly comparable.
+
+### 3.15b T9 addendum — the six checkpoints on one common split ✅ *(2026-09-28)*
+
+§3.15 compares each run against **its own** hold-out, so the two arms are not scored on the
+same data. This scores all six on the 61-frame `val_stems.txt` split — the only split clean for
+both networks (§3.14 N2) — in **one run over one split**, so every row sees the same frames,
+the same per-frame anchor/hold-out split and the same backbone pass.
+
+**B5 (analytic + residual refiner), mean ± sd over the 3 seeds per arm:**
+
+| protocol | arm | mean AE (m) | median AE (m) |
+|---|---|---|---|
+| **center** | scattered | 0.2606 ± 0.0003 | 0.0556 ± 0.0044 |
+| **center** | **island** | **0.1620 ± 0.0035** | **0.0326 ± 0.0016** |
+| center | *deployed v7* | *0.1605* | *0.0320* |
+| random | scattered | 0.1128 ± 0.0020 | 0.0189 ± 0.0010 |
+| random | island | 0.1620 ± 0.0039 | 0.0423 ± 0.0011 |
+| edge | scattered | 0.5335 ± 0.0103 | 0.2676 ± 0.0134 |
+| edge | island | 0.6212 ± 0.0151 | 0.3662 ± 0.0091 |
+
+**Island minus scattered, mean AE, `center` protocol: −0.0986 m.** Island per seed 0.1585 /
+0.1620 / 0.1655; scattered 0.2610 / 0.2605 / 0.2604. **Island wins for every seed**, and the
+worst island run still beats the best scattered run — the arms do not overlap at all.
+
+⚠️ **The sign flips with the scoring protocol, and that is the finding.** Scattered wins under
+`random` (0.113 vs 0.162) and under `edge` (0.534 vs 0.621); island wins under `center`. Each
+arm wins on the protocol it was *trained* against. `center` is the one that mirrors deployment
+geometry — anchor on a central island, predict outside it — which is why it is the protocol
+that decides, and the shipped v7 refiner lands at 0.1605, statistically on top of the island
+arm (0.1620 ± 0.0035). **A single-protocol comparison here would have supported whichever
+conclusion the protocol was chosen to favour.**
+
+**B6 (as deployed, + arbitration) shows where the refiner still matters.** Under `random`
+(0.0539 vs 0.0547) and `edge` (0.3882 vs 0.3889) arbitration compresses the two arms to within
+one sd of each other — it takes the dToF wherever an anchor is near, so the refiner's training
+protocol stops mattering. Under `center` the gap survives almost intact (0.2527 vs 0.1559,
+−0.0968 m), because `center` holds out the zones *furthest* from any anchor, which is exactly
+where arbitration has nothing to fall back on and the network carries the frame.
+
+**Seed scope — confirmed for one arm, not the other.** Verified by running
+`build_real_supervision` at three seeds and comparing the masks, not by reading the code:
+
+| | varies with `--seed`? |
+|---|---|
+| which **frames** are train vs val | **No** — `random_split` generator pinned at `manual_seed(0)` |
+| which **zones**, `island` arm | **No** — the anchor block is deterministic geometry, identical across all three seeds |
+| which **zones**, `scattered` arm | **Yes** — `rng.shuffle` is seeded from `--seed`; seeds 0 and 1 share only **25.4 %** of their held-out pixels |
+
+So the scattered arm's seed-to-seed spread contains a hold-out resampling term the island arm's
+does not. It appears not to matter — both sds sit near 0.003 m at B5/`center` — but the claim
+"the seed changed only weight initialisation and batch order" is true of the **island arm
+only**, and should not go into a response letter unqualified.
+
+**Field of view confirmed.** Both runs used `fov_h_deg: 73.5` / `fov_v_deg: 60.5`. Machine B sat
+at commit `a031ace` with `calibration.yaml` unmodified and **byte-identical** to machine A's
+(`sha256 5a1000b4…`).
+
+**Method note — why the checkpoints were scored in torch.** `ResidualRefiner` loads TensorRT
+engines; T9 produced `.pth`. Converting all six would have folded **six separate ONNX→TensorRT
+FP16 quantisations** into a comparison whose entire purpose is to isolate one variable — six
+different noises, one per arm. `tools/diagnostics/residual_torch.py` instead subclasses
+`ResidualRefiner` and swaps only `self._engine` for a torch module exposing the same
+`.run(x) -> (1,3,h,w)`, so the deployed `_pack` (GPU bilinear pack, anchor re-splat) and
+`refine` (upsample, affine, tau2 clip) both run unchanged. Validated against the shipped engine
+on identical inputs: **median |Δdepth| 0.0000 mm, corr 0.99999455**. Scored via
+`baselines.py --residual-torch`.
+
+Scoring ran on **machine A**, not B: `baselines.py` needs the backbone engine and B holds no
+`.engine` files at all, so moving 11 MB of checkpoints was cheaper than building engines there.
+
+→ `docs/demo/benchmarks/t1/t9_val61_protocols.json`
+
+### T3 readiness — four things settled before markers go up *(2026-09-27)*
+
+**1. §2 question 3 is answered without new work: sessions 1 and 2 measured SLANT RANGE from
+the optical centre**, not axial depth. The session file states it itself
+(`tape_gt.json: "range_m is SLANT RANGE from the optical centre; tape_eval.py converts to
+axis depth via z = r*cos(theta)"`), and that is what `tape_eval.axis_depth` has always
+applied. So the old numbers are directly comparable to the new ones — no reinterpretation
+of the existing §3.12 figures is required.
+
+**2. The raw frames are gone. The scored per-point records are not.** There are zero
+`frame*_{rgb,depth,var,tof}` arrays left anywhere on the robot, and
+`benchmarks/tape_r31/tape_gt.json` is an empty scaffold. So T3's "before the session" step 1
+— *reprocess the raw logs of sessions 1 and 2* — **cannot be done, and should be struck from
+the plan.** What does survive, in `live4_sigma_n14/n15` and `tape_stats_r31.json`, is the
+full scored record for all 15 points: `u, v, gt, pred, sigma, err, nsig, frame_sd,
+best_within_45px, suspect_misclick`, plus the r31 calibration/held-out provenance analysis.
+Every published §3.12 and §V-E number is therefore still sourced and reproducible.
+
+What is permanently lost is the ability to compute any *new per-pixel* quantity from those
+sessions — which is precisely the six fields T3 asks to be logged per capture. **There is no
+second chance at them: they must be captured during session 3.** The capture tool has been
+extended accordingly (point 4).
+
+**3. The reference parameterisation changes, and it deletes the error term that dominated
+§3.12.** The old scheme measured one slant range and took the angle θ from the marker's
+*pixel*; §3.12 traced **~0.77 m of the largest out-of-cone error to that pointing term
+alone**. T3 instead measures three tape legs from the robot centre, so θ comes from the tape
+and the pointing term vanishes from the reference entirely.
+
+The conversion is implemented and verified against the brief's own worked example
+(`d = 2.0000`, `h = 0.1500`, `Z = 2.0000`, `r = 2.0056`, a 5.6 mm gap; and 0.8 m sideways
+leaves `Z` at 2.0000 while `r` rises to 2.1593). Both sign conventions are *forced*, not
+chosen, and both were checked: **pitch positive = nose down** (Z is maximised at
+`atan(h/d)`, where it equals `r` to 6 decimal places — true only for this sign) and **yaw
+positive = turned left** (1° at 1 m sideways moves Z by +17.1 mm, the brief's "about
+17 mm"). **Note the handedness changed on 2026-09-27**: the brief specified right-positive,
+the T3 run sheet uses REP 103 (y left-positive), and the run sheet wins because it is what the
+operator reads while taping. The conversion is invariant under mirroring — flipping y and yaw
+together changes Z by 0.000 mm — but *mixing* them shifts Z by 38 mm at 1.8 m off-axis and
+87 mm at 2.5 m, so the two must always share a handedness. Every label, prompt and UI field
+now says left. End-to-end, a synthetic session round-trips three clean points to **exactly 0.000 m**
+error and recovers a planted 20 mm error as exactly +0.020 m.
+
+The budget consequence is not uniform, and it turns item 29 from a detail into the thing that
+decides whether the legs scheme is an improvement at all. Pitch and yaw have very different
+lever arms: **pitch acts on the height drop `h`** (0.1–1.0 m on this rig), **yaw acts on the
+sideways leg `y`** (0 to 2.5 m). Yaw is therefore roughly 3× the problem pitch is — and yaw is
+the one quantity nothing in the repo constrains.
+
+Reference σ in mm, by how well the two angles are known:
+
+| angle knowledge | on-axis 2.1 m | on-axis 4.5 m | 1.8 m off-axis | 2.5 m off-axis |
+|---|---|---|---|---|
+| **today: ±2°** (see below) | 8.0 | 37.0 | 68.3 | **91.3** |
+| CAD, if it yields ±0.5° | 7.7 | 11.9 | 18.6 | 24.0 |
+| boresight, single read (±0.16°) | 7.7 | 8.2 | 9.4 | **10.6** |
+| boresight, 5 reads (±0.07°) | 7.7 | 7.8 | 8.0 | **8.3** |
+| *old slant scheme, flat* | *12.2* | *12.2* | *12.2* | *12.2* |
+
+**There is no calibrated camera-to-robot extrinsic on this rig** — no URDF, no TF tree, no
+static transform publisher; `calibration.yaml` fixes only camera↔dToF, which says nothing
+about orientation relative to the robot body. So item 29 cannot be sourced from a calibration
+as the brief's "calibrated extrinsic or CAD" implies. What exists instead:
+
+* `rig.lens_height_m = 0.162` — floor to the centre of the lens glass, tape-measured
+  (`fov_v_session_2026-08-04.json`). This is most of item 27's `z_c`; item 28 converts it from
+  the glass to the optical centre.
+* A pitch sweep in the same session, concluding `rotation_rpy_deg` stays `[0,0,0]`. But its own
+  correction note is explicit: the floor test **"puts any pitch under ~2 deg and cannot resolve
+  its sign or size"**, and an earlier plane fit that reported 4.46° of tilt was an artifact of
+  the robust fit trimming onto a sloped subset. So pitch is bounded to ±2°, not better.
+* **Nothing at all on yaw.** The floor plane is invariant to yaw, so no amount of plane fitting
+  can constrain it.
+
+At today's ±2°, the legs scheme is **7.5× worse than the scheme it replaces** on the
+out-of-cone points (91.3 mm vs 12.2 mm) — it would make the headline claim weaker, not
+stronger. The pointing-error term it removes is worth ~0.77 m, so the trade is still worth
+making, but only once the angles are pinned down.
+
+**Recommended fix, and it is cheap: one boresight target.** Place a marker on the robot's
+forward axis as far away as the room allows, tape all three legs, and read its sub-pixel
+centre. The vertical pixel then gives pitch and the horizontal pixel gives yaw, both against
+the tape-derived true direction — one target, both angles, ~5 minutes. At `fx = 379.6 px` one
+pixel is 0.151°, so the *pixel read* dominates, not target placement (5 mm of lateral
+placement error at 5 m is only 0.057°). Even a **single** ±1 px read lands at ±0.16°, which is
+already better than the old flat budget everywhere; the session's five repeats average it to
+about ±0.07°. Doing it at two distances makes it self-checking, since both solutions must
+agree.
+
+This does not need CAD pitch/yaw at all — it needs only `x_c, y_c, z_c` to a few mm, which is
+exactly what CAD is good for. **So items 27 and 28 are the ones worth reading carefully out of
+CAD; item 29 is better measured on the rig than taken from the model.**
+
+**4. What the capture tool now records, and why each item could only be captured live.**
+`tape_capture.py --reference legs` prompts for the three legs and prints an immediate
+tape-vs-pipeline comparison, flagging a >1 m disagreement on the spot — a transposed leg is
+obvious there and invisible three weeks later with the markers already down. Newly persisted
+per frozen frame:
+
+| Added | Why it had to be live |
+|---|---|
+| per-zone dToF **confidence** (`frame*_conf.npy`) | never saved before; it is the one channel that can explain the discontinuity and thin-pole markers, where a mixed return reads plausibly-and-confidently wrong in `dist_m` alone — §3.12's 2.89 m point that read 1.06 m |
+| wall clock + dToF capture stamp per frame | makes T3's "5 captures per point, ≥2 minutes apart" **provable from the record** rather than asserted; the session-level `captured` field cannot do it |
+| the ToF packet **that actually produced** each frozen depth map, matched by stamp | `/depth` is stamped with its source dToF packet's stamp, so the right packet can be looked up instead of assumed. This tool and `perception_node` hold separate subscriptions, so "latest `/tof` seen" is generally *not* the packet behind "latest `/depth` seen". Without the match, everything reconstructed offline would be a different dToF noise realisation of the same scene — statistically equivalent at best. A 40-frame ring buffer (~2.5 s, ~160 kB) makes it exact, and `tof_exact` records per point whether it succeeded |
+
+The remaining six fields — each variance term separately, arbitration weight, angle to
+nearest anchor, anchor count, condition number, fallback flag — are **not** published by
+`perception_node` (it publishes only `cloud`, `depth`, `depth_var`) and cannot be obtained
+live without modifying the deployed node, which would invalidate the T1/T2 timings just
+measured. They are instead reconstructed offline from the saved `rgb` + `tof` + `conf`, which
+is now exact rather than approximate: `tof_valid` is just `np.isfinite(dist_m)`, rectification
+is deterministic from `calibration.yaml`, and the stamp match guarantees the same input
+packet. The T6 harness already computes anchor count and condition number.
+
+**σ constants frozen.** `tools/diagnostics/freeze_sigma_constants.py` records the twelve
+constants the node actually imports, next to the commit hash and the tree's clean/dirty
+state, and refuses to call itself a freeze on a dirty tree:
+
+| | |
+|---|---|
+| arbitration ramp | `NEAR_DEG 2.0`, `FAR_DEG 5.0`, `BLEND_SCALE 4` |
+| far-field ceiling | `SCENE_CAP_K 2.0`, `SCENE_CAP_FLOOR_M 1.0` |
+| the three σ terms | `DISAGREE_K 1.0`, `SUPPORT_FRAC 0.35`, `SPREAD_K 1.0`, `SPREAD_WIN 11` |
+| ROI honesty floor | `ROI_OUTSIDE_SIGMA_FRAC 1.0`, `ROI_MASK_STRIDE 8` |
+| anchor weighting | `RANGE_WEIGHT_P 0.0` (uniform — see §3.11) |
+
+**The session toolchain, and a divergence that had to be closed.** `tape_web.py` serves
+`tape_capture.py`'s clicking UI to a phone, which matters for a 20-marker session: capturing at
+the Jetson means ~20 round trips across the room, each one a chance to nudge a robot in a
+session whose entire premise is that nothing moved between repeats. It imports the centre rule
+and cone classifier from `tape_capture` but keeps its own `record`/`freeze`/`save`, so the legs
+change would have left it silently recording slant ranges — the wrong quantity, in the tool an
+operator would actually reach for. It now takes the same `--reference legs`, saves confidence
+and stamps, and pairs depth with its source ToF packet.
+
+The legs conversion is consequently factored into **`tools/diagnostics/tape_geometry.py`**,
+which deliberately imports neither ROS nor OpenCV nor the perception package: the two capture
+front ends need it live on the robot, and `tape_eval`, `tape_repeats` and `plane_eval` need it
+on a desk. `tape_capture` imports `rclpy` at module scope, so it could not be that shared home
+— and `tape_repeats` and `plane_eval` both read `range_m` directly and would have raised
+`KeyError` on a legs session. Both now carry a legs branch. The module also holds the executable
+checks that pin the two sign conventions (`python3 tape_geometry.py`).
+
+**Composition is tracked live, against both axes at once.** `tape_web` shows remaining counts
+per cone class and per range band, because the two are independent and both get missed — a set
+can sit entirely inside the cone, or span the cone nicely while every marker is at 2 m. A gap
+found after the scene is dismantled cannot be filled. Targets now encode the superset of the
+two specs:
+
+| axis | target | notes |
+|---|---|---|
+| cone | `in 8`, `edge 3`, `out 4` | `cone_class` labels each point at capture from the calibrated FOV |
+| range | `near 4` (<1.3 m), `mid 4`, `far 4`, **`beyond 2`** (>4.2 m) | the `beyond` band is new — the brief's two in-cone points past 4.2 m, which §5's 0.3–4.0 m span never reached |
+| discontinuities | `4`, one of them `disc:pole` | declared by a `disc:` label prefix, the same idiom as `plane:` — whether a marker straddles a depth edge is a fact about the scene, not the pixel, so geometry cannot detect it |
+| plane groups | ≥ 3 per `plane:<name>`, 4+ better | the 4th point is the only check that the surface was actually flat |
+
+**Rig values landed 2026-09-27** (`t3_testRun.md`, CAD + measured), so items 27, 28 and 30 are
+closed and `robot_geometry.yaml` is filled in:
+
+| | | |
+|---|---|---|
+| optical centre | `x_c 57.0`, `y_c 0.0`, `z_c 161.9` mm | front of lens 57 mm ahead of O (CAD); height measured, vs 159.7 mm from the old floor fit — a 2.2 mm agreement |
+| item 28 | `0.0` mm | datum taken AT the lens front, where the dToF tip is flush and depth zero originates. `calibration.yaml` would put the optical centre 1.13 mm further back; that is carried as a 2 mm budget term rather than corrected, because which surface "depth zero" means is a convention and the dToF's is the one the pipeline inherits |
+| dToF centre | `58.1`, `0.0`, `141.7` mm | derived, level camera |
+| item 29 | **still provisional zeros** | to be read from axis markers A1 (2 m) and A2 (4 m) |
+
+**Item 29 is now the only open number, and it is what makes the run sheet's budget real.** The
+run sheet's uncertainty table (2.7 mm root-sum-square) carries **no angle term at all**, which
+is correct once A1/A2 have been read and wrong before. Reference σ across the actual 22-marker
+plan:
+
+| marker | off-axis | σ with angles unmeasured (±2°) | σ after A1/A2 (±0.15°) |
+|---|---|---|---|
+| A1, A2 (on axis) | 0 | **2.7** | **2.7** |
+| C8 (4.5 m, in cone) | 0.30 m | 13.6 | 2.8 |
+| D1 (thin pole) | 0.60 m | 21.1 | 3.1 |
+| O2 (outside, left) | 1.60 m | 56.1 | 5.0 |
+| O3 (outside, above) | 0.30 m, 1.9 m high | 61.6 | 5.3 |
+| E2 (cone edge, right) | 1.82 m | **63.6** | **5.5** |
+
+On-axis the run sheet's 2.7 mm reproduces exactly. Off-axis, unmeasured angles cost up to
+64 mm — five times the old slant-range budget — and reading the two axis markers collapses
+that to 2.7–5.5 mm. The run sheet's "expect about 3 to 4 mm at 4 m" is right in spirit; the
+widest points (E2, O3) land nearer 5.5 mm because yaw error multiplies the sideways leg.
+
+The run sheet's own cone geometry checks out independently: 73.5°×60.5° from a dToF origin
+58.1 mm ahead and 141.7 mm up gives 0.747 m sideways per metre (vs its 0.75), a top edge
+rising 0.583 m per metre (vs 0.58), and a bottom edge meeting the floor 0.301 m ahead of O
+(vs "about 0.3 m").
+
+**Still blocking T3:** markers not placed; items 27–29 not yet read out of CAD (item 30 is
+derived from 27 plus the existing `extrinsics_cam_tof`, so it needs no separate reading); and
+the commit must be tagged once the tree is clean.
+
+**One composition conflict to resolve before markers go up.** The two specs disagree:
+
+| Source | Points | Composition |
+|---|---|---|
+| Sept 27 brief, T3 | ≥ 12 | 3 in-cone 1.5–4 m, 2 in-cone **> 4.2 m**, 3 out, 2 straddling edge, 2 discontinuities incl. a thin pole |
+| §5 item 1 above | **20+** | 8+ in cone, 3 edge, 4+ out, 4+ discontinuities, **0.3–4.0 m** span |
+
+They differ in both count and span — §5 stops at 4.0 m where the brief specifically wants
+two points beyond 4.2 m. The superset (20+ points, 0.3 m to beyond 4.2 m) satisfies both and
+costs one session rather than two; the >4.2 m pair is also what the dToF-gate regime needs,
+so it shares the long-sightline requirement with drive 3b and should be booked together.
+
 ### Offline — complete
 
 Nothing offline is outstanding. The full 1234-frame ablation, the 61-frame val-split

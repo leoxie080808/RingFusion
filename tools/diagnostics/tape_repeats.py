@@ -42,6 +42,8 @@ sys.path.insert(0, os.path.join(_REPO, 'training'))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from anchoring_bridge import calib_from_yaml                      # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from tape_geometry import axial_from_legs, load_geometry, has_legs  # noqa: E402
 from sigma_ablation import score                                  # noqa: E402
 import envinfo                                                    # noqa: E402
 
@@ -131,8 +133,18 @@ def score_only(a):
             u, v = int(p['u']), int(p['v'])
             if not (0 <= u < depth.shape[1] and 0 <= v < depth.shape[0]):
                 continue
-            th = np.arctan(np.hypot((u - cx) / fx, (v - cy) / fy))
-            gt_z = (float(p['range_m']) + origin) * np.cos(th)   # slant -> axial
+            # Two reference routes, exactly as tape_eval. LEGS is T3's and carries no
+            # pointing error; the slant route must take theta from the pixel, so a click that
+            # missed the marker centre biases the ground truth itself.
+            if has_legs(p):
+                if geom is None:
+                    sys.exit(f"point {p.get('id')} recorded tape legs, but items 27-29 are "
+                             f"UNSET in {a.geometry} -- a legs session cannot be scored "
+                             f"without them.")
+                gt_z = float(axial_from_legs(p['x_m'], p['y_m'], p['z_m'], geom))
+            else:
+                th = np.arctan(np.hypot((u - cx) / fx, (v - cy) / fy))
+                gt_z = (float(p['range_m']) + origin) * np.cos(th)   # slant -> axial
             obs.append((float(depth[v, u]) - gt_z, float(np.sqrt(max(var[v, u], 0.0)))))
         s = score(obs)
         s['repeat'] = tag
@@ -192,6 +204,13 @@ def main():
     ap.add_argument('--score-only', action='store_true')
     ap.add_argument('--calib', default='')
     ap.add_argument('--gt', default='')
+    ap.add_argument('--geometry',
+                    default=os.path.join(
+                        os.path.dirname(os.path.dirname(os.path.dirname(
+                            os.path.abspath(__file__)))),
+                        'ros2_ws', 'src', 'ringfusion_bringup', 'config',
+                        'robot_geometry.yaml'),
+                    help='items 27-29, required only for sessions that recorded tape legs')
     ap.add_argument('--image-topic', default='/image')
     ap.add_argument('--depth-topic', default='/depth')
     ap.add_argument('--var-topic', default='/depth_var')

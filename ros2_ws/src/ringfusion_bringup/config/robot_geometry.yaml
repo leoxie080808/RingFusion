@@ -1,0 +1,87 @@
+# Robot-frame geometry: where the camera and dToF sit relative to the ROBOT CENTRE.
+#
+# NOT read by the perception node. This exists for the T3 tape reference, which measures every
+# marker from the robot centre with a steel tape and converts to camera-frame axial depth Z.
+# calibration.yaml describes the sensors relative to EACH OTHER; this file places that sensor
+# pair on the robot.
+#
+# Values from t3_testRun.md (the T3 run sheet), 2026-09-27.
+#
+# ---------------------------------------------------------------------------------------
+# FRAME: ROS REP 103, and the datum is the ROBOT CENTRE MARKED ON THE FLOOR -- not a point
+# inside the chassis. That is the point the run sheet plumbs and chalks, and all three tape
+# legs are measured from it, so heights here and marker heights are both "above the floor"
+# and subtract cleanly.
+#
+#     x  FORWARD  positive ahead of the robot
+#     y  LEFT     positive to the LEFT, looking forward along +x
+#     z  UP       positive above the floor
+#
+# *** y IS LEFT-POSITIVE. *** The Sept 27 brief said right-positive; the run sheet uses REP
+# 103, and the run sheet is what the operator reads while taping, so left-positive wins and
+# everything here matches it.
+#
+# The depth conversion Z = cos(t)*(d cos(p) + y sin(p)) + h sin(t) is INVARIANT under
+# mirroring the frame -- flipping y and yaw together changes Z by 0.000 mm, verified. What is
+# NOT safe is mixing them: y logged left-positive against a yaw supplied right-positive shifts
+# Z by 38 mm at 1.8 m off-axis and 87 mm at 2.5 m. So y and yaw MUST share a handedness, and
+# that handedness is LEFT.
+#
+# This is NOT the camera optical frame. calibration.yaml uses the optical convention
+# (x right, y DOWN, z forward); the two differ by an axis permutation and a sign, and
+# tape_eval.py is the only place that converts between them. Do not mix them by hand.
+# ---------------------------------------------------------------------------------------
+
+# --- item 27: optical centre relative to the robot centre --------------------------------
+camera_optical_centre_mm:
+  x: 57.0         # forward of O. Front of lens is 57 mm ahead (CAD); p below is 0, so x_c = x_F
+  y: 0.0          # camera on the centreline
+  z: 161.9        # above the FLOOR (6.375 in, measured). The old floor-plane fit gave 159.7
+
+# --- item 28: optical centre depth inside the lens ---------------------------------------
+# Taken as ZERO on purpose: the datum is the lens front, the dToF tip is flush with it, and
+# depth zero comes from the dToF. calibration.yaml would put the optical centre 1.13 mm
+# further back; that 1.1 mm disagreement is carried in the uncertainty budget as a 2 mm term
+# rather than corrected, because which surface "depth zero" refers to is a convention and the
+# dToF's is the one the pipeline inherits.
+optical_centre_behind_front_glass_mm: 0.0
+
+# --- item 29: camera orientation relative to the robot body ------------------------------
+# PROVISIONAL ZEROS. These are placeholders until the axis markers A1 (2 m) and A2 (4 m) are
+# read; both sit on the axis line at lens height, so for a perfectly level camera each images
+# exactly at the principal point and any departure IS the pitch/yaw:
+#
+#     pitch = -arctan((v - cy) / fy)
+#     yaw   =  arctan((u - cx) / fx * cos(pitch))
+#
+# A1 and A2 must agree within about 0.2 deg; put their mean here and re-score.
+#
+# SIGNS, both forced by the conversion and both checked in tape_geometry.test_tape_geometry:
+#   pitch POSITIVE = NOSE DOWN. Z = d cos(pitch) + h sin(pitch) with h = z_c - z_m > 0 for a
+#         marker below the camera, so nose-down must move Z toward the slant range. Verified:
+#         Z peaks at pitch = atan(h/d), where it equals r exactly -- true only for this sign.
+#   yaw   POSITIVE = TURNED LEFT (toward +y). Verified: a marker 1 m to the LEFT with 1 deg of
+#         left yaw gains 1000*sin(1 deg) = 17.5 mm of Z.
+#
+# UNTIL THESE ARE MEASURED the reference is much weaker than the run sheet's 2.7 mm budget
+# suggests, because that budget carries no angle term at all. Unmeasured, the angles are
+# bounded only to about +-2 deg (fov_v_session_2026-08-04.json: the floor test "puts any pitch
+# under ~2 deg and cannot resolve its sign or size", and nothing constrains yaw), which costs
+# ~70 mm at 1.8 m off-axis. Reading A1/A2 is what makes the run sheet's number real.
+camera_orientation_deg:
+  pitch: 0.0
+  yaw: 0.0
+  source: PROVISIONAL -- zeros pending axis markers A1/A2; not yet measured
+
+# --- item 30: dToF centre relative to the robot centre -----------------------------------
+# DERIVED from item 27 plus calibration.yaml's extrinsic (optical centre 20.195 mm ABOVE the
+# dToF centre, 1.13 mm behind it fore-aft), for a level camera. Recomputed if the camera turns
+# out to be pitched.
+dtof_centre_mm:
+  x: 58.1         # x_c + 1.13
+  y: 0.0          # y_c
+  z: 141.7        # z_c - 20.2
+
+# --- provenance --------------------------------------------------------------------------
+source: t3_testRun.md rig card, 2026-09-27 (CAD + measured)
+measured_by: Leo

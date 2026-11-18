@@ -51,7 +51,17 @@ from ringfusion_perception.blend import blend_depth, apply_scene_cap   # noqa: E
 from ringfusion_perception.residual import MAX_DEPTH_M       # noqa: E402
 import metrics as M                                         # noqa: E402
 
-GT_MIN, GT_MAX = 0.1, 20.0        # RealSense sentinel is 65.535; 0 means no return
+# Defaults for the valid-GT gate. The RealSense sentinel is 65.535 and 0 means no return, so
+# some gate is mandatory; 20 m is ours.
+#
+# WHY THIS IS NOW A FLAG. The published comparison rows (CFPNet, PENet, DEPTHOR-*) are copied
+# from DEPTHOR's table, and DEPTHOR gates at 10 m. RMSE squares its errors, so it is dominated
+# by exactly the far tail that a 20 m gate keeps and a 10 m gate discards -- which is the one
+# metric where we sit 2.2-2.8x behind every published method. Comparing our 20 m RMSE against
+# their 10 m RMSE is not a like-for-like comparison, and --gt-max 10 is what makes it one.
+# AbsRel and delta1 are dominated by typical pixels and should barely move; if they do, that
+# is itself worth knowing.
+GT_MIN, GT_MAX = 0.1, 20.0
 METHODS = ('B1_nearest', 'B2_bilinear', 'B4c_affine_cl', 'B5_ringfusion',
            'B6_blend_over_D0', 'B6_blend_over_net')
 
@@ -159,6 +169,12 @@ def main():
     # does NOT degrade, the prior is not doing anything.
     ap.add_argument('--sweep-bprior', type=float, nargs='*', default=[],
                     help='e.g. --sweep-bprior 0.01 0.1 1 inf')
+    ap.add_argument('--gt-min', type=float, default=GT_MIN,
+                    help='lower edge of the valid-GT gate, metres')
+    ap.add_argument('--gt-max', type=float, default=GT_MAX,
+                    help='upper edge of the valid-GT gate, metres. Ours is 20; DEPTHOR and the '
+                         'published rows copied from its table gate at 10. Use 10 to compare '
+                         'like for like')
     ap.add_argument('--out', default='')
     a = ap.parse_args()
 
@@ -254,7 +270,7 @@ def main():
                 continue
             preds[f'B4bp{bp:g}'] = np.clip(anc.to_metric_depth(disp, *fp), None, MAX_DEPTH_M)
 
-        gv = (gt > GT_MIN) & (gt < GT_MAX)
+        gv = (gt > a.gt_min) & (gt < a.gt_max)
         cm = coverage_mask(fr, mask, h, w)
         for region, sel in (('all', gv), ('in', gv & cm), ('out', gv & ~cm)):
             if not sel.any():
@@ -273,7 +289,14 @@ def main():
             print('  ** LOW -- backbone domain shift or projection issue; '
                   'treat every number below as suspect **')
 
+    # The GT gate goes in the output. Which gate produced a number is not recoverable from the
+    # number, and a result file that does not say is how Table V ended up quoting 0.055 and
+    # 0.064 for the same quantity from two runs nobody could tell apart afterwards.
     report = {'split': a.split, 'n': len(names), 'rho_median': float(np.median(rhos)) if rhos else None,
+              'gt_gate_m': [a.gt_min, a.gt_max],
+              'gt_gate_note': ('ours is 0.1-20 m; DEPTHOR and the published rows copied from '
+                               'its table gate at 10 m. RMSE is dominated by the far tail, so '
+                               'the two gates are not comparable on RMSE.'),
               'regions': {}}
     for region, label in (('all', 'ALL pixels'),
                           ('in', 'INSIDE ToF footprint (~50% of frame)'),

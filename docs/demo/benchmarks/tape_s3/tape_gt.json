@@ -1,0 +1,94 @@
+{
+ "captured": "2026-09-28 07:19:00",
+ "origin_offset_m": 0.0,
+ "instrument": "laser",
+ "role": "heldout",
+ "edge_deg": 3.0,
+ "reference": "legs",
+ "convention": "REP103: x forward, y LEFT-positive, z up; pitch + = nose down, yaw + = turned left",
+ "note": "x_m/y_m/z_m are three tape legs from the ROBOT CENTRE (forward, sideways LEFT-positive, height above floor). tape_eval.py converts to axial depth Z using items 27-29 from robot_geometry.yaml. No pointing error.",
+ "points": [
+  {
+   "id": 0,
+   "stem": "frame001",
+   "u": 452,
+   "v": 572,
+   "u_sub": 452.1909448818898,
+   "v_sub": 572.0492125984252,
+   "corners": [
+    [
+     446,
+     551
+    ],
+    [
+     444,
+     588
+    ],
+    [
+     456,
+     585
+    ],
+    [
+     463,
+     551
+    ]
+   ],
+   "label": "leftmost-wall-v1",
+   "frame": 1,
+   "cone": "out",
+   "role": "heldout",
+   "session": "T3-1",
+   "wall_time": 1790571606.099788,
+   "tof_stamp": 1790571605.843025,
+   "tof_module": 0,
+   "depth_stamp": 1790571605.843025,
+   "tof_exact": true,
+   "tof_skew_s": 0.0,
+   "pipeline_depth_m": 1.045284390449524,
+   "x_m": 1.479,
+   "y_m": 1.549,
+   "z_m": 0.235
+  },
+  {
+   "id": 1,
+   "stem": "frame001",
+   "u": 537,
+   "v": 717,
+   "u_sub": 536.522832006703,
+   "v_sub": 717.4738165060746,
+   "corners": [
+    [
+     472,
+     659
+    ],
+    [
+     591,
+     655
+    ],
+    [
+     482,
+     780
+    ],
+    [
+     600,
+     775
+    ]
+   ],
+   "label": "yellowStack_v1",
+   "frame": 1,
+   "cone": "edge",
+   "role": "heldout",
+   "session": "T3-1",
+   "wall_time": 1790571606.099788,
+   "tof_stamp": 1790571605.843025,
+   "tof_module": 0,
+   "depth_stamp": 1790571605.843025,
+   "tof_exact": true,
+   "tof_skew_s": 0.0,
+   "pipeline_depth_m": 0.32398587465286255,
+   "x_m": 0.419,
+   "y_m": 0.203,
+   "z_m": 0.063
+  }
+ ]
+}
